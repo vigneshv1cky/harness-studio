@@ -1,0 +1,12 @@
+harness/
+node_modules/
+.DS_Store
+.dsh-home/
+archive/
+dist/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+*.log

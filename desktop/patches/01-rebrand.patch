@@ -1,0 +1,279 @@
+diff --git a/apps/desktop/installer/extract-report.h b/apps/desktop/installer/extract-report.h
+index c885816c..8f4c6c18 100644
+--- a/apps/desktop/installer/extract-report.h
++++ b/apps/desktop/installer/extract-report.h
+@@ -114,7 +114,7 @@ inline std::wstring Headline(int code, const std::wstring& output, const std::ws
+ 
+ inline std::wstring Compose(int code, const std::wstring& archive, const std::wstring& destination, const std::wstring& output,
+                             const std::wstring& timestamp, const std::wstring& windowsVersion) {
+-    std::wstring report = L"DeepSeek Harness installer: extraction failed\r\n";
++    std::wstring report = L"Harness Studio installer: extraction failed\r\n";
+     report += L"Time: " + timestamp + L"\r\n";
+     report += L"Result: " + DescribeResult(code) + L"\r\n";
+     report += L"Archive: " + archive + L"\r\n";
+diff --git a/apps/desktop/installer/strings.nsh b/apps/desktop/installer/strings.nsh
+index 174ebfa2..ef8c83f7 100644
+--- a/apps/desktop/installer/strings.nsh
++++ b/apps/desktop/installer/strings.nsh
+@@ -19,20 +19,20 @@ LangString INSTALLER_BROWSE ${LANG_ENGLISH} "Browse"
+ LangString INSTALLER_BROWSE ${LANG_SIMPCHINESE} "选择"
+ LangString INSTALLER_LAUNCH ${LANG_ENGLISH} "Launch now"
+ LangString INSTALLER_LAUNCH ${LANG_SIMPCHINESE} "立即启动"
+-LangString INSTALLER_LAUNCH_FAILED ${LANG_ENGLISH} "DeepSeek Harness could not be launched. Retry, or clear Launch now and close the installer."
+-LangString INSTALLER_LAUNCH_FAILED ${LANG_SIMPCHINESE} "无法启动 DeepSeek Harness。请重试，或取消勾选立即启动后关闭安装程序。"
++LangString INSTALLER_LAUNCH_FAILED ${LANG_ENGLISH} "Harness Studio could not be launched. Retry, or clear Launch now and close the installer."
++LangString INSTALLER_LAUNCH_FAILED ${LANG_SIMPCHINESE} "无法启动 Harness Studio。请重试，或取消勾选立即启动后关闭安装程序。"
+ LangString INSTALLER_UI_ERROR ${LANG_ENGLISH} "The installer could not initialize its window. Close it and try again."
+ LangString INSTALLER_UI_ERROR ${LANG_SIMPCHINESE} "无法初始化安装窗口，请关闭后重试。"
+ LangString INSTALLER_THEME_ERROR ${LANG_ENGLISH} "Use /THEME=auto, /THEME=light or /THEME=dark."
+ LangString INSTALLER_THEME_ERROR ${LANG_SIMPCHINESE} "主题参数须为 /THEME=auto、/THEME=light 或 /THEME=dark。"
+ LangString INSTALLER_FAILED ${LANG_ENGLISH} "Installation did not finish. Close this installer and retry. If the problem persists, download the installer again."
+ LangString INSTALLER_FAILED ${LANG_SIMPCHINESE} "安装未完成，请关闭安装程序后重试。如仍然失败，请重新下载安装包。"
+-LangString INSTALLER_RUNNING ${LANG_ENGLISH} "DeepSeek Harness is running. Quit it from the system tray and try again."
+-LangString INSTALLER_RUNNING ${LANG_SIMPCHINESE} "DeepSeek Harness 正在运行，请先在系统托盘中退出应用后重试。"
++LangString INSTALLER_RUNNING ${LANG_ENGLISH} "Harness Studio is running. Quit it from the system tray and try again."
++LangString INSTALLER_RUNNING ${LANG_SIMPCHINESE} "Harness Studio 正在运行，请先在系统托盘中退出应用后重试。"
+ LangString INSTALLER_PATH_INVALID ${LANG_ENGLISH} "Choose a full local folder path. Drive roots, system folders, links and special characters are not supported."
+ LangString INSTALLER_PATH_INVALID ${LANG_SIMPCHINESE} "请选择本地磁盘上的完整文件夹路径，不能使用磁盘根目录、系统目录、链接目录或包含特殊字符的路径。"
+-LangString INSTALLER_PATH_OWNERSHIP ${LANG_ENGLISH} "Choose an empty folder or the registered DeepSeek Harness installation folder."
+-LangString INSTALLER_PATH_OWNERSHIP ${LANG_SIMPCHINESE} "请选择空文件夹，或 DeepSeek Harness 原来的安装目录。"
++LangString INSTALLER_PATH_OWNERSHIP ${LANG_ENGLISH} "Choose an empty folder or the registered Harness Studio installation folder."
++LangString INSTALLER_PATH_OWNERSHIP ${LANG_SIMPCHINESE} "请选择空文件夹，或 Harness Studio 原来的安装目录。"
+ LangString INSTALLER_PATH_WRITABLE ${LANG_ENGLISH} "This location is not writable. Choose a folder available to the current user."
+ LangString INSTALLER_PATH_WRITABLE ${LANG_SIMPCHINESE} "无法写入此位置。请选择当前用户可写入的文件夹；安装程序不会申请管理员权限。"
+ LangString INSTALLER_DISK_SPACE ${LANG_ENGLISH} "There is not enough free disk space. Choose another location."
+diff --git a/apps/desktop/scripts/desktop-package-environment.mjs b/apps/desktop/scripts/desktop-package-environment.mjs
+index 8116dea2..39e3040b 100644
+--- a/apps/desktop/scripts/desktop-package-environment.mjs
++++ b/apps/desktop/scripts/desktop-package-environment.mjs
+@@ -28,7 +28,7 @@ const FILE_SETTINGS = ['DSH_DESKTOP_WINDOWS_CER_FILE', 'DSH_DESKTOP_WINDOWS_SIGN
+ export function localMacOSPackageEnvironment(environment = process.env) {
+   return {
+     ...Object.fromEntries(Object.entries(environment).filter(([name]) => !AMBIENT_RELEASE_SETTING.test(name))),
+-    DSH_DESKTOP_APP_ID: 'com.deepseek.harness',
++    DSH_DESKTOP_APP_ID: 'io.github.vigneshv1cky.harnessstudio',
+     DSH_DESKTOP_UNSIGNED: '1',
+   }
+ }
+diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
+index 4b9cd27a..b2fa4ce0 100644
+--- a/apps/desktop/scripts/electron-builder-config.mjs
++++ b/apps/desktop/scripts/electron-builder-config.mjs
+@@ -105,7 +105,7 @@ export function createElectronBuilderConfig(
+   const packaged = resolveDesktopBuildCommit(env)
+   return {
+     appId,
+-    protocols: [{ name: 'DeepSeek Harness', schemes: ['dsh'] }],
++    protocols: [{ name: 'Harness Studio', schemes: ['harness-studio'] }],
+     extraMetadata: {
+       dshDesktopAppId: appId,
+       dshDesktopUpdateChannel: update?.channel ?? 'nightly',
+@@ -113,9 +113,9 @@ export function createElectronBuilderConfig(
+       ...buildVersion === productVersion ? {} : { version: buildVersion },
+       ...packaged === undefined ? {} : { dshBuildCommit: packaged.commit, dshBuildDirty: packaged.dirty },
+     },
+-    productName: 'DeepSeek Harness',
++    productName: 'Harness Studio',
+     // Unsigned builds carry their own suffix so a shared file can never pass for a release artifact.
+-    artifactName: `deepseek-harness-\${version}-\${os}-\${arch}${output.suffix}.\${ext}`,
++    artifactName: `harness-studio-\${version}-\${os}-\${arch}${output.suffix}.\${ext}`,
+     directories: { output: output.directory },
+     asar: true,
+     electronDist: buildPaths.electron,
+@@ -159,13 +159,15 @@ export function createElectronBuilderConfig(
+     mac: {
+       icon: fileURLToPath(new URL('../resources/icon-macos.png', import.meta.url)),
+       category: 'public.app-category.developer-tools',
+-      // macOS matches the application locale against this bundle, not Electron Framework resources.
+-      extendInfo: { CFBundleLocalizations: ['en', 'zh_CN'] },
+       // Ad-hoc signing keeps the modified Electron executable runnable without a Developer ID.
+       identity: unsigned ? '-' : macOSSigning?.signingIdentity,
+       forceCodeSigning: !unsigned,
+       hardenedRuntime: true,
+-      extendInfo: { NSMicrophoneUsageDescription: 'DeepSeek Harness uses your microphone to transcribe speech into message drafts.' },
++      // macOS matches the application locale against this bundle, not Electron Framework resources.
++      extendInfo: {
++        CFBundleLocalizations: ['en', 'zh_CN'],
++        NSMicrophoneUsageDescription: 'Harness Studio uses your microphone to transcribe speech into message drafts.',
++      },
+       entitlements: fileURLToPath(new URL('./macos-entitlements.plist', import.meta.url)),
+       entitlementsInherit: fileURLToPath(new URL('./macos-entitlements.plist', import.meta.url)),
+       // Prepared runtime files retain their signatures; PAK resources are sealed by their enclosing bundle.
+diff --git a/apps/desktop/scripts/package-target.ts b/apps/desktop/scripts/package-target.ts
+index be2f577e..394a2bc2 100644
+--- a/apps/desktop/scripts/package-target.ts
++++ b/apps/desktop/scripts/package-target.ts
+@@ -401,7 +401,7 @@ async function main(): Promise<void> {
+   if (success && target.platform === 'darwin' && !invocation.directory && !invocation.prepareOnly) {
+     const paths = desktopTargetBuildPaths(target.name)
+     const output = desktopArtifactOutput(paths, invocation)
+-    const filename = `deepseek-harness-${buildVersion}-mac-${target.arch}${output.suffix}.dmg`
++    const filename = `harness-studio-${buildVersion}-mac-${target.arch}${output.suffix}.dmg`
+     console.log(`DMG: ${join(output.directory, filename)}`)
+   }
+ }
+@@ -515,7 +515,7 @@ export async function packageTarget(
+   } else if (target.platform === 'darwin' && !invocation.unsigned && !invocation.skipNotarization) {
+     await execute([...desktopElectronBuilderArguments(target, true), '--config.mac.notarize=false'], electronBuilderEnv)
+     await execute(['exec', 'tsx', 'scripts/smoke-packaged-runtime.ts'], targetEnv)
+-    const appPath = join(buildPaths.artifacts, target.arch === 'arm64' ? 'mac-arm64' : 'mac', 'DeepSeek Harness.app')
++    const appPath = join(buildPaths.artifacts, target.arch === 'arm64' ? 'mac-arm64' : 'mac', 'Harness Studio.app')
+     await withMacOSNotarizationProxy(mac?.notarizationProxy,
+       () => notarizeMacOS({ appPath, ...resolveMacOSNotarizationEnvironment(environment) }), undefined, undefined, proxyEvent)
+   } else {
+diff --git a/apps/desktop/scripts/smoke-packaged-runtime.ts b/apps/desktop/scripts/smoke-packaged-runtime.ts
+index 6c3c12c8..032a84bc 100644
+--- a/apps/desktop/scripts/smoke-packaged-runtime.ts
++++ b/apps/desktop/scripts/smoke-packaged-runtime.ts
+@@ -13,9 +13,9 @@ const target = resolveDesktopBuildTarget()
+ const windows = target === 'win-x64'
+ const artifacts = desktopArtifactOutput(paths, { unsigned: values.unsigned, skipNotarization: values['skip-notarization'] }).directory
+ const application = windows ? join(artifacts, 'win-unpacked')
+-  : join(artifacts, target === 'mac-arm64' ? 'mac-arm64' : 'mac', 'DeepSeek Harness.app', 'Contents')
++  : join(artifacts, target === 'mac-arm64' ? 'mac-arm64' : 'mac', 'Harness Studio.app', 'Contents')
+ const resources = join(application, windows ? 'resources' : 'Resources')
+-const executable = windows ? join(application, 'DeepSeek Harness.exe') : join(application, 'MacOS', 'DeepSeek Harness')
++const executable = windows ? join(application, 'Harness Studio.exe') : join(application, 'MacOS', 'Harness Studio')
+ const descriptor = await verifyDesktopRuntime(paths.dsh, readDesktopRuntime(paths.dsh).release.version,
+   resolveDesktopPackageTarget(target))
+ if (windows && !values.unsigned) await verifyWindowsCode(application)
+diff --git a/apps/desktop/src/locale.ts b/apps/desktop/src/locale.ts
+index eb6c2cdb..cdd9b1d1 100644
+--- a/apps/desktop/src/locale.ts
++++ b/apps/desktop/src/locale.ts
+@@ -31,17 +31,17 @@ export const en = {
+   application: 'Application',
+   fileMenu: 'File',
+   closePage: 'Close Page or Window',
+-  aboutMenu: 'About DeepSeek Harness',
+-  aboutProduct: 'DeepSeek Harness',
++  aboutMenu: 'About Harness Studio',
++  aboutProduct: 'Harness Studio',
+   aboutVersion: 'Version V{version}',
+-  hideApplication: 'Hide DeepSeek Harness',
++  hideApplication: 'Hide Harness Studio',
+   hideOtherApplications: 'Hide Others',
+   showAllApplications: 'Show All',
+-  quitApplication: 'Quit DeepSeek Harness',
+-  openApplication: 'Open DeepSeek Harness',
++  quitApplication: 'Quit Harness Studio',
++  openApplication: 'Open Harness Studio',
+   quit: 'Quit',
+   cancel: 'Cancel',
+-  quitTitle: 'Quit DeepSeek Harness?',
++  quitTitle: 'Quit Harness Studio?',
+   quitActiveTasks: 'Running tasks will be interrupted.',
+   quitScheduledTasks: 'Scheduled tasks will not run while the app is closed.',
+   quitActiveAndScheduledTasks: 'Running tasks will be interrupted, and scheduled tasks will not run while the app is closed.',
+@@ -56,7 +56,7 @@ export const en = {
+   copy: 'Copy',
+   paste: 'Paste',
+   selectAll: 'Select All',
+-  startupFailed: 'DeepSeek Harness is unavailable',
++  startupFailed: 'Harness Studio is unavailable',
+   fatalSummary: 'The application could not start or stopped unexpectedly.',
+   startupAddressInUse: 'Another DSH instance (such as dsh web or the desktop app) is running. They cannot start at the same time. Quit the other running DSH instance, then restart.',
+   diagnosticTruncated: '… Error details shortened.',
+@@ -117,7 +117,7 @@ export const en = {
+   updateTasksUnavailable: 'Task status is unavailable. Try updating again when the workspace is ready.',
+   updateStopFailed: 'Could not safely stop the tasks. The update has not been installed. Please try again later.',
+   updateTechnicalDetails: 'View technical details',
+-  updateTitle: 'DeepSeek Harness Update',
++  updateTitle: 'Harness Studio Update',
+   updateAvailable: 'New version available: {version}',
+   updateDetail: 'Once the download is complete, you can install the update and restart the app.',
+   installAndRestart: 'Install and Restart',
+@@ -189,17 +189,17 @@ export const zh = {
+   application: '应用',
+   fileMenu: '文件',
+   closePage: '关闭页面或窗口',
+-  aboutMenu: '关于 DeepSeek Harness',
+-  aboutProduct: 'DeepSeek Harness',
++  aboutMenu: '关于 Harness Studio',
++  aboutProduct: 'Harness Studio',
+   aboutVersion: '版本 V{version}',
+-  hideApplication: '隐藏 DeepSeek Harness',
++  hideApplication: '隐藏 Harness Studio',
+   hideOtherApplications: '隐藏其他',
+   showAllApplications: '显示全部',
+-  quitApplication: '退出 DeepSeek Harness',
+-  openApplication: '打开 DeepSeek Harness',
++  quitApplication: '退出 Harness Studio',
++  openApplication: '打开 Harness Studio',
+   quit: '退出',
+   cancel: '取消',
+-  quitTitle: '退出 DeepSeek Harness？',
++  quitTitle: '退出 Harness Studio？',
+   quitActiveTasks: '当前正在运行的任务将会中断',
+   quitScheduledTasks: '应用关闭期间，定时任务不会运行',
+   quitActiveAndScheduledTasks: '当前正在运行的任务将会中断，且应用关闭期间，定时任务不会运行',
+@@ -214,7 +214,7 @@ export const zh = {
+   copy: '复制',
+   paste: '粘贴',
+   selectAll: '全选',
+-  startupFailed: 'DeepSeek Harness 无法使用',
++  startupFailed: 'Harness Studio 无法使用',
+   fatalSummary: '应用无法启动或已意外停止。',
+   startupAddressInUse: '有其他正在运行的 DSH（如其他 dsh web、桌面端），无法同时启动，请退出其他正在运行的 DSH 后重启。',
+   diagnosticTruncated: '… 错误详情已截短。',
+@@ -275,7 +275,7 @@ export const zh = {
+   updateTasksUnavailable: '无法确认任务状态，请在工作区就绪后重试更新。',
+   updateStopFailed: '未能安全停止任务，更新尚未安装，请稍后重试。',
+   updateTechnicalDetails: '查看技术详情',
+-  updateTitle: 'DeepSeek Harness 更新',
++  updateTitle: 'Harness Studio 更新',
+   updateAvailable: '发现新版本 {version}',
+   updateDetail: '下载完成后，可安装并重启应用。',
+   installAndRestart: '安装并重启',
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index eb6f4a72..91ebfc8e 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -940,7 +940,7 @@ async function main(): Promise<void> {
+   const applicationIconPath = development ? join(app.getAppPath(), 'resources', 'icon-windows.png')
+     : join(process.resourcesPath, 'icon.png')
+   app.setAboutPanelOptions({
+-    applicationName: 'DeepSeek Harness',
++    applicationName: 'Harness Studio',
+     applicationVersion: app.getVersion(),
+     // The release has no separate build number; omit Electron's bundle version.
+     version: '',
+@@ -1245,10 +1245,10 @@ async function main(): Promise<void> {
+     window.focus()
+   }
+ 
+-  if (app.isPackaged || process.env.DSH_DESKTOP_DEV_APP === '1') app.setAsDefaultProtocolClient('dsh')
++  if (app.isPackaged || process.env.DSH_DESKTOP_DEV_APP === '1') app.setAsDefaultProtocolClient('harness-studio')
+   app.on('open-url', (event, url) => {
+     event.preventDefault()
+-    if (url === 'dsh://open' || url === 'dsh://open/') focusPrimaryWindow()
++    if (url === 'harness-studio://open' || url === 'harness-studio://open/') focusPrimaryWindow()
+   })
+ 
+   app.on('activate', (_event, hasVisibleWindows) => {
+diff --git a/apps/web/public/manifest.webmanifest b/apps/web/public/manifest.webmanifest
+index 6592d6a7..4e52a8ce 100644
+--- a/apps/web/public/manifest.webmanifest
++++ b/apps/web/public/manifest.webmanifest
+@@ -1,6 +1,6 @@
+ {
+-  "name": "DeepSeek Harness",
+-  "short_name": "DSH",
++  "name": "Harness Studio",
++  "short_name": "Harness Studio",
+   "start_url": "./",
+   "scope": "./",
+   "display": "fullscreen",
+diff --git a/scripts/client-build-environment.ts b/scripts/client-build-environment.ts
+index 2cf28aa8..4bd7d838 100644
+--- a/scripts/client-build-environment.ts
++++ b/scripts/client-build-environment.ts
+@@ -19,7 +19,7 @@ export const CLIENT_BUILD_PROFILE_SELECTOR = 'DSH_BUILD_CLIENT_PROFILE'
+ /** Public client environment required by official DSH artifacts. */
+ const OFFICIAL_CLIENT_BUILD_ENVIRONMENT = {
+   DSH_CLIENT_BUILD_PROFILE: 'official',
+-  DSH_CLIENT_TITLE: 'DeepSeek Harness',
++  DSH_CLIENT_TITLE: 'Harness Studio',
+ } as const
+ 
+ /** Public variable carrying the source commit embedded in client artifacts. */

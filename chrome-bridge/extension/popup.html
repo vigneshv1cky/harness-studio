@@ -1,0 +1,76 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Harness Studio</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff; --fg: #1f2328; --muted: #656d76; --faint: #8c959f; --line: rgba(31, 35, 40, .1);
+    --chip: #f3f4f6; --chip-hover: #e9eaec; --accent: #2563eb; --accent-hover: #1d4ed8;
+    --ok: #16a34a; --warn: #d97706; --bad: #dc2626; --kbd: rgba(255, 255, 255, .22);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1e1e1f; --fg: #f1f2f3; --muted: #a8adb3; --faint: #7d838a; --line: rgba(255, 255, 255, .1);
+      --chip: #2b2b2d; --chip-hover: #343437; --accent: #3b82f6; --accent-hover: #2f6fe0;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; width: 320px; padding: 14px; font: 13px/18px -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--fg); background: var(--bg); -webkit-font-smoothing: antialiased; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  .head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+  .head img { width: 18px; height: 18px; border-radius: 5px; }
+  .head h1 { flex: 1; margin: 0; font-size: 13px; font-weight: 600; letter-spacing: -0.01em; }
+  .state { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 8px; border-radius: 11px; background: var(--chip); font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .state i { width: 7px; height: 7px; border-radius: 50%; background: var(--warn); }
+  .state.connected i { background: var(--ok); }
+  .state.denied i { background: var(--bad); }
+  .pick { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 34px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font-weight: 600; }
+  .pick:hover { background: var(--accent-hover); }
+  .pick:disabled { opacity: .45; cursor: default; }
+  .pick kbd { font: 500 11px/16px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 1px 5px; border-radius: 4px; background: var(--kbd); }
+  .hint { margin: 8px 2px 0; font-size: 12px; line-height: 17px; color: var(--muted); }
+  .hint a { color: var(--accent); text-decoration: none; cursor: pointer; }
+  .hint a:hover { text-decoration: underline; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 14px -14px 12px; }
+  .label { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-size: 12px; color: var(--muted); }
+  .code { display: flex; align-items: center; gap: 6px; }
+  .code span { flex: 1; height: 30px; padding: 0 10px; border-radius: 7px; background: var(--chip); font: 500 12px/30px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; overflow: hidden; white-space: nowrap; user-select: all; }
+  .code span.hidden { letter-spacing: .06em; color: var(--faint); user-select: none; }
+  .ghost { height: 30px; padding: 0 10px; border: 0; border-radius: 7px; background: var(--chip); font-size: 12px; }
+  .ghost:hover { background: var(--chip-hover); }
+  .link { border: 0; background: none; padding: 0; font-size: 12px; color: var(--muted); }
+  .link:hover { color: var(--fg); }
+  .steps { margin: 10px 0 0; padding-left: 18px; font-size: 12px; line-height: 17px; color: var(--muted); }
+  .steps code { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); }
+  .foot { display: flex; justify-content: space-between; margin-top: 12px; font-size: 11px; color: var(--faint); }
+  [hidden] { display: none !important; }
+</style>
+
+<div class="head">
+  <img src="icons/icon-32.png" alt="">
+  <h1>Harness Studio</h1>
+  <span class="state" id="state"><i></i><span id="stateText">…</span></span>
+</div>
+
+<button class="pick" id="pick">Select an element <kbd id="kbd" hidden></kbd></button>
+<p class="hint"><span id="pickHint">Click anything on this page to send it to Harness Studio.</span><span id="shortcutHint"></span></p>
+
+<hr>
+
+<div class="label">Pairing code <button class="link" id="reconnect">Reconnect</button></div>
+<div class="code">
+  <span id="code" class="hidden">•••• •••• •••• ••••</span>
+  <button class="ghost" id="reveal">Show</button>
+  <button class="ghost" id="copy">Copy</button>
+</div>
+<ol class="steps" id="steps" hidden>
+  <li>In Harness Studio, open Connectors → Chrome extension → Edit.</li>
+  <li>Set <code>HS_CHROME_PAIRING_CODE=</code> to this code and save.</li>
+</ol>
+
+<div class="foot">
+  <button class="link" id="new">New code</button>
+  <span id="version"></span>
+</div>
+
+<script src="popup.js"></script>

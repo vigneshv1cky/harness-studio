@@ -1,0 +1,39 @@
+diff --git a/packages/bundle/base/cordis.patch.yml b/packages/bundle/base/cordis.patch.yml
+index 22830af6..57410b70 100644
+--- a/packages/bundle/base/cordis.patch.yml
++++ b/packages/bundle/base/cordis.patch.yml
+@@ -220,7 +220,8 @@
+     - id: session-telemetry-otel
+       name: '@deepseek-ai/dsh-session-telemetry-otel'
+       config:
+-        mode: !!js process.env.DSH_TELEMETRY_MODE || 'FEEDBACK_ONLY'
++        # Harness Studio: off unless DSH_TELEMETRY_MODE asks for it.
++        mode: !!js process.env.DSH_TELEMETRY_MODE || 'DISABLED'
+         shutdownTimeoutMillis: 3000
+         maxRequestBytes: 4000000
+         exporter:
+diff --git a/packages/bundle/web-app/cordis.patch.yml b/packages/bundle/web-app/cordis.patch.yml
+index 1e0a47a0..ca535fbd 100644
+--- a/packages/bundle/web-app/cordis.patch.yml
++++ b/packages/bundle/web-app/cordis.patch.yml
+@@ -42,9 +42,10 @@
+ # `dsh.client` rows are the browser roster the modules node half scans into
+ # window.__DSH_BOOT__; the modules row is simultaneously a host row.
+ - insert:
++    # Harness Studio: product analytics stay off; nothing is sent to DeepSeek's collector.
+     - id: desktop-product-telemetry
+       name: '@deepseek-ai/dsh-host-product-telemetry-otel'
+-      disabled: !!js "ctx.get('profileContext')?.name !== 'desktop'"
++      disabled: true
+       config:
+         scheduledDelayMillis: 30000
+         timeoutMillis: 15000
+@@ -56,7 +57,7 @@
+ 
+     - id: product-analytics
+       name: '@deepseek-ai/dsh-client-product-analytics'
+-      disabled: !!js "ctx.get('profileContext')?.name !== 'desktop'"
++      disabled: true
+       config:
+         enabled: true
+         appVersion: !!js process.env.DSH_CLIENT_VERSION

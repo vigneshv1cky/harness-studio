@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hello App</title>
+  <style>
+    body { margin: 0; font: 15px/1.5 system-ui, sans-serif; color: #1c1d21; background: #f6f6f8; }
+    header { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; background: #fff; border-bottom: 1px solid #e4e4ea; }
+    main { max-width: 720px; margin: 32px auto; padding: 0 24px; }
+    .card { background: #fff; border: 1px solid #e4e4ea; border-radius: 12px; padding: 20px; margin-bottom: 16px; }
+    .btn { padding: 8px 16px; border-radius: 8px; border: 0; background: #247bbf; color: #fff; font: inherit; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>Hello App</strong>
+    <button class="btn" type="button">Sign in</button>
+  </header>
+  <main>
+    <section class="card">
+      <h1>Sample page for Harness Studio</h1>
+      <p>A stand-in dev server for testing the Preview tab. Later stages add click-to-select on elements like these.</p>
+      <button class="btn" type="button" id="counter">Clicked 0 times</button>
+    </section>
+    <section class="card">
+      <h2>Pricing</h2>
+      <p>Starter — $9 / month</p>
+    </section>
+  </main>
+  <!-- Development only: lets the Harness Studio Preview tab pick elements. -->
+  <script src="/devpreview-companion.js"></script>
+  <script>
+    let n = 0
+    document.getElementById('counter').addEventListener('click', (e) => { e.target.textContent = 'Clicked ' + (++n) + ' times' })
+  </script>
+</body>
+</html>

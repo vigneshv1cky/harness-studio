@@ -1,0 +1,282 @@
+diff --git a/apps/desktop/scripts/electron-builder-config.mjs b/apps/desktop/scripts/electron-builder-config.mjs
+index b2fa4ce0..b7357f29 100644
+--- a/apps/desktop/scripts/electron-builder-config.mjs
++++ b/apps/desktop/scripts/electron-builder-config.mjs
+@@ -141,6 +141,7 @@ export function createElectronBuilderConfig(
+       'lib/preload-platform-account.cjs',
+       'lib/preload-update-dialog.cjs',
+       'lib/preload-welcome.cjs',
++      'lib/preload-browser-guest.cjs',
+       'renderer/**/*',
+       'package.json',
+       '!node_modules/**/*.{js,cjs,mjs,ts,cts,mts,css}.map',
+diff --git a/apps/desktop/src/browser-guests.ts b/apps/desktop/src/browser-guests.ts
+index c3f0b10e..127843f2 100644
+--- a/apps/desktop/src/browser-guests.ts
++++ b/apps/desktop/src/browser-guests.ts
+@@ -1,9 +1,29 @@
+ /** Main-process ownership and fixed isolation policy for Sidebar webview guests. */
+ import { randomUUID } from 'node:crypto'
++import { fileURLToPath } from 'node:url'
+ import { app, session, type BrowserWindow, type Session, type WebContents } from 'electron'
+ import type { DesktopBrowserLeaseId, DesktopBrowserOpenRequest, DesktopBrowserReservation } from '@deepseek-ai/dsh-client-ui-sidebar-browser/types'
+ import { DESKTOP_IPC } from './ipc.ts'
+ 
++/**
++ * Sign-in compatibility (Harness Studio, opt-in): one persistent partition shared by every workspace,
++ * so Browser pane sign-ins survive restarts and carry across workspaces like a regular browser profile.
++ */
++const SHARED_PARTITION = 'persist:dsh-sidebar-browser'
++
++/**
++ * Sign-in compatibility: the app's own user-agent string with the Electron and dsh-desktop tokens removed
++ * and a plain app token, `HarnessStudio/1.0`, before Chrome's. Google refuses sign-in both for identities
++ * naming Electron and for ones posing as a bare Chrome; this form passed in a test on 2026-10-16.
++ * @param appAgent - the session's default user-agent string.
++ * @returns the Browser pane's identity.
++ */
++function plainBrowserAgent(appAgent: string): string {
++  return appAgent
++    .replace(/\s(?!(?:Mozilla|AppleWebKit|Chrome|Safari)\/)[^\s/()]+\/[^\s()]+/g, '')
++    .replace(/ Chrome\//, ' HarnessStudio/1.0 Chrome/')
++}
++
+ interface GuestLease {
+   readonly owner: WebContents
+   readonly partition: string
+@@ -17,8 +37,12 @@ export class DesktopBrowserGuests {
+   private readonly partitions = new Map<string, string>()
+   private readonly leases = new Map<DesktopBrowserLeaseId, GuestLease>()
+ 
+-  /** @param hostUrl - current authenticated DSH Host, which guests cannot request. */
+-  constructor(private readonly hostUrl: () => string | undefined) {}
++  /**
++   * @param hostUrl - current authenticated DSH Host, which guests cannot request.
++   * @param signInCompatibility - opt-in Harness Studio setting: a shared persistent partition, a plain
++   *   browser identity and a guest preload, so sign-in pages such as Google's accept the pane.
++   */
++  constructor(private readonly hostUrl: () => string | undefined, private readonly signInCompatibility = false) {}
+ 
+   /**
+    * Reserve one guest in a workspace's process-lifetime partition.
+@@ -32,8 +56,13 @@ export class DesktopBrowserGuests {
+     }
+     let partition = this.partitions.get(workspace)
+     if (partition === undefined) {
+-      partition = `dsh-sidebar-browser-${randomUUID()}`
+-      this.configureSession(session.fromPartition(partition))
++      if (this.signInCompatibility) {
++        partition = SHARED_PARTITION
++        if (![...this.partitions.values()].includes(partition)) this.configureSession(session.fromPartition(partition))
++      } else {
++        partition = `dsh-sidebar-browser-${randomUUID()}`
++        this.configureSession(session.fromPartition(partition))
++      }
+       this.partitions.set(workspace, partition)
+     }
+     const lease = randomUUID() as DesktopBrowserLeaseId
+@@ -88,6 +117,8 @@ export class DesktopBrowserGuests {
+         contextIsolation: true, sandbox: true, webSecurity: true, allowRunningInsecureContent: false,
+         webviewTag: false, plugins: false, navigateOnDragDrop: false, disableDialogs: true,
+         devTools: !app.isPackaged,
++        // Sign-in compatibility: reports a real outer window size before page scripts run.
++        ...this.signInCompatibility ? { preload: fileURLToPath(new URL('./preload-browser-guest.cjs', import.meta.url)) } : {},
+       })
+       params.httpreferrer = ''
+     })
+@@ -144,6 +175,17 @@ export class DesktopBrowserGuests {
+     browserSession.setDevicePermissionHandler(() => false)
+     browserSession.setDisplayMediaRequestHandler((_request, callback) => { callback({}) })
+     browserSession.on('will-download', (event) => { event.preventDefault() })
++    if (this.signInCompatibility) {
++      // One plain browser identity for every request, workers and service workers included:
++      // set on the session, and enforced on each request's header.
++      const agent = plainBrowserAgent(browserSession.getUserAgent())
++      browserSession.setUserAgent(agent)
++      browserSession.webRequest.onBeforeSendHeaders((details, callback) => {
++        const headers = details.requestHeaders
++        const key = Object.keys(headers).find(name => name.toLowerCase() === 'user-agent') ?? 'User-Agent'
++        callback({ requestHeaders: { ...headers, [key]: agent } })
++      })
++    }
+     browserSession.webRequest.onBeforeRequest((details, callback) => {
+       const url = new URL(details.url)
+       const network = ['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol)
+diff --git a/apps/desktop/src/locale.ts b/apps/desktop/src/locale.ts
+index cdd9b1d1..7839c7a6 100644
+--- a/apps/desktop/src/locale.ts
++++ b/apps/desktop/src/locale.ts
+@@ -1,6 +1,14 @@
+ /** Typed English and Chinese copy owned by the Electron shell. */
+ 
+ export const en = {
++  browserSignInMenu: 'Allow Sign-in in Browser Pane',
++  browserSignInTitleOn: 'Allow sign-in in the Browser pane?',
++  browserSignInTitleOff: 'Turn off sign-in in the Browser pane?',
++  browserSignInDetailOn: 'The Browser pane will use an identity that Google sign-in accepts, and one browser store kept on disk and shared by every workspace, so a sign-in made in one workspace is visible to pages in every other. Google discourages signing in from embedded browsers and may change its checks at any time; use this at your own risk. Passkeys do not work in the pane. Harness Studio restarts to apply the change.',
++  browserSignInDetailOff: 'The Browser pane returns to a separate store for each workspace that is forgotten when Harness Studio quits. Sign-ins in the shared store stay on disk but are not used. Harness Studio restarts to apply the change.',
++  browserSignInConfirmOn: 'Turn On and Restart',
++  browserSignInConfirmOff: 'Turn Off and Restart',
++  browserSignInCancel: 'Cancel',
+   cliCommandMenu: 'Manage dsh Command…',
+   cliCommandTitle: 'Manage dsh Command',
+   cliCommandLocation: 'Desktop command: {path}',
+@@ -159,6 +167,14 @@ export const en = {
+ export type DesktopMessages = { readonly [Key in keyof typeof en]: string }
+ 
+ export const zh = {
++  browserSignInMenu: '允许在浏览器面板中登录',
++  browserSignInTitleOn: '允许在浏览器面板中登录？',
++  browserSignInTitleOff: '关闭浏览器面板中的登录？',
++  browserSignInDetailOn: '浏览器面板将使用 Google 登录可接受的身份，并使用一个保存在磁盘上、由所有工作区共享的浏览器存储，因此在一个工作区中的登录对其他所有工作区的页面可见。Google 不建议在嵌入式浏览器中登录，且可能随时更改检查方式，使用风险自负。浏览器面板不支持通行密钥。Harness Studio 将重新启动以应用此更改。',
++  browserSignInDetailOff: '浏览器面板将恢复为每个工作区各自独立、退出 Harness Studio 时即清除的存储。共享存储中的登录仍保留在磁盘上，但不再使用。Harness Studio 将重新启动以应用此更改。',
++  browserSignInConfirmOn: '开启并重新启动',
++  browserSignInConfirmOff: '关闭并重新启动',
++  browserSignInCancel: '取消',
+   cliCommandMenu: '管理 dsh 命令…',
+   cliCommandTitle: '管理 dsh 命令',
+   cliCommandLocation: 'Desktop 命令：{path}',
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index 2cc21bc6..4b31d74a 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -54,6 +54,7 @@ import { desktopClientMetadata, desktopClientVersion } from './client-metadata.t
+ import { DesktopMandatoryUpdateWindow } from './mandatory-update-window.ts'
+ import { DesktopPolicyTestAuth } from './policy-test-auth.ts'
+ import { readDesktopSettings } from './settings.ts'
++import { readBrowserSignInCompatibility, writeBrowserSignInCompatibility } from './studio-browser-setting.ts'
+ import { DesktopUpdateDialog, type UpdateDialogOptions } from './update-dialog.ts'
+ import { readDesktopRuntime } from './runtime-tree.ts'
+ import { DesktopBrowserGuests } from './browser-guests.ts'
+@@ -317,6 +318,7 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
+ 
+ async function main(): Promise<void> {
+   const desktopSettings = readDesktopSettings(app.getPath('userData'))
++  const browserSignIn = readBrowserSignInCompatibility(app.getPath('userData'))
+   void pruneCrashReports(app.getPath('logs'))
+   const journalDirectory = process.env.DSH_DESKTOP_UPDATE_JOURNAL_DIR
+   const updateJournal = journalDirectory === undefined ? undefined : new DesktopUpdateJournal(journalDirectory, app.getVersion())
+@@ -403,7 +405,7 @@ async function main(): Promise<void> {
+   const applicationUrl = `${SCHEME}://app/`
+   let hostUrl: string | undefined
+   let hostCookie: string | undefined
+-  const browserGuests = new DesktopBrowserGuests(() => hostUrl)
++  const browserGuests = new DesktopBrowserGuests(() => hostUrl, browserSignIn)
+   let injections: readonly unknown[] = []
+   let welcomeBackend: DesktopWelcomeBackend | undefined
+   let reportedLaunch = false
+@@ -971,6 +973,8 @@ async function main(): Promise<void> {
+     { label: currentDesktopLocale().messages.checkUpdatesMenu, click: () => { void openUpdatePrompt(true) } },
+     ...process.platform === 'darwin' || process.platform === 'win32'
+       ? [{ label: currentDesktopLocale().messages.cliCommandMenu, click: () => { void commandManager.show() } }] : [],
++    { label: currentDesktopLocale().messages.browserSignInMenu, type: 'checkbox', checked: browserSignIn,
++      click: () => { void toggleBrowserSignIn().catch((error: unknown) => { console.error(error) }) } },
+     ...development ? [
+       { type: 'separator' as const },
+       { label: currentDesktopLocale().messages.reloadPageMenu, role: 'reload' as const },
+@@ -985,6 +989,25 @@ async function main(): Promise<void> {
+     { role: 'quit', ...(darwin ? { label: currentDesktopLocale().messages.quitApplication }
+       : process.platform === 'win32' ? { label: currentDesktopLocale().messages.exitApplication } : {}) },
+   ]
++  /** Confirm the opt-in Browser pane sign-in setting with its trade-offs, store it, and restart to apply it. */
++  const toggleBrowserSignIn = async (): Promise<void> => {
++    const messages = currentDesktopLocale().messages
++    const enable = !browserSignIn
++    const { response } = await dialog.showMessageBox({
++      type: 'question',
++      message: enable ? messages.browserSignInTitleOn : messages.browserSignInTitleOff,
++      detail: enable ? messages.browserSignInDetailOn : messages.browserSignInDetailOff,
++      buttons: [enable ? messages.browserSignInConfirmOn : messages.browserSignInConfirmOff, messages.browserSignInCancel],
++      defaultId: 1,
++      cancelId: 1,
++    })
++    // The click already flipped the checkbox; rebuild it from the setting in effect until the restart.
++    refreshApplicationMenu()
++    if (response !== 0) return
++    writeBrowserSignInCompatibility(app.getPath('userData'), enable)
++    app.relaunch()
++    app.quit()
++  }
+   const devToolsItems: MenuItemConstructorOptions[] = [
+     { role: 'toggleDevTools', visible: false },
+     { role: 'toggleDevTools', visible: false, accelerator: 'F12' },
+diff --git a/apps/desktop/src/preload-browser-guest.ts b/apps/desktop/src/preload-browser-guest.ts
+new file mode 100644
+index 00000000..a72f738c
+--- /dev/null
++++ b/apps/desktop/src/preload-browser-guest.ts
+@@ -0,0 +1,17 @@
++/**
++ * Sidebar Browser guest preload. An embedded page has no window of its own, so it reports an outer
++ * window of 0×0, which sign-in pages such as Google's read as an embedded browser. Before the page's own
++ * scripts run, this reports the screen's available size instead, as a page in a full-size browser window
++ * sees. (Harness Studio patch.)
++ */
++import { contextBridge } from 'electron'
++
++contextBridge.executeInMainWorld({
++  func: () => {
++    const outer = { outerWidth: () => screen.availWidth, outerHeight: () => screen.availHeight }
++    for (const [name, read] of Object.entries(outer)) {
++      if (window[name as keyof typeof outer] !== 0) continue
++      Object.defineProperty(window, name, { configurable: true, enumerable: true, get: read })
++    }
++  },
++})
+diff --git a/apps/desktop/src/studio-browser-setting.ts b/apps/desktop/src/studio-browser-setting.ts
+new file mode 100644
+index 00000000..3b6b1f10
+--- /dev/null
++++ b/apps/desktop/src/studio-browser-setting.ts
+@@ -0,0 +1,38 @@
++/**
++ * Harness Studio's opt-in Browser pane sign-in compatibility setting, stored in
++ * `<userData>/desktop/browser-pane.json` as `{ "signInCompatibility": boolean }`.
++ * Off when the file is missing or unreadable; a change takes effect after a restart.
++ */
++import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
++import { join } from 'node:path'
++
++function settingPath(userData: string): string {
++  return join(userData, 'desktop', 'browser-pane.json')
++}
++
++/**
++ * Read whether the Browser pane uses the sign-in compatible identity and shared storage.
++ * @param userData - Electron's userData directory.
++ * @returns true only when the stored document says so.
++ */
++export function readBrowserSignInCompatibility(userData: string): boolean {
++  try {
++    const value: unknown = JSON.parse(readFileSync(settingPath(userData), 'utf8'))
++    return typeof value === 'object' && value !== null && (value as { signInCompatibility?: unknown }).signInCompatibility === true
++  } catch (_error) {
++    // A missing or malformed document leaves the setting off, the upstream behaviour.
++    return false
++  }
++}
++
++/**
++ * Store the setting for the next start.
++ * @param userData - Electron's userData directory.
++ * @param enabled - whether the next start uses sign-in compatibility.
++ */
++export function writeBrowserSignInCompatibility(userData: string, enabled: boolean): void {
++  const path = settingPath(userData)
++  mkdirSync(join(userData, 'desktop'), { recursive: true, mode: 0o700 })
++  writeFileSync(`${path}.tmp`, `${JSON.stringify({ signInCompatibility: enabled }, null, 2)}\n`, { mode: 0o600 })
++  renameSync(`${path}.tmp`, path)
++}
+diff --git a/apps/desktop/tsdown.config.ts b/apps/desktop/tsdown.config.ts
+index d8470bac..338504da 100644
+--- a/apps/desktop/tsdown.config.ts
++++ b/apps/desktop/tsdown.config.ts
+@@ -90,7 +90,7 @@ export default defineConfig([
+     clean: false,
+     deps: { neverBundle: ['electron'] },
+   },
+-  ...(['preload-app', 'preload-welcome', 'preload-platform-account', 'preload-mandatory', 'preload-update-dialog'] as const).map(name => ({
++  ...(['preload-app', 'preload-welcome', 'preload-platform-account', 'preload-mandatory', 'preload-update-dialog', 'preload-browser-guest'] as const).map(name => ({
+     // Sandboxed Electron preloads run as CommonJS even though the application package is ESM.
+     entry: { [name]: `lib/types/${name}.js` },
+     plugins: [packagedImportsPlugin(preloadImports)],

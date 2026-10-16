@@ -1,0 +1,34 @@
+{
+  "name": "@harness-studio/connectors",
+  "version": "0.1.0",
+  "description": "MCP connectors for Harness Studio, like Claude Code desktop's: add servers by URL or command, sign in with OAuth, see live status, and turn each on or off per session from the + menu.",
+  "license": "MIT",
+  "author": "Vignesh Murugan",
+  "homepage": "https://github.com/vigneshv1cky/harness-studio/tree/main/plugins/connectors#readme",
+  "repository": { "type": "git", "url": "git+https://github.com/vigneshv1cky/harness-studio.git", "directory": "plugins/connectors" },
+  "bugs": "https://github.com/vigneshv1cky/harness-studio/issues",
+  "type": "module",
+  "keywords": ["harness-plugin", "harness-studio", "mcp", "connectors", "oauth"],
+  "engines": {
+    "dsh": ">=0.2.1-alpha.3 <0.3.0"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": ["index.js", "mcp-connection.js", "oauth.js", "store.js", "helper.js", "client.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md"],
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "immediately": false,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-commands",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  }
+}

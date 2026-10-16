@@ -1,0 +1,43 @@
+# Builds the unsigned Harness Studio installer for Windows (x64). Harness packages Windows only on a
+# Windows x64 machine, so this runs desktop/build-windows.sh on a GitHub-hosted Windows runner and keeps
+# the installer and its checksum as a workflow artifact for 30 days. Run it from the Actions tab, or push
+# a tag starting with "v".
+name: Build Windows app
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: pnpm/action-setup@v5.0.0
+        with:
+          version: 11.28.5
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Build the installer
+        run: desktop/build-windows.sh
+
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: harness-studio-windows-x64
+          path: |
+            dist/Harness-Studio-*-win-x64-setup.exe
+            dist/Harness-Studio-*-win-x64-setup.exe.sha256
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,1 @@
+../../plugins/devpreview-companion/companion.js

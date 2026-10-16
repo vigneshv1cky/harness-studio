@@ -1,0 +1,4 @@
+#!/bin/sh
+# Stand-in browser for tests: follow the sign-in link and its redirects.
+echo "[fake browser] $1" >&2
+curl -sL -o /dev/null -w "[fake browser] final %{http_code} %{url_effective}\n" "$1" >&2

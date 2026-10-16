@@ -1,0 +1,114 @@
+diff --git a/apps/desktop/scripts/prepare-package-set.ts b/apps/desktop/scripts/prepare-package-set.ts
+index 7e7d62ee..e08defc4 100644
+--- a/apps/desktop/scripts/prepare-package-set.ts
++++ b/apps/desktop/scripts/prepare-package-set.ts
+@@ -20,6 +20,7 @@ import {
+   DESKTOP_HOST_RUNTIME_FILES,
+   DESKTOP_PACKAGES_DIR,
+   DESKTOP_PACKAGE_SET_FILE,
++  STUDIO_BUNDLED_PLUGINS,
+   parseDesktopCorePackageSet,
+   type DesktopCorePackageRecord,
+ } from '../src/core-package-set.ts'
+@@ -28,7 +29,7 @@ import { tarballFiles } from '../../../scripts/release/tarball.ts'
+ import { resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
+ 
+ const DSH_PACKAGE = '@deepseek-ai/dsh'
+-const ROOT_PACKAGES = [DSH_PACKAGE, DESKTOP_HOST_PACKAGE] as const
++const ROOT_PACKAGES = [DSH_PACKAGE, DESKTOP_HOST_PACKAGE, ...STUDIO_BUNDLED_PLUGINS] as const
+ const APP_ROOT = resolve(import.meta.dirname, '..')
+ const REPOSITORY_ROOT = resolve(APP_ROOT, '..', '..')
+ 
+@@ -164,6 +165,7 @@ function main(): void {
+     buildPaths.packedDsh,
+     buildPaths.packedVendor,
+     buildPaths.packedLandlock,
++    join(REPOSITORY_ROOT, 'harness-studio-plugins'),
+   ]
+   const { values } = parseArgs({
+     options: { from: { type: 'string', multiple: true }, out: { type: 'string' } },
+diff --git a/apps/desktop/src/core-package-set.ts b/apps/desktop/src/core-package-set.ts
+index 0c148e22..37a35484 100644
+--- a/apps/desktop/src/core-package-set.ts
++++ b/apps/desktop/src/core-package-set.ts
+@@ -13,6 +13,12 @@ export const DESKTOP_PACKAGES_DIR = 'desktop-packages'
+ /** Private package installed beside dsh to boot the Desktop Host process. */
+ export const DESKTOP_HOST_PACKAGE = '@deepseek-ai/dsh-desktop-host'
+ 
++/**
++ * Harness Studio plugins shipped inside the application and enabled in a new Desktop profile.
++ * Their tarballs are read from `harness-studio-plugins/` at the repository root when the package set is prepared.
++ */
++export const STUDIO_BUNDLED_PLUGINS = ['@harness-studio/devpreview', '@harness-studio/connectors', '@harness-studio/compact'] as const
++
+ /** Package-relative Desktop Host files required before a profile can boot. */
+ export const DESKTOP_HOST_RUNTIME_FILES = [
+   'lib/index.js',
+diff --git a/apps/desktop/src/project-manager.ts b/apps/desktop/src/project-manager.ts
+index 270d87d6..aa1770b7 100644
+--- a/apps/desktop/src/project-manager.ts
++++ b/apps/desktop/src/project-manager.ts
+@@ -16,6 +16,7 @@ import {
+ import { join } from 'node:path'
+ import {
+   DESKTOP_HOST_PACKAGE,
++  STUDIO_BUNDLED_PLUGINS,
+   desktopCorePackageOverrides,
+   verifyDesktopCorePackageSet,
+ } from './core-package-set.ts'
+@@ -170,7 +171,7 @@ export function createDevelopmentProjectMetadata(projectDir: string, release: De
+   writeFileSync(join(projectDir, 'pnpm-workspace.yaml'), workspaceFile(), { mode: 0o600 })
+ }
+ 
+-/** Create the first external plugin profile without running a package manager. */
++/** Create the first external plugin profile, with Harness Studio's bundled plugins enabled, without running a package manager. */
+ export function createPluginProfile(projectDir: string): void {
+-  initProfile(projectDir, WEB_PROFILE.bundles)
++  initProfile(projectDir, [...WEB_PROFILE.bundles, ...STUDIO_BUNDLED_PLUGINS])
+ }
+diff --git a/packages/boot/app-boot/src/profile.ts b/packages/boot/app-boot/src/profile.ts
+index cbece01b..8f7fce5f 100644
+--- a/packages/boot/app-boot/src/profile.ts
++++ b/packages/boot/app-boot/src/profile.ts
+@@ -376,9 +376,13 @@ function profileDependencyNames(manifest: ProfileManifest): string[] {
+   return [...Object.keys(manifest.dependencies ?? {}), ...Object.keys(manifest.peerDependencies ?? {})]
+ }
+ 
+-/** Resolve the installation packages that the runtime resolver supplies to every profile. */
++/**
++ * Resolve the installation packages that the runtime resolver supplies to every profile.
++ * `installedBundles` names profile bundles that the installation itself ships beside dsh (Harness Studio's
++ * built-in plugins); they and their dependencies join the installation scope as if dsh declared them.
++ */
+ function collectInstallationScopePackages(
+-  installAnchor: string, skippedBundles: ReadonlySet<string>,
++  installAnchor: string, skippedBundles: ReadonlySet<string>, installedBundles: readonly string[] = [],
+ ): {
+   packageNames: ReadonlySet<string>
+   packageDirs: ReadonlyMap<string, string>
+@@ -401,7 +405,11 @@ function collectInstallationScopePackages(
+   }
+   // BFS over the resolvable dependency graph; the visited set is the link
+   // map itself (first resolution wins, matching Node's own nearest-wins).
+-  const queue: { anchor: string; manifest: ProfileManifest }[] = [{ anchor: canonicalAnchor, manifest: appManifest }]
++  const seed: ProfileManifest = installedBundles.length === 0 ? appManifest : {
++    ...appManifest,
++    dependencies: { ...appManifest.dependencies, ...Object.fromEntries(installedBundles.map(name => [name, '*'])) },
++  }
++  const queue: { anchor: string; manifest: ProfileManifest }[] = [{ anchor: canonicalAnchor, manifest: seed }]
+   for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+     // Peer dependencies participate: Service Definition packages (dsh-subprocess,
+     // dsh-compaction, ...) are peers of their implementations, never plain
+@@ -451,8 +459,11 @@ export async function createRuntimeResolution(
+   const { installAnchor, profile, home = resolveDshHome() } = options
+   const profilesDir = join(home, PROFILES_DIR)
+   const manifest = readOptionalProfileManifest(profile)
++  const installedBundles = (profile?.layers ?? [])
++    .filter(layer => packageDirFromAnchor(installAnchor, layer.packageName) === layer.packageDir)
++    .map(layer => layer.packageName)
+   const { packageNames, packageDirs, declarers, versions } = collectInstallationScopePackages(
+-    installAnchor, new Set(profile?.skippedBundles.map(skipped => skipped.packageName)),
++    installAnchor, new Set(profile?.skippedBundles.map(skipped => skipped.packageName)), installedBundles,
+   )
+   const profileDeclarers = new Map<string, string>()
+   const profileVersions = new Map<string, string | undefined>()

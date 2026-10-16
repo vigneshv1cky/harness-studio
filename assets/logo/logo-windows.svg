@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b82f6"/>
+      <stop offset="1" stop-color="#1d4ed8"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="230" fill="url(#bg)"/>
+  <g id="tray-glyph">
+    <g transform="translate(512 512) scale(1.2427) translate(-512 -512)">
+      <g stroke="#fff" stroke-width="64" stroke-linecap="round" fill="none">
+        <circle cx="512" cy="512" r="190"/>
+        <line x1="512" y1="230" x2="512" y2="290"/>
+        <line x1="512" y1="734" x2="512" y2="794"/>
+        <line x1="230" y1="512" x2="290" y2="512"/>
+        <line x1="734" y1="512" x2="794" y2="512"/>
+      </g>
+      <circle cx="512" cy="512" r="62" fill="#fff"/>
+    </g>
+  </g>
+</svg>

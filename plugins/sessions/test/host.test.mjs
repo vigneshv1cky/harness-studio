@@ -1,0 +1,317 @@
+// The Host half against a fake Harness: the services it calls are stand-ins that record what happened.
+// Covers starting (both initiations), reports and the wake budget, orphaned parents, archive clean-up,
+// stop_session, restart reconciliation and disposal. The real Harness services are exercised by the
+// manual run described in the README.
+import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
+import test from 'node:test'
+import { apply } from '../index.js'
+
+class FakeAgent {
+  constructor(id, cwd) {
+    this.id = id
+    this.status = 'idle'
+    this.cwd = cwd
+    this.session = { id, header: { cwd }, title: undefined }
+    this.followed = []
+    this.injected = []
+    this.cancelled = []
+  }
+  followup(message) { this.followed.push(message); this.status = 'running' }
+  inject(message) { this.injected.push(message) }
+  cancel(cause) { this.cancelled.push(cause); this.status = 'idle' }
+}
+
+async function harness(t, { answer, home: givenHome, listed } = {}) {
+  const home = givenHome ?? await realpath(await mkdtemp(path.join(os.tmpdir(), 'hs-sessions-host-')))
+  if (!givenHome) t.after(() => rm(home, { recursive: true, force: true }))
+  const listeners = new Map()
+  const disposers = []
+  const tools = new Map()
+  const agents = new Map()
+  const archived = []
+  const questionsAsked = []
+  let next = 0
+  const presets = new Map()
+  /** Background jobs by id: { id, owner, status }. */
+  const jobs = new Map()
+  const ctx = {
+    get: name => ({
+      profileContext: { home },
+      permissionPresets: { current: s => presets.get(s.id) ?? 'ask', set: (s, n) => presets.set(s.id, n) },
+      userQuestions: { ask: async request => { questionsAsked.push(request); return answer(request) } },
+      jobs: {
+        list: owner => [...jobs.values()].filter(j => j.owner === owner),
+        kill: (id, owner, reason) => { const j = jobs.get(id); assert.equal(j.owner, owner); j.status = 'killed'; j.reason = reason; return 'requested' },
+      },
+    })[name],
+    effect: (fn) => { const d = fn(); if (typeof d === 'function') disposers.push(d) },
+    on: (name, fn) => { if (!listeners.has(name)) listeners.set(name, []); listeners.get(name).push(fn) },
+    tools: { register: tool => { tools.set(tool.name, tool); return () => tools.delete(tool.name) } },
+    systemPrompt: { context: () => {} },
+    agents: { get: id => agents.get(id), withoutInitiator: fn => fn() },
+    sessions: { flush: async () => true },
+    sessionController: {
+      create: async ({ workspaceId }) => {
+        const id = `session-${++next}`
+        agents.set(id, new FakeAgent(id, workspaceId.slice(3)))
+        return { sessionId: id }
+      },
+      resolveAgent: async id => (agents.has(id) ? { agent: agents.get(id) } : { error: new Error(`session "${id}" not found`) }),
+      list: async () => ({ items: (listed ?? [...agents.keys()]).map(sessionId => ({ sessionId })) }),
+    },
+    sessionTitle: { rename: (s, title) => { s.title = title }, get: s => ({ title: s.title }) },
+    workspaceRegistry: {
+      create: async p => ({ id: `ws:${p}` }),
+      archivedSessionIds: archived,
+      archiveSession: async id => { archived.push(id) },
+    },
+    workingDirectory: { ensure: async a => a.cwd, set: async (a, p) => { a.cwd = p } },
+  }
+  apply(ctx, {})
+  const emit = async (name, ...args) => { for (const fn of listeners.get(name) ?? []) await fn(...args) }
+  const parent = new FakeAgent('parent-1', home)
+  parent.session.title = 'Main'
+  agents.set(parent.id, parent)
+  const call = (name, args, agent = parent) => tools.get(name).execute(args, { agent, signal: new AbortController().signal })
+  /** Play one finished turn of a Session: the triggering message, an answer, the end. */
+  const turn = async (agent, { text = 'done', source = 'harness-studio-brief', reason = { kind: 'completed' }, n = 1 } = {}) => {
+    await emit('session/event', agent.session, { type: 'user/message', data: { source: { kind: source } } })
+    await emit('session/event', agent.session, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text }] } } })
+    agent.status = 'idle'
+    await emit('session/event', agent.session, { type: 'turn/end', data: { turn: n, reason } })
+    await sleep(20)
+  }
+  const dispose = async () => { for (const d of disposers.reverse()) await d() }
+  t.after(dispose)
+  return { home, ctx, agents, archived, presets, jobs, questionsAsked, parent, call, emit, turn, dispose }
+}
+
+const recordFile = home => path.join(home, 'harness-studio', 'sessions.json')
+const childOf = (h, result) => h.agents.get(/\((session-\d+)\)/.exec(result)[1])
+
+test('user_asked start creates a titled Session with the parent preset and sends the brief', async t => {
+  const h = await harness(t)
+  h.presets.set(h.parent.id, 'read-only')
+  const result = await h.call('start_session', { title: 'Write docs', prompt: 'Document the API.', background: 'Use English.', initiation: 'user_asked' })
+  const child = childOf(h, result)
+  assert.equal(child.session.title, 'Write docs')
+  assert.equal(h.presets.get(child.id), 'read-only')
+  assert.equal(child.followed.length, 1)
+  const brief = child.followed[0]
+  assert.equal(brief.source.kind, 'harness-studio-brief')
+  assert.equal(brief.source.senderSessionId, h.parent.id)
+  assert.match(brief.content[0].text, /Use English\.[\s\S]*Document the API\./)
+  assert.equal(h.questionsAsked.length, 0, 'no card for a user request')
+  const saved = JSON.parse(await readFile(recordFile(h.home), 'utf8'))
+  assert.equal(saved.children[child.id].parentId, h.parent.id)
+})
+
+test('proposal: the card question carries the short context; "Do it here" creates nothing; "Start" starts it', async t => {
+  let choice = 'Do it here'
+  const h = await harness(t, { answer: () => ({ answers: [{ id: 'harness-studio/start-session', selected: [choice] }] }) })
+  const declined = await h.call('start_session', { title: 'Refactor', prompt: 'p', initiation: 'proposal' })
+  assert.match(declined, /chose to do this here/)
+  assert.equal(h.agents.size, 1, 'only the parent exists')
+  const question = h.questionsAsked[0].questions[0]
+  assert.equal(question.id, 'harness-studio/start-session')
+  assert.equal(question.header, 'New session')
+  assert.equal(question.question, 'Refactor')
+  assert.equal(question.options.map(o => o.label).join('|'), 'Start|Do it here')
+  assert.ok(!question.detail.split('\n\n')[0].includes(h.home), 'the context line never shows a temporary folder in full')
+  choice = 'Start'
+  const started = await h.call('start_session', { title: 'Refactor', prompt: 'p', initiation: 'proposal' })
+  assert.match(started, /Started session "Refactor"/)
+})
+
+test('proposal: the worktree switch in the card\'s Options is honoured', async t => {
+  const h = await harness(t, { answer: () => ({ answers: [{ id: 'harness-studio/start-session', selected: ['Start'], custom: '{"worktree":true}' }] }) })
+  const repo = path.join(h.home, 'repo')
+  execFileSync('git', ['init', '-q', '-b', 'main', repo])
+  execFileSync('git', ['-C', repo, '-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-q', '--allow-empty', '-m', 'first'])
+  const result = await h.call('start_session', { title: 'Switched on', prompt: 'p', folder: repo, initiation: 'proposal' })
+  assert.match(result, /branch harness\/switched-on/)
+  assert.equal(execFileSync('git', ['-C', childOf(h, result).cwd, 'branch', '--show-current'], { encoding: 'utf8' }).trim(), 'harness/switched-on')
+})
+
+test('a subagent cannot start sessions', async t => {
+  const h = await harness(t)
+  const sub = new FakeAgent('sub-1', h.home)
+  sub.session.header.origin = 'subagent'
+  await assert.rejects(h.call('start_session', { title: 't', prompt: 'p', initiation: 'user_asked' }, sub), /Only a top-level session/)
+})
+
+test('a finished turn wakes the idle parent with a fenced report; a busy parent gets it at its next step', async t => {
+  const h = await harness(t)
+  const child = childOf(h, await h.call('start_session', { title: 'Tests', prompt: 'p', initiation: 'user_asked' }))
+  await h.turn(child, { text: 'All 12 tests pass.' })
+  assert.equal(h.parent.followed.length, 1)
+  const report = h.parent.followed[0]
+  assert.equal(report.source.kind, 'harness-studio-report')
+  assert.equal(report.source.form, 'notice')
+  assert.match(report.content[0].text, /All 12 tests pass\./)
+  h.parent.status = 'running'
+  await h.turn(child, { text: 'Second.', n: 2 })
+  assert.equal(h.parent.injected.length, 1)
+  await h.turn(child, { text: 'Again.', n: 2 })
+  assert.equal(h.parent.injected.length, 1, 'a turn is reported once')
+})
+
+test('a turn the user drove in the child does not wake the parent; the wake budget stops ping-pong', async t => {
+  const h = await harness(t)
+  const child = childOf(h, await h.call('start_session', { title: 'Loop', prompt: 'p', initiation: 'user_asked' }))
+  await h.turn(child, { source: 'user', n: 1 })
+  assert.equal(h.parent.followed.length, 0)
+  assert.equal(h.parent.injected.length, 1)
+  for (let n = 2; n <= 8; n++) { h.parent.status = 'idle'; await h.turn(child, { n }) }
+  assert.equal(h.parent.followed.length, 5, 'woken at most maxConsecutiveWakes times')
+  // The user speaking in the parent resets the budget.
+  await h.emit('session/event', h.parent.session, { type: 'user/message', data: { source: { kind: 'user' } } })
+  await sleep(20)
+  h.parent.status = 'idle'
+  await h.turn(child, { n: 9 })
+  assert.equal(h.parent.followed.length, 6)
+})
+
+test('a child that finishes after its parent is gone records the turn without crashing', async t => {
+  const h = await harness(t)
+  const child = childOf(h, await h.call('start_session', { title: 'Orphan', prompt: 'p', initiation: 'user_asked' }))
+  h.agents.delete(h.parent.id)
+  await h.turn(child, { text: 'finished late' })
+  const saved = JSON.parse(await readFile(recordFile(h.home), 'utf8'))
+  assert.equal(saved.children[child.id].orphaned, true)
+  assert.equal(saved.children[child.id].lastReportedTurn, 1)
+})
+
+test('archiving the parent cancels its children\'s running turns through Harness cancellation', async t => {
+  const h = await harness(t)
+  const child = childOf(h, await h.call('start_session', { title: 'Long', prompt: 'p', initiation: 'user_asked' }))
+  assert.equal(child.status, 'running')
+  h.jobs.set('job-bg', { id: 'job-bg', owner: child.id, status: 'running' })
+  await h.emit('workspace/session-stop', { sessionId: h.parent.id })
+  assert.deepEqual(child.cancelled, [{ kind: 'parent' }])
+  assert.equal(h.jobs.get('job-bg').status, 'killed', 'the child\'s background job is killed too')
+  await h.turn(child, { reason: { kind: 'aborted', reason: { kind: 'parent' } } })
+  assert.equal(h.parent.followed.length + h.parent.injected.length, 0, 'no report to a parent that is gone')
+})
+
+test('a parent archived while idle ends the child\'s turn at its next step', async t => {
+  const h = await harness(t)
+  const child = childOf(h, await h.call('start_session', { title: 'Step', prompt: 'p', initiation: 'user_asked' }))
+  h.archived.push(h.parent.id)
+  await h.emit('session/event', child.session, { type: 'step/start', data: { turn: 1, step: 2 } })
+  await sleep(20)
+  assert.deepEqual(child.cancelled, [{ kind: 'parent' }])
+})
+
+test('archiving a child releases its turn state and closes its record', async t => {
+  const h = await harness(t)
+  const child = childOf(h, await h.call('start_session', { title: 'Close', prompt: 'p', initiation: 'user_asked' }))
+  await h.emit('session/event', child.session, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'half' }] } } })
+  await h.emit('workspace/session-stop', { sessionId: child.id })
+  await h.emit('session/event', child.session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } } })
+  await sleep(20)
+  assert.equal(h.parent.followed.length + h.parent.injected.length, 0)
+  const saved = JSON.parse(await readFile(recordFile(h.home), 'utf8'))
+  assert.equal(saved.children[child.id].closed, true)
+  await assert.rejects(h.call('message_session', { session_id: child.id, message: 'more' }), /archived/)
+})
+
+test('stop_session ends a running child turn; only the parent\'s own children are reachable', async t => {
+  const h = await harness(t)
+  const child = childOf(h, await h.call('start_session', { title: 'Stop me', prompt: 'p', initiation: 'user_asked' }))
+  h.jobs.set('job-1', { id: 'job-1', owner: child.id, status: 'running' })
+  h.jobs.set('job-2', { id: 'job-2', owner: child.id, status: 'completed' })
+  assert.match(await h.call('stop_session', { session_id: child.id }), /its running turn \(queued messages dropped\) and 1 background job/)
+  assert.deepEqual(child.cancelled, [{ kind: 'parent' }])
+  assert.equal(h.jobs.get('job-1').status, 'killed')
+  assert.equal(h.jobs.get('job-2').status, 'completed', 'finished jobs are left alone')
+  assert.match(await h.call('stop_session', { session_id: child.id }), /not running a turn or background jobs/)
+  const stranger = new FakeAgent('other-1', h.home)
+  h.agents.set(stranger.id, stranger)
+  await assert.rejects(h.call('stop_session', { session_id: child.id }, stranger), /not a session this session started/)
+})
+
+test('restart reconciliation drops records of vanished Sessions and marks missing worktrees, deleting nothing', async t => {
+  const home = await realpath(await mkdtemp(path.join(os.tmpdir(), 'hs-sessions-rec-')))
+  t.after(() => rm(home, { recursive: true, force: true }))
+  const keptWorktree = path.join(home, 'wt-present')
+  execFileSync('mkdir', ['-p', keptWorktree])
+  await writeFile(path.join(keptWorktree, 'work.txt'), 'user work\n')
+  execFileSync('mkdir', ['-p', path.join(home, 'harness-studio')])
+  await writeFile(recordFile(home), JSON.stringify({
+    version: 1,
+    wakeStreak: { 'parent-1': 3 },
+    children: {
+      'session-a': { id: 'session-a', parentId: 'parent-1', title: 'A', folder: home, depth: 1, createdAt: 'x', worktreePath: keptWorktree, branch: 'h/a', repoRoot: home },
+      'session-b': { id: 'session-b', parentId: 'parent-1', title: 'B', folder: home, depth: 1, createdAt: 'x', worktreePath: path.join(home, 'wt-gone'), branch: 'h/b', repoRoot: home },
+      'session-gone': { id: 'session-gone', parentId: 'parent-1', title: 'G', folder: home, depth: 1, createdAt: 'x' },
+    },
+  }))
+  const h = await harness(t, { home, listed: ['parent-1', 'session-a', 'session-b'] })
+  await h.call('list_sessions', {})
+  const once = JSON.parse(await readFile(recordFile(home), 'utf8'))
+  assert.deepEqual(Object.keys(once.children).sort(), ['session-a', 'session-b'])
+  assert.equal(once.children['session-a'].worktreeMissing, undefined)
+  assert.equal(once.children['session-b'].worktreeMissing, true)
+  assert.equal(await readFile(path.join(keptWorktree, 'work.txt'), 'utf8'), 'user work\n', 'worktree content untouched')
+  await h.dispose()
+  // A second start finds nothing more to change.
+  const again = await harness(t, { home, listed: ['parent-1', 'session-a', 'session-b'] })
+  await again.call('list_sessions', {})
+  assert.deepEqual(JSON.parse(await readFile(recordFile(home), 'utf8')), once)
+})
+
+test('after disposal no listener acts and no report is delivered', async t => {
+  const h = await harness(t)
+  const child = childOf(h, await h.call('start_session', { title: 'Late', prompt: 'p', initiation: 'user_asked' }))
+  await h.dispose()
+  await h.turn(child)
+  assert.equal(h.parent.followed.length + h.parent.injected.length, 0)
+})
+
+test('worktree start moves only the working directory; a failed start archives the Session and discards the fresh worktree', async t => {
+  const h = await harness(t)
+  const repo = path.join(h.home, 'repo')
+  execFileSync('git', ['init', '-q', '-b', 'main', repo])
+  execFileSync('git', ['-C', repo, '-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-q', '--allow-empty', '-m', 'first'])
+  const result = await h.call('start_session', { title: 'Parallel fix', prompt: 'p', folder: repo, worktree: true, initiation: 'user_asked' })
+  const child = childOf(h, result)
+  assert.equal(child.session.header.cwd, repo, 'the stored folder stays the repository')
+  assert.ok(child.cwd.startsWith(path.join(h.home, 'harness-studio', 'worktrees') + path.sep), child.cwd)
+  assert.equal(execFileSync('git', ['-C', child.cwd, 'branch', '--show-current'], { encoding: 'utf8' }).trim(), 'harness/parallel-fix')
+  assert.equal(execFileSync('git', ['-C', repo, 'status', '--porcelain'], { encoding: 'utf8' }), '', 'main checkout untouched')
+
+  h.ctx.sessionTitle.rename = () => { throw new Error('title service failed') }
+  await assert.rejects(h.call('start_session', { title: 'Broken', prompt: 'p', folder: repo, worktree: true, initiation: 'user_asked' }), /title service failed/)
+  const failedId = `session-${h.agents.size - 1}` // the parent is not a numbered Session
+  assert.ok(h.archived.includes(failedId), 'the blank Session is archived')
+  assert.equal(execFileSync('git', ['-C', repo, 'branch', '--list', 'harness/broken'], { encoding: 'utf8' }), '', 'the fresh branch is gone')
+})
+
+test('an idle parent archived without stopping work stops its children right after the archive', async t => {
+  const h = await harness(t)
+  const child = childOf(h, await h.call('start_session', { title: 'Idle archive', prompt: 'p', initiation: 'user_asked' }))
+  h.jobs.set('job-sleep', { id: 'job-sleep', owner: child.id, status: 'running' })
+  // Harness asks for the parent's activity, then writes the archive.
+  const ctxOn = []
+  await h.emit('workspace/session-activity', { sessionId: h.parent.id }, async () => ctxOn)
+  h.archived.push(h.parent.id)
+  const orphaned = async () => JSON.parse(await readFile(recordFile(h.home), 'utf8')).children[child.id].orphaned === true
+  for (let i = 0; i < 100 && !(await orphaned()); i++) await sleep(50)
+  assert.deepEqual(child.cancelled, [{ kind: 'parent' }])
+  assert.equal(h.jobs.get('job-sleep').status, 'killed')
+  assert.equal(await orphaned(), true)
+})
+
+test('an archive that was refused stops nothing', async t => {
+  const h = await harness(t)
+  const child = childOf(h, await h.call('start_session', { title: 'Still wanted', prompt: 'p', initiation: 'user_asked' }))
+  await h.emit('workspace/session-activity', { sessionId: h.parent.id }, async () => [{ kind: 'turn', items: [] }])
+  await sleep(1700)
+  assert.deepEqual(child.cancelled, [])
+})

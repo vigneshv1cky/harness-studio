@@ -1,0 +1,7 @@
+<!doctype html><meta charset="utf-8"><title>Form test</title>
+<h1>Greeting form</h1>
+<form id="f"><label>Your name <input id="name" name="name" placeholder="Name"></label> <button type="submit">Greet</button></form>
+<p id="out">No greeting yet.</p>
+<script>
+document.getElementById('f').addEventListener('submit', e => { e.preventDefault(); const n = document.getElementById('name').value; document.getElementById('out').textContent = 'Hello, ' + n + '!'; console.warn('greeted ' + n) })
+</script>

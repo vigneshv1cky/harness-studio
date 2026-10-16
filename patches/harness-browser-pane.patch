@@ -1,0 +1,107 @@
+diff --git a/apps/desktop/src/browser-guests.ts b/apps/desktop/src/browser-guests.ts
+index c3f0b10e..6862dfb4 100644
+--- a/apps/desktop/src/browser-guests.ts
++++ b/apps/desktop/src/browser-guests.ts
+@@ -1,9 +1,30 @@
+ /** Main-process ownership and fixed isolation policy for Sidebar webview guests. */
+ import { randomUUID } from 'node:crypto'
++import { fileURLToPath } from 'node:url'
+ import { app, session, type BrowserWindow, type Session, type WebContents } from 'electron'
+ import type { DesktopBrowserLeaseId, DesktopBrowserOpenRequest, DesktopBrowserReservation } from '@deepseek-ai/dsh-client-ui-sidebar-browser/types'
+ import { DESKTOP_IPC } from './ipc.ts'
+ 
++/**
++ * One persistent partition shared by every workspace, so Browser pane sign-ins survive restarts and
++ * carry across workspaces, like a regular browser profile. (Harness Studio patch.)
++ */
++const SHARED_PARTITION = 'persist:dsh-sidebar-browser'
++
++/**
++ * The Browser pane's user-agent string: the app's own with the Electron and dsh-desktop tokens removed and
++ * a plain app token, `HarnessStudio/1.0`, before Chrome's — the shape Claude desktop's in-app browser uses.
++ * Google refuses sign-in both for identities naming Electron and for ones posing as a bare Chrome; this
++ * shape passed in a test on 2026-10-16. (Harness Studio patch.)
++ * @param appAgent - the session's default user-agent string.
++ * @returns the Browser pane's identity.
++ */
++function plainBrowserAgent(appAgent: string): string {
++  return appAgent
++    .replace(/\s(?!(?:Mozilla|AppleWebKit|Chrome|Safari)\/)[^\s/()]+\/[^\s()]+/g, '')
++    .replace(/ Chrome\//, ' HarnessStudio/1.0 Chrome/')
++}
++
+ interface GuestLease {
+   readonly owner: WebContents
+   readonly partition: string
+@@ -32,8 +53,8 @@ export class DesktopBrowserGuests {
+     }
+     let partition = this.partitions.get(workspace)
+     if (partition === undefined) {
+-      partition = `dsh-sidebar-browser-${randomUUID()}`
+-      this.configureSession(session.fromPartition(partition))
++      partition = SHARED_PARTITION
++      if (![...this.partitions.values()].includes(partition)) this.configureSession(session.fromPartition(partition))
+       this.partitions.set(workspace, partition)
+     }
+     const lease = randomUUID() as DesktopBrowserLeaseId
+@@ -88,6 +109,8 @@ export class DesktopBrowserGuests {
+         contextIsolation: true, sandbox: true, webSecurity: true, allowRunningInsecureContent: false,
+         webviewTag: false, plugins: false, navigateOnDragDrop: false, disableDialogs: true,
+         devTools: !app.isPackaged,
++        // Reports a real outer window size before page scripts run. (Harness Studio patch.)
++        preload: fileURLToPath(new URL('./preload-browser-guest.cjs', import.meta.url)),
+       })
+       params.httpreferrer = ''
+     })
+@@ -144,6 +167,15 @@ export class DesktopBrowserGuests {
+     browserSession.setDevicePermissionHandler(() => false)
+     browserSession.setDisplayMediaRequestHandler((_request, callback) => { callback({}) })
+     browserSession.on('will-download', (event) => { event.preventDefault() })
++    // A plain browser identity for every request this session makes, workers and service workers included:
++    // set on the session, and enforced on each request's header. (Harness Studio patch.)
++    const agent = plainBrowserAgent(browserSession.getUserAgent())
++    browserSession.setUserAgent(agent)
++    browserSession.webRequest.onBeforeSendHeaders((details, callback) => {
++      const headers = details.requestHeaders
++      const key = Object.keys(headers).find(name => name.toLowerCase() === 'user-agent') ?? 'User-Agent'
++      callback({ requestHeaders: { ...headers, [key]: agent } })
++    })
+     browserSession.webRequest.onBeforeRequest((details, callback) => {
+       const url = new URL(details.url)
+       const network = ['http:', 'https:', 'ws:', 'wss:'].includes(url.protocol)
+diff --git a/apps/desktop/src/preload-browser-guest.ts b/apps/desktop/src/preload-browser-guest.ts
+new file mode 100644
+index 00000000..a72f738c
+--- /dev/null
++++ b/apps/desktop/src/preload-browser-guest.ts
+@@ -0,0 +1,17 @@
++/**
++ * Sidebar Browser guest preload. An embedded page has no window of its own, so it reports an outer
++ * window of 0×0, which sign-in pages such as Google's read as an embedded browser. Before the page's own
++ * scripts run, this reports the screen's available size instead, as a page in a full-size browser window
++ * sees. (Harness Studio patch.)
++ */
++import { contextBridge } from 'electron'
++
++contextBridge.executeInMainWorld({
++  func: () => {
++    const outer = { outerWidth: () => screen.availWidth, outerHeight: () => screen.availHeight }
++    for (const [name, read] of Object.entries(outer)) {
++      if (window[name as keyof typeof outer] !== 0) continue
++      Object.defineProperty(window, name, { configurable: true, enumerable: true, get: read })
++    }
++  },
++})
+diff --git a/apps/desktop/tsdown.config.ts b/apps/desktop/tsdown.config.ts
+index d8470bac..338504da 100644
+--- a/apps/desktop/tsdown.config.ts
++++ b/apps/desktop/tsdown.config.ts
+@@ -90,7 +90,7 @@ export default defineConfig([
+     clean: false,
+     deps: { neverBundle: ['electron'] },
+   },
+-  ...(['preload-app', 'preload-welcome', 'preload-platform-account', 'preload-mandatory', 'preload-update-dialog'] as const).map(name => ({
++  ...(['preload-app', 'preload-welcome', 'preload-platform-account', 'preload-mandatory', 'preload-update-dialog', 'preload-browser-guest'] as const).map(name => ({
+     // Sandboxed Electron preloads run as CommonJS even though the application package is ESM.
+     entry: { [name]: `lib/types/${name}.js` },
+     plugins: [packagedImportsPlugin(preloadImports)],

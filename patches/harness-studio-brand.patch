@@ -1,0 +1,913 @@
+diff --git a/apps/desktop/README.md b/apps/desktop/README.md
+index e0bb92c5..b5967d94 100644
+--- a/apps/desktop/README.md
++++ b/apps/desktop/README.md
+@@ -365,7 +365,7 @@ An unpackaged Electron process uses `.desktop-build/development/project` under i
+ 
+ The app-only `dshOnboarding.hasApiKey()` preload method returns the welcome backend’s current API-key presence boolean; native login and onboarding share credential discovery, and only the owned application main frame may invoke it.
+ 
+-Sign in opens the configured platform page in the system browser. The Host owns PKCE and a temporary loopback callback, saves the credential before entering the workspace, and redirects the browser to the platform completion page. Opened and copied authorization links carry the effective Desktop theme as `theme=light` or `theme=dark`; `system` resolves at the time of the action. Cancel withdraws the local attempt even if the platform page later approves it. Settings offers Account sign-out; without a separate API key, sign-out returns to the welcome window. Successful browser sign-in switches Welcome to the workspace without activating the application; the completion page’s dsh://open link brings it to the foreground. Packaged applications register dsh://open to show the window without passing credentials. On macOS, the development launcher prepares an ad-hoc-signed `Harness Dev.app` under `.desktop-build/development`, declares `dsh` in its Info.plist, and registers it with Launch Services. It loads the current workspace and records the selected development home, browser-data path, and debug settings for cold starts. Starting this bundle makes it the default `dsh://` handler; starting the packaged application registers the packaged handler again. The generated bundle does not contain account tokens and requires the workspace and prepared runtime to remain available.
++Sign in opens the configured platform page in the system browser. The Host owns PKCE and a temporary loopback callback, saves the credential before entering the workspace, and redirects the browser to the platform completion page. Opened and copied authorization links carry the effective Desktop theme as `theme=light` or `theme=dark`; `system` resolves at the time of the action. Cancel withdraws the local attempt even if the platform page later approves it. Settings offers Account sign-out; without a separate API key, sign-out returns to the welcome window. Successful browser sign-in switches Welcome to the workspace without activating the application; the completion page’s dsh://open link brings it to the foreground. Packaged applications register dsh://open to show the window without passing credentials. On macOS, the development launcher prepares an ad-hoc-signed `Harness Studio.app` under `.desktop-build/development`, declares `dsh` in its Info.plist, and registers it with Launch Services. It loads the current workspace and records the selected development home, browser-data path, and debug settings for cold starts. Starting this bundle makes it the default `dsh://` handler; starting the packaged application registers the packaged handler again. The generated bundle does not contain account tokens and requires the workspace and prepared runtime to remain available.
+ 
+ When an expired account returns to Welcome, the main process retains a one-time notification until the renderer requests it over window-owned IPC. Reloading Welcome does not repeat the notice; manual sign-out and cold startup do not create it.
+ 
+diff --git a/apps/desktop/README.zh.md b/apps/desktop/README.zh.md
+index 430ac4ad..2ea06b4d 100644
+--- a/apps/desktop/README.zh.md
++++ b/apps/desktop/README.zh.md
+@@ -365,7 +365,7 @@ node apps/desktop/node_modules/pnpm/bin/pnpm.mjs --dir apps/desktop run test:upd
+ 
+ 仅向应用提供的 `dshOnboarding.hasApiKey()` preload 方法返回欢迎后端当前的 API Key 存在状态布尔值；原生登录与引导共用凭证发现逻辑，且只有受管理的应用主 frame 可以调用。
+ 
+-登录会在系统浏览器中打开配置的平台页面。Host 负责 PKCE 和临时本机回调，在进入工作区前保存凭证，再将浏览器跳转到平台完成页。打开和复制的授权链接通过 `theme=light` 或 `theme=dark` 携带当前生效的 Desktop 主题；`system` 在执行操作时解析。即使平台页面随后批准，取消仍会撤销本地尝试。设置中的账号页面提供退出；没有独立 API Key 时，退出后返回欢迎窗。浏览器登录成功后，Welcome 切换到工作区但不激活应用；完成页的 dsh://open 链接负责将客户端置前。打包应用注册 dsh://open，只显示窗口而不传递凭证。macOS 开发启动器在 `.desktop-build/development` 下准备经临时签名的 `Harness Dev.app`，在 Info.plist 中声明 `dsh` 并注册到 Launch Services。它加载当前工作区，并记录选定的开发 home、浏览器数据路径和调试设置，以供冷启动使用。启动此应用会将其设为 `dsh://` 默认处理程序；启动打包应用会重新注册打包版处理程序。生成的应用包不包含账号 token，依赖工作区和已准备的运行环境继续存在。
++登录会在系统浏览器中打开配置的平台页面。Host 负责 PKCE 和临时本机回调，在进入工作区前保存凭证，再将浏览器跳转到平台完成页。打开和复制的授权链接通过 `theme=light` 或 `theme=dark` 携带当前生效的 Desktop 主题；`system` 在执行操作时解析。即使平台页面随后批准，取消仍会撤销本地尝试。设置中的账号页面提供退出；没有独立 API Key 时，退出后返回欢迎窗。浏览器登录成功后，Welcome 切换到工作区但不激活应用；完成页的 dsh://open 链接负责将客户端置前。打包应用注册 dsh://open，只显示窗口而不传递凭证。macOS 开发启动器在 `.desktop-build/development` 下准备经临时签名的 `Harness Studio.app`，在 Info.plist 中声明 `dsh` 并注册到 Launch Services。它加载当前工作区，并记录选定的开发 home、浏览器数据路径和调试设置，以供冷启动使用。启动此应用会将其设为 `dsh://` 默认处理程序；启动打包应用会重新注册打包版处理程序。生成的应用包不包含账号 token，依赖工作区和已准备的运行环境继续存在。
+ 
+ 账号失效并返回 Welcome 时，主进程保留一次性通知，直到渲染器通过所属窗口的 IPC 领取。重新加载 Welcome 不会重复提示；主动退登和冷启动不会生成该通知。
+ 
+diff --git a/apps/desktop/resources/icon-macos.svg b/apps/desktop/resources/icon-macos.svg
+index 36d9068c..68c210b2 100644
+--- a/apps/desktop/resources/icon-macos.svg
++++ b/apps/desktop/resources/icon-macos.svg
+@@ -1,59 +1,17 @@
+-<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+-<g transform="translate(100 100) scale(0.8046875) translate(-40 -32)"><g filter="url(#filter0_d_1637_371)">
+-<rect rx="230" width="1024" height="1024" transform="translate(40 32)" fill="#FBFBFB"/>
+-<rect rx="230" width="1024" height="1024" transform="translate(40 32)" fill="url(#paint0_linear_1637_371)" fill-opacity="0.4"/>
+-<rect rx="230" width="1024" height="1024" transform="translate(40 32)" fill="url(#paint1_linear_1637_371)" fill-opacity="0.8"/>
+-<g filter="url(#filter1_ddi_1637_371)">
+-<path d="M968.002 326.025C959.5 321.85 955.842 329.804 950.865 333.835C949.162 335.143 947.722 336.834 946.283 338.393C933.859 351.673 919.336 360.407 900.376 359.363C872.649 357.804 848.963 366.525 828.035 387.759C823.586 361.583 808.812 345.951 786.313 335.936C774.536 330.729 762.64 325.51 754.401 314.186C748.645 306.112 747.074 297.127 744.195 288.274C742.36 282.936 740.538 277.465 734.385 276.554C727.718 275.51 725.103 281.112 722.476 285.803C712.006 304.95 707.952 326.039 708.349 347.405C709.26 395.463 729.54 433.742 769.823 460.962C774.404 464.094 775.579 467.212 774.14 471.771C771.394 481.153 768.119 490.257 765.241 499.639C763.406 505.624 760.66 506.933 754.256 504.329C732.154 495.08 713.049 481.417 696.175 464.874C667.524 437.138 641.633 406.536 609.325 382.566C601.733 376.964 594.154 371.758 586.298 366.802C553.33 334.773 590.616 308.464 599.251 305.333C608.282 302.082 602.393 290.877 573.214 291.009C544.048 291.141 517.364 300.906 483.353 313.935C478.389 315.891 473.147 317.318 467.786 318.494C436.917 312.64 404.873 311.332 371.377 315.111C308.332 322.141 257.975 351.964 220.953 402.876C176.471 464.081 166.014 533.624 178.835 606.153C192.302 682.594 231.291 745.887 291.194 795.372C353.328 846.68 424.876 871.813 506.498 866.99C556.076 864.122 611.279 857.489 673.532 804.74C689.23 812.55 705.708 815.681 733.052 818.02C754.111 819.976 774.391 816.976 790.076 813.726C814.674 808.519 812.971 785.726 804.072 781.564C731.995 747.962 747.826 761.638 733.435 750.565C770.06 707.198 825.263 662.139 846.85 516.156C848.553 504.567 847.114 497.273 846.85 487.892C846.718 482.157 848.025 479.95 854.574 479.303C872.623 477.215 890.156 472.273 906.238 463.42C952.938 437.892 971.765 395.965 976.215 345.7C976.875 338.01 976.083 330.069 967.976 326.039L968.002 326.025ZM561.067 778.432C491.222 723.477 457.343 705.374 443.347 706.154C430.263 706.933 432.626 721.918 435.505 731.682C438.515 741.315 442.436 747.962 447.929 756.418C451.718 762.021 454.346 770.345 444.14 776.609C421.641 790.549 382.533 771.918 380.698 771.006C335.174 744.182 297.109 708.757 270.293 660.316C244.389 613.698 229.35 563.685 226.868 510.302C226.208 497.406 230.01 492.847 242.831 490.508C259.704 487.376 277.106 486.729 293.98 489.2C365.264 499.625 425.959 531.523 476.844 582.052C505.878 610.831 527.861 645.213 550.491 678.815C574.561 714.492 600.452 748.49 633.42 776.358C645.066 786.122 654.348 793.548 663.247 799.019C636.431 802.018 591.698 802.666 561.08 778.445L561.067 778.432ZM594.55 562.905C594.55 557.171 599.132 552.625 604.888 552.625C606.195 552.625 607.371 552.876 608.414 553.273C609.853 553.801 611.16 554.581 612.203 555.744C614.038 557.567 615.081 560.17 615.081 562.905C615.081 568.64 610.5 573.185 604.743 573.185C598.987 573.185 594.537 568.627 594.537 562.905H594.55ZM698.539 616.301C691.871 619.037 685.19 621.375 678.787 621.64C668.845 622.155 657.992 618.125 652.103 613.17C642.953 605.479 636.404 601.185 633.658 587.773C632.483 582.039 633.13 573.185 634.186 568.111C636.536 557.171 633.922 550.141 626.212 543.759C619.927 538.553 611.952 537.112 603.185 537.112C599.911 537.112 596.914 535.685 594.682 534.509C591.025 532.686 588.015 528.127 590.893 522.525C591.804 520.701 596.254 516.275 597.297 515.495C609.206 508.716 622.937 510.936 635.625 516.01C647.403 520.833 656.288 529.686 669.109 542.186C682.193 557.289 684.543 561.465 692.003 572.789C697.892 581.642 703.252 590.759 706.909 601.185C709.128 607.699 706.249 613.038 698.539 616.288V616.301Z" fill="url(#paint2_linear_1637_371)" fill-opacity="0.9"/>
+-</g>
+-</g>
+-</g>
+-<defs>
+-<filter id="filter0_d_1637_371" x="-8" y="-16" width="1120" height="1120" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+-<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+-<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+-<feOffset dy="8"/>
+-<feGaussianBlur stdDeviation="20"/>
+-<feComposite in2="hardAlpha" operator="out"/>
+-<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.05 0"/>
+-<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1637_371"/>
+-<feBlend mode="normal" in="BackgroundImageFix" in2="effect1_dropShadow_1637_371" result="BackgroundImageFix"/>
+-<feBlend mode="normal" in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
+-</filter>
+-<filter id="filter1_ddi_1637_371" x="133.744" y="240.427" width="882.652" height="671.147" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+-<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+-<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+-<feOffset dy="4"/>
+-<feGaussianBlur stdDeviation="20"/>
+-<feComposite in2="hardAlpha" operator="out"/>
+-<feColorMatrix type="matrix" values="0 0 0 0 0.176471 0 0 0 0 0.192157 0 0 0 0 0.231373 0 0 0 0.08 0"/>
+-<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1637_371"/>
+-<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+-<feOffset dy="8"/>
+-<feGaussianBlur stdDeviation="8"/>
+-<feComposite in2="hardAlpha" operator="out"/>
+-<feColorMatrix type="matrix" values="0 0 0 0 0.172549 0 0 0 0 0.188235 0 0 0 0 0.223529 0 0 0 0.04 0"/>
+-<feBlend mode="normal" in2="effect1_dropShadow_1637_371" result="effect2_dropShadow_1637_371"/>
+-<feBlend mode="normal" in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
+-<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+-<feOffset dx="-16" dy="-20"/>
+-<feGaussianBlur stdDeviation="30"/>
+-<feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/>
+-<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.15 0"/>
+-<feBlend mode="normal" in2="shape" result="effect3_innerShadow_1637_371"/>
+-<feBlend mode="normal" in="effect3_innerShadow_1637_371" in2="effect2_dropShadow_1637_371" result="effect3_innerShadow_1637_371"/>
+-</filter>
+-<linearGradient id="paint0_linear_1637_371" x1="973.58" y1="1.59609e-05" x2="378.123" y2="917.86" gradientUnits="userSpaceOnUse">
+-<stop offset="0.141617" stop-color="#D4DBE9"/>
+-<stop offset="0.485965" stop-color="#FBFBFB"/>
+-</linearGradient>
+-<linearGradient id="paint1_linear_1637_371" x1="603.371" y1="445.063" x2="239.356" y2="1111.41" gradientUnits="userSpaceOnUse">
+-<stop offset="0.363044" stop-color="#FBFBFB"/>
+-<stop offset="0.83031" stop-color="#E1E6EE"/>
+-</linearGradient>
+-<linearGradient id="paint2_linear_1637_371" x1="849.855" y1="39.085" x2="331.636" y2="802.645" gradientUnits="userSpaceOnUse">
+-<stop offset="0.0855249" stop-color="#1C2434"/>
+-<stop offset="1" stop-color="#0F1115"/>
+-</linearGradient>
+-</defs>
++<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
++  <defs>
++    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
++      <stop offset="0" stop-color="#3b82f6"/>
++      <stop offset="1" stop-color="#1d4ed8"/>
++    </linearGradient>
++  </defs>
++  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#bg)"/>
++  <g stroke="#fff" stroke-width="64" stroke-linecap="round" fill="none">
++    <circle cx="512" cy="512" r="190"/>
++    <line x1="512" y1="230" x2="512" y2="290"/>
++    <line x1="512" y1="734" x2="512" y2="794"/>
++    <line x1="230" y1="512" x2="290" y2="512"/>
++    <line x1="734" y1="512" x2="794" y2="512"/>
++  </g>
++  <circle cx="512" cy="512" r="62" fill="#fff"/>
+ </svg>
+diff --git a/apps/desktop/resources/icon-windows.svg b/apps/desktop/resources/icon-windows.svg
+index 212560ed..bbb6802f 100644
+--- a/apps/desktop/resources/icon-windows.svg
++++ b/apps/desktop/resources/icon-windows.svg
+@@ -1,59 +1,21 @@
+-<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+-<g transform="translate(32 32) scale(0.9375) translate(-40 -32)"><g filter="url(#filter0_d_1637_371)">
+-<rect rx="192" width="1024" height="1024" transform="translate(40 32)" fill="#FBFBFB"/>
+-<rect rx="192" width="1024" height="1024" transform="translate(40 32)" fill="url(#paint0_linear_1637_371)" fill-opacity="0.4"/>
+-<rect rx="192" width="1024" height="1024" transform="translate(40 32)" fill="url(#paint1_linear_1637_371)" fill-opacity="0.8"/>
+-<g id="tray-glyph" filter="url(#filter1_ddi_1637_371)">
+-<path d="M968.002 326.025C959.5 321.85 955.842 329.804 950.865 333.835C949.162 335.143 947.722 336.834 946.283 338.393C933.859 351.673 919.336 360.407 900.376 359.363C872.649 357.804 848.963 366.525 828.035 387.759C823.586 361.583 808.812 345.951 786.313 335.936C774.536 330.729 762.64 325.51 754.401 314.186C748.645 306.112 747.074 297.127 744.195 288.274C742.36 282.936 740.538 277.465 734.385 276.554C727.718 275.51 725.103 281.112 722.476 285.803C712.006 304.95 707.952 326.039 708.349 347.405C709.26 395.463 729.54 433.742 769.823 460.962C774.404 464.094 775.579 467.212 774.14 471.771C771.394 481.153 768.119 490.257 765.241 499.639C763.406 505.624 760.66 506.933 754.256 504.329C732.154 495.08 713.049 481.417 696.175 464.874C667.524 437.138 641.633 406.536 609.325 382.566C601.733 376.964 594.154 371.758 586.298 366.802C553.33 334.773 590.616 308.464 599.251 305.333C608.282 302.082 602.393 290.877 573.214 291.009C544.048 291.141 517.364 300.906 483.353 313.935C478.389 315.891 473.147 317.318 467.786 318.494C436.917 312.64 404.873 311.332 371.377 315.111C308.332 322.141 257.975 351.964 220.953 402.876C176.471 464.081 166.014 533.624 178.835 606.153C192.302 682.594 231.291 745.887 291.194 795.372C353.328 846.68 424.876 871.813 506.498 866.99C556.076 864.122 611.279 857.489 673.532 804.74C689.23 812.55 705.708 815.681 733.052 818.02C754.111 819.976 774.391 816.976 790.076 813.726C814.674 808.519 812.971 785.726 804.072 781.564C731.995 747.962 747.826 761.638 733.435 750.565C770.06 707.198 825.263 662.139 846.85 516.156C848.553 504.567 847.114 497.273 846.85 487.892C846.718 482.157 848.025 479.95 854.574 479.303C872.623 477.215 890.156 472.273 906.238 463.42C952.938 437.892 971.765 395.965 976.215 345.7C976.875 338.01 976.083 330.069 967.976 326.039L968.002 326.025ZM561.067 778.432C491.222 723.477 457.343 705.374 443.347 706.154C430.263 706.933 432.626 721.918 435.505 731.682C438.515 741.315 442.436 747.962 447.929 756.418C451.718 762.021 454.346 770.345 444.14 776.609C421.641 790.549 382.533 771.918 380.698 771.006C335.174 744.182 297.109 708.757 270.293 660.316C244.389 613.698 229.35 563.685 226.868 510.302C226.208 497.406 230.01 492.847 242.831 490.508C259.704 487.376 277.106 486.729 293.98 489.2C365.264 499.625 425.959 531.523 476.844 582.052C505.878 610.831 527.861 645.213 550.491 678.815C574.561 714.492 600.452 748.49 633.42 776.358C645.066 786.122 654.348 793.548 663.247 799.019C636.431 802.018 591.698 802.666 561.08 778.445L561.067 778.432ZM594.55 562.905C594.55 557.171 599.132 552.625 604.888 552.625C606.195 552.625 607.371 552.876 608.414 553.273C609.853 553.801 611.16 554.581 612.203 555.744C614.038 557.567 615.081 560.17 615.081 562.905C615.081 568.64 610.5 573.185 604.743 573.185C598.987 573.185 594.537 568.627 594.537 562.905H594.55ZM698.539 616.301C691.871 619.037 685.19 621.375 678.787 621.64C668.845 622.155 657.992 618.125 652.103 613.17C642.953 605.479 636.404 601.185 633.658 587.773C632.483 582.039 633.13 573.185 634.186 568.111C636.536 557.171 633.922 550.141 626.212 543.759C619.927 538.553 611.952 537.112 603.185 537.112C599.911 537.112 596.914 535.685 594.682 534.509C591.025 532.686 588.015 528.127 590.893 522.525C591.804 520.701 596.254 516.275 597.297 515.495C609.206 508.716 622.937 510.936 635.625 516.01C647.403 520.833 656.288 529.686 669.109 542.186C682.193 557.289 684.543 561.465 692.003 572.789C697.892 581.642 703.252 590.759 706.909 601.185C709.128 607.699 706.249 613.038 698.539 616.288V616.301Z" fill="url(#paint2_linear_1637_371)" fill-opacity="0.9"/>
+-</g>
+-</g>
+-</g>
+-<defs>
+-<filter id="filter0_d_1637_371" x="-8" y="-16" width="1120" height="1120" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+-<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+-<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+-<feOffset dy="8"/>
+-<feGaussianBlur stdDeviation="20"/>
+-<feComposite in2="hardAlpha" operator="out"/>
+-<feColorMatrix type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.05 0"/>
+-<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1637_371"/>
+-<feBlend mode="normal" in="BackgroundImageFix" in2="effect1_dropShadow_1637_371" result="BackgroundImageFix"/>
+-<feBlend mode="normal" in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
+-</filter>
+-<filter id="filter1_ddi_1637_371" x="133.744" y="240.427" width="882.652" height="671.147" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+-<feFlood flood-opacity="0" result="BackgroundImageFix"/>
+-<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+-<feOffset dy="4"/>
+-<feGaussianBlur stdDeviation="20"/>
+-<feComposite in2="hardAlpha" operator="out"/>
+-<feColorMatrix type="matrix" values="0 0 0 0 0.176471 0 0 0 0 0.192157 0 0 0 0 0.231373 0 0 0 0.08 0"/>
+-<feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1637_371"/>
+-<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+-<feOffset dy="8"/>
+-<feGaussianBlur stdDeviation="8"/>
+-<feComposite in2="hardAlpha" operator="out"/>
+-<feColorMatrix type="matrix" values="0 0 0 0 0.172549 0 0 0 0 0.188235 0 0 0 0 0.223529 0 0 0 0.04 0"/>
+-<feBlend mode="normal" in2="effect1_dropShadow_1637_371" result="effect2_dropShadow_1637_371"/>
+-<feBlend mode="normal" in="SourceGraphic" in2="BackgroundImageFix" result="shape"/>
+-<feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+-<feOffset dx="-16" dy="-20"/>
+-<feGaussianBlur stdDeviation="30"/>
+-<feComposite in2="hardAlpha" operator="arithmetic" k2="-1" k3="1"/>
+-<feColorMatrix type="matrix" values="0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.15 0"/>
+-<feBlend mode="normal" in2="shape" result="effect3_innerShadow_1637_371"/>
+-<feBlend mode="normal" in="effect3_innerShadow_1637_371" in2="effect2_dropShadow_1637_371" result="effect3_innerShadow_1637_371"/>
+-</filter>
+-<linearGradient id="paint0_linear_1637_371" x1="973.58" y1="1.59609e-05" x2="378.123" y2="917.86" gradientUnits="userSpaceOnUse">
+-<stop offset="0.141617" stop-color="#D4DBE9"/>
+-<stop offset="0.485965" stop-color="#FBFBFB"/>
+-</linearGradient>
+-<linearGradient id="paint1_linear_1637_371" x1="603.371" y1="445.063" x2="239.356" y2="1111.41" gradientUnits="userSpaceOnUse">
+-<stop offset="0.363044" stop-color="#FBFBFB"/>
+-<stop offset="0.83031" stop-color="#E1E6EE"/>
+-</linearGradient>
+-<linearGradient id="paint2_linear_1637_371" x1="849.855" y1="39.085" x2="331.636" y2="802.645" gradientUnits="userSpaceOnUse">
+-<stop offset="0.0855249" stop-color="#1C2434"/>
+-<stop offset="1" stop-color="#0F1115"/>
+-</linearGradient>
+-</defs>
++<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
++  <defs>
++    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
++      <stop offset="0" stop-color="#3b82f6"/>
++      <stop offset="1" stop-color="#1d4ed8"/>
++    </linearGradient>
++  </defs>
++  <rect width="1024" height="1024" rx="230" fill="url(#bg)"/>
++  <g id="tray-glyph">
++    <g transform="translate(512 512) scale(1.2427) translate(-512 -512)">
++      <g stroke="#fff" stroke-width="64" stroke-linecap="round" fill="none">
++        <circle cx="512" cy="512" r="190"/>
++        <line x1="512" y1="230" x2="512" y2="290"/>
++        <line x1="512" y1="734" x2="512" y2="794"/>
++        <line x1="230" y1="512" x2="290" y2="512"/>
++        <line x1="734" y1="512" x2="794" y2="512"/>
++      </g>
++      <circle cx="512" cy="512" r="62" fill="#fff"/>
++    </g>
++  </g>
+ </svg>
+diff --git a/apps/desktop/scripts/development-app.ts b/apps/desktop/scripts/development-app.ts
+index ff09b8b7..16687e2b 100644
+--- a/apps/desktop/scripts/development-app.ts
++++ b/apps/desktop/scripts/development-app.ts
+@@ -1,7 +1,8 @@
+ /** macOS development bundle that loads the current workspace through Electron. */
+ import { execFileSync } from 'node:child_process'
+ import { createHash } from 'node:crypto'
+-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
++import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
++import { tmpdir } from 'node:os'
+ import { dirname, join } from 'node:path'
+ 
+ /** Workspace and runtime settings captured for Launch Services cold starts. */
+@@ -17,6 +18,30 @@ export interface DevelopmentAppOptions {
+   readonly openDevtools: string
+ }
+ 
++const LSREGISTER = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
++
++/**
++ * Replace Electron's icon in the bundle with the app's own, so the Dock and Finder show it.
++ * @param source - Square PNG of at least 1024 pixels.
++ * @param target - The bundle's icon file named by CFBundleIconFile.
++ */
++function writeApplicationIcon(source: string, target: string): void {
++  const scratch = mkdtempSync(join(tmpdir(), 'dsh-icon-'))
++  try {
++    const iconset = join(scratch, 'icon.iconset')
++    mkdirSync(iconset)
++    for (const edge of [16, 32, 128, 256, 512]) {
++      for (const [scale, suffix] of [[1, ''], [2, '@2x']] as const) {
++        const pixels = String(edge * scale)
++        execFileSync('/usr/bin/sips', ['-z', pixels, pixels, source, '--out', join(iconset, `icon_${String(edge)}x${String(edge)}${suffix}.png`)], { stdio: 'pipe' })
++      }
++    }
++    execFileSync('/usr/bin/iconutil', ['-c', 'icns', iconset, '-o', target])
++  } finally {
++    rmSync(scratch, { recursive: true, force: true })
++  }
++}
++
+ function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'` }
+ 
+ /**
+@@ -26,30 +51,39 @@ function quote(value: string): string { return `'${value.replaceAll("'", "'\\''"
+  */
+ export function prepareDevelopmentApp(options: DevelopmentAppOptions): string {
+   const source = dirname(dirname(dirname(options.electron)))
+-  const bundle = join(options.directory, 'Harness Dev.app')
+-  const executable = join(bundle, 'Contents', 'MacOS', 'HarnessDev')
++  const bundle = join(options.directory, 'Harness Studio.app')
++  const executable = join(bundle, 'Contents', 'MacOS', 'HarnessStudio')
++  // Earlier builds named the bundle "Harness Dev"; drop it so Launch Services and Spotlight list one app.
++  const legacy = join(options.directory, 'Harness Dev.app')
++  if (existsSync(legacy)) {
++    execFileSync(LSREGISTER, ['-u', legacy], { stdio: 'pipe' })
++    rmSync(legacy, { recursive: true, force: true })
++  }
+   const stamp = join(bundle, 'Contents', 'Resources', 'dsh-development.json')
+   const launcher = developmentLauncher(options, bundle)
+-  const identity = JSON.stringify({ ...options, launcher, plist: readFileSync(join(source, 'Contents', 'Info.plist'), 'utf8') })
++  const icon = join(options.appRoot, 'resources', 'icon-macos.png')
++  const iconHash = createHash('sha256').update(readFileSync(icon)).digest('hex')
++  const identity = JSON.stringify({ ...options, launcher, iconHash, plist: readFileSync(join(source, 'Contents', 'Info.plist'), 'utf8') })
+   if (!existsSync(stamp) || readFileSync(stamp, 'utf8') !== identity) {
+     rmSync(bundle, { recursive: true, force: true })
+     execFileSync('/usr/bin/ditto', [source, bundle])
+     const plist = join(bundle, 'Contents', 'Info.plist')
+     const values = {
+       CFBundleIdentifier: `com.deepseek.harness.dev.${createHash('sha256').update(options.appRoot).digest('hex').slice(0, 12)}`,
+-      CFBundleName: 'Harness Dev',
+-      CFBundleDisplayName: 'Harness Dev',
+-      CFBundleExecutable: 'HarnessDev',
++      CFBundleName: 'Harness Studio',
++      CFBundleDisplayName: 'Harness Studio',
++      CFBundleExecutable: 'HarnessStudio',
+       CFBundleURLTypes: [{ CFBundleURLName: 'DeepSeek Harness', CFBundleURLSchemes: ['dsh'], CFBundleTypeRole: 'Viewer' }],
+     }
+     for (const [key, value] of Object.entries(values)) {
+       execFileSync('/usr/bin/plutil', ['-replace', key, '-json', JSON.stringify(value), plist])
+     }
+     writeFileSync(executable, launcher, { mode: 0o755 })
++    writeApplicationIcon(icon, join(bundle, 'Contents', 'Resources', 'electron.icns'))
+     writeFileSync(stamp, identity, { mode: 0o600 })
+     execFileSync('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', bundle], { stdio: 'pipe' })
+   }
+-  execFileSync('/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister', ['-f', bundle])
++  execFileSync(LSREGISTER, ['-f', bundle])
+   return executable
+ }
+ 
+diff --git a/apps/web/index.html b/apps/web/index.html
+index f5c2ffac..0960c229 100644
+--- a/apps/web/index.html
++++ b/apps/web/index.html
+@@ -6,7 +6,7 @@
+     <link rel="manifest" href="/manifest.webmanifest" />
+     <link rel="icon" type="image/svg+xml" href="/favicon-dark.svg" media="(prefers-color-scheme: dark)" />
+     <link rel="icon" type="image/svg+xml" href="/favicon.svg" media="(prefers-color-scheme: light)" />
+-    <title>DSH Local Build</title>
++    <title>Harness Studio</title>
+   </head>
+   <body>
+     <div id="root"></div>
+diff --git a/apps/web/tests/built-boot.expected.e2e.ts b/apps/web/tests/built-boot.expected.e2e.ts
+index c7b7f41b..19daa5c2 100644
+--- a/apps/web/tests/built-boot.expected.e2e.ts
++++ b/apps/web/tests/built-boot.expected.e2e.ts
+@@ -63,7 +63,7 @@ it('boots the built plugin graph and renders a fixture session end to end', asyn
+   const tree = await screen.findByRole('tree', { name: 'Sessions' }, { timeout: 10_000 })
+   if (clientBuildValue('DSH_CLIENT_BUILD_PROFILE') === 'official') {
+     expect(document.querySelector('svg[viewBox="26 0 156 24"]')).not.toBeNull()
+-    expect(screen.queryByText('DSH Local Build')).toBeNull()
++    expect(screen.queryByText('Harness Studio')).toBeNull()
+   } else {
+     expect(document.querySelector('svg[viewBox="0 0 23.16 17.04"]')).not.toBeNull()
+     const version = clientBuildValue('DSH_CLIENT_VERSION')
+@@ -72,7 +72,7 @@ it('boots the built plugin graph and renders a fixture session end to end', asyn
+     const buildVersion = version
+       + (commit === undefined ? '' : `-${commit}`)
+       + (clientBuildValue('DSH_CLIENT_GIT_DIRTY') === 'true' ? '-dirty' : '')
+-    screen.getByText('DSH Local Build')
++    screen.getByText('Harness Studio')
+     screen.getByText(buildVersion)
+   }
+   // The compact layout dropped group session counts; the fixture workspace
+diff --git a/apps/web/tests/connection-recovery.e2e.ts b/apps/web/tests/connection-recovery.e2e.ts
+index 6f1568df..7029e846 100644
+--- a/apps/web/tests/connection-recovery.e2e.ts
++++ b/apps/web/tests/connection-recovery.e2e.ts
+@@ -56,7 +56,7 @@ it.each([false, true])('retains the mounted application across WebSocket recover
+     await writeComposerDraft(page, composer, draft)
+     await expect.poll(() => sessionBaselines).toBeGreaterThan(0)
+   } else {
+-    await page.getByText('Into the Unknown', { exact: true }).waitFor({ timeout: 20_000 })
++    await page.getByText('What should we build?', { exact: true }).waitFor({ timeout: 20_000 })
+   }
+   await expect.poll(() => readyFrames).toBeGreaterThan(0)
+   const root = await page.locator('[data-slot="root"]').elementHandle()
+@@ -85,5 +85,5 @@ it.each([false, true])('retains the mounted application across WebSocket recover
+   }
+ 
+   expect(navigations).toBe(0)
+-  if (!activeSession) expect(await page.getByText('Into the Unknown', { exact: true }).isVisible()).toBe(true)
++  if (!activeSession) expect(await page.getByText('What should we build?', { exact: true }).isVisible()).toBe(true)
+ })
+diff --git a/apps/web/tests/details-session-lifecycle.e2e.ts b/apps/web/tests/details-session-lifecycle.e2e.ts
+index 68dd75f3..a1d6a69a 100644
+--- a/apps/web/tests/details-session-lifecycle.e2e.ts
++++ b/apps/web/tests/details-session-lifecycle.e2e.ts
+@@ -178,7 +178,7 @@ describe.skipIf(MODE === 'record')('web e2e: details panel follows the current S
+     await blankColumn.locator('[data-sidebar-right-guide-entry="files"]').click()
+     await blankColumn.locator('[data-files-entry="file"]').getByRole('button', { name: 'before-chat.md', exact: true }).click()
+     await blankColumn.getByText('Workspace preview is available.', { exact: true }).waitFor()
+-    await page.getByText('Into the Unknown', { exact: false }).waitFor()
++    await page.getByText('What should we build?', { exact: false }).waitFor()
+     const blankPanes = await paneSnapshot(page)
+     expect(blankPanes.map(pane => pane.tabs.map(tab => tab.title))).toEqual([['Files', 'before-chat.md']])
+     await page.screenshot({ path: join(SHOT_DIR, `blank-preview-${MODE}-${process.pid}.png`), fullPage: true })
+@@ -273,7 +273,7 @@ describe.skipIf(MODE === 'record')('web e2e: details panel follows the current S
+     expect(await page.getByText('Details', { exact: true }).isVisible()).toBe(false)
+ 
+     await page.getByRole('button', { name: /^(?:New session|新.*会话)$/ }).last().click()
+-    await page.getByText('Into the Unknown', { exact: false }).waitFor({ timeout: 15_000 })
++    await page.getByText('What should we build?', { exact: false }).waitFor({ timeout: 15_000 })
+     await expect.poll(() => detailsTrack(page), { timeout: 5_000 }).toBe(0)
+     expect(await page.getByText('Details', { exact: true }).isVisible()).toBe(false)
+ 
+diff --git a/apps/web/tests/goal-command-presentation.e2e.ts b/apps/web/tests/goal-command-presentation.e2e.ts
+index 734aa20b..b12ab04c 100644
+--- a/apps/web/tests/goal-command-presentation.e2e.ts
++++ b/apps/web/tests/goal-command-presentation.e2e.ts
+@@ -45,7 +45,7 @@ describe('web e2e: /goal human transcript presentation', () => {
+ 
+   it('completes with Tab and shows the bare input and result without a model turn', async () => {
+     onTestFailed(() => saveFailureShot(page, 'web-e2e-goal-command-presentation'))
+-    await expect.poll(() => page.getByText('Into the Unknown', { exact: false }).count(), {
++    await expect.poll(() => page.getByText('What should we build?', { exact: false }).count(), {
+       timeout: 15_000,
+     }).toBe(1)
+     const input = page.locator('[data-composer-input]').first()
+@@ -91,7 +91,7 @@ describe('web e2e: /goal human transcript presentation', () => {
+     await expect.poll(() => resultRow.count(), { timeout: 10_000 }).toBe(1)
+     expect(await resultRow.getByText('goal', { exact: true }).count()).toBe(1)
+     await expect.poll(() => page.locator('[data-phase="active"]').count()).toBe(1)
+-    expect(await page.getByText('Into the Unknown', { exact: false }).count()).toBe(0)
++    expect(await page.getByText('What should we build?', { exact: false }).count()).toBe(0)
+ 
+     const run = events.find(event => event.type === 'command/run')
+     expect(run).toMatchObject({
+diff --git a/apps/web/tests/hmr-live.e2e.ts b/apps/web/tests/hmr-live.e2e.ts
+index 87adea12..ba129668 100644
+--- a/apps/web/tests/hmr-live.e2e.ts
++++ b/apps/web/tests/hmr-live.e2e.ts
+@@ -94,8 +94,8 @@ it('hot-reloads a real client-plugin source edit without refreshing the page', a
+     .map(async path => [path, await readFile(path)] as const))
+   const originalClientArtifactPaths = new Set(originalClientArtifacts.map(([path]) => path))
+   const originalSource = await readFile(sourcePath)
+-  const oldText = 'Into the Unknown'
+-  const sourceNeedle = "'hero.headline': 'Into the Unknown'"
++  const oldText = 'What should we build?'
++  const sourceNeedle = "'hero.headline': 'What should we build?'"
+   const newText = `HMR UPDATED ${'x'.repeat(80)}`
+   const updatedSource = originalSource.toString().replace(sourceNeedle, `'hero.headline': '${newText}'`)
+   if (updatedSource === originalSource.toString()) throw new Error(`HMR source lacks ${JSON.stringify(sourceNeedle)}`)
+diff --git a/apps/web/tests/lifecycle-chrome.e2e.ts b/apps/web/tests/lifecycle-chrome.e2e.ts
+index a9226b7f..0ff5b922 100644
+--- a/apps/web/tests/lifecycle-chrome.e2e.ts
++++ b/apps/web/tests/lifecycle-chrome.e2e.ts
+@@ -306,11 +306,11 @@ describe('web e2e: lifecycle & chrome (workspace flow / reload / dark mode)', ()
+     }
+     // The blank frame renders the hero, not the resident composer: the
+     // headline plus the guidance placeholder are the empty state's anchors.
+-    await expect.poll(() => page.getByText('Into the Unknown', { exact: false }).count(), { timeout: 15_000 }).toBe(1)
++    await expect.poll(() => page.getByText('What should we build?', { exact: false }).count(), { timeout: 15_000 }).toBe(1)
+     const input = page.locator('[data-composer-input]').first()
+     await input.waitFor({ timeout: 10_000 })
+     if (MODE !== 'record') {
+-      await page.getByText('Into the Unknown', { exact: false }).hover()
++      await page.getByText('What should we build?', { exact: false }).hover()
+       await expect.poll(() => page.getByRole('tooltip').count()).toBe(0)
+       // Golden of the hero's stable waiting state (captured before any send;
+       // the conversation-region goldens belong to the other scenarios).
+diff --git a/apps/web/tests/session-replay-reload.e2e.ts b/apps/web/tests/session-replay-reload.e2e.ts
+index 14df87af..632d7940 100644
+--- a/apps/web/tests/session-replay-reload.e2e.ts
++++ b/apps/web/tests/session-replay-reload.e2e.ts
+@@ -67,7 +67,7 @@ describe.skipIf(webSnapshotMode() === 'record')('web session replay', () => {
+         await captureExpandedTurnProcessAria(page, '[class*="centerCol"]', scaffold.workspaceCwd), 'replay')
+ 
+       await page.getByRole('button', { name: 'New session', exact: true }).last().click()
+-      await page.getByText('Into the Unknown', { exact: true }).waitFor()
++      await page.getByText('What should we build?', { exact: true }).waitFor()
+       await page.getByRole('treeitem').filter({ has: page.getByText('Use the bash tool to', { exact: true }) }).click()
+       await page.getByText('DONE', { exact: true }).waitFor({ timeout: 15_000 })
+       await compareOrRefreshGolden(UI_EXPECTED,
+diff --git a/apps/web/tests/startup-auto-selection.e2e.ts b/apps/web/tests/startup-auto-selection.e2e.ts
+index 613eb4a7..ce0e930f 100644
+--- a/apps/web/tests/startup-auto-selection.e2e.ts
++++ b/apps/web/tests/startup-auto-selection.e2e.ts
+@@ -41,7 +41,7 @@ describe('web e2e: startup auto-selection', () => {
+   it('keeps the resident Hero and composer nodes when the first Workspace session appears', async () => {
+     onTestFailed(() => saveFailureShot(page, 'web-e2e-first-workspace-stable-tree'))
+     await page.locator(`${ROOT_PHASE}[data-phase="hero"]`).waitFor({ timeout: 15_000 })
+-    const headline = page.getByText('Into the Unknown', { exact: true })
++    const headline = page.getByText('What should we build?', { exact: true })
+     // The headline text sits in its own span inside the title group; the fish
+     // hitbox precedes the group, not the text span.
+     const fishHitbox = headline.locator('xpath=../preceding-sibling::span[1]')
+@@ -128,7 +128,7 @@ describe('web e2e: startup auto-selection', () => {
+       // seat with `visibility:hidden`, which Playwright reports as not visible).
+       await page.waitForSelector(ROOT_PHASE, { timeout: 15_000 })
+       expect(await page.locator(ROOT_PHASE).first().getAttribute('data-phase')).toBe('hero')
+-      expect(await page.getByText('Into the Unknown').isVisible()).toBe(true)
++      expect(await page.getByText('What should we build?').isVisible()).toBe(true)
+       expect(await page.locator('[data-composer-input]').first().isVisible()).toBe(true)
+ 
+       releaseOpening()
+diff --git a/apps/web/vite.config.ts b/apps/web/vite.config.ts
+index d0463af0..abba9329 100644
+--- a/apps/web/vite.config.ts
++++ b/apps/web/vite.config.ts
+@@ -12,7 +12,7 @@ const src = (rel: string): string => fileURLToPath(new URL(rel, import.meta.url)
+ const STANDALONE_ERROR = 'apps/web is not a standalone application: bare Vite cannot inject window.__DSH_BOOT__. '
+   + 'From a repository checkout, run `pnpm dsh web`; an installed package uses `dsh web`. '
+   + 'For client-plugin HMR, run `pnpm run dev:web`, which starts `dsh web` and the rebuild watchers together.'
+-const DEFAULT_CLIENT_TITLE = 'DSH Local Build'
++const DEFAULT_CLIENT_TITLE = 'Harness Studio'
+ 
+ /** Escape build-time text before placing it in the HTML title element. */
+ function escapeHtmlText(value: string): string {
+@@ -25,7 +25,7 @@ function clientDocumentTitle(): Plugin {
+   return {
+     name: 'dsh-client-document-title',
+     transformIndexHtml(html) {
+-      return html.replace('<title>DSH Local Build</title>', `<title>${title}</title>`)
++      return html.replace('<title>Harness Studio</title>', `<title>${title}</title>`)
+     },
+   }
+ }
+diff --git a/packages/client/locale/src/locales/en.ts b/packages/client/locale/src/locales/en.ts
+index b649bbc3..d468a34c 100644
+--- a/packages/client/locale/src/locales/en.ts
++++ b/packages/client/locale/src/locales/en.ts
+@@ -33,7 +33,7 @@ export const en = {
+   'collapse': 'Collapse',
+   'expand': 'Expand',
+   'back': 'Back',
+-  'brand.localBuild': 'DSH Local Build',
++  'brand.localBuild': 'Harness Studio',
+   'workspace.defaultName': 'Default workspace',
+   'unknown': 'Unknown',
+   'none': 'None',
+diff --git a/packages/client/locale/src/locales/zh.ts b/packages/client/locale/src/locales/zh.ts
+index 11ff789b..fffdb8e2 100644
+--- a/packages/client/locale/src/locales/zh.ts
++++ b/packages/client/locale/src/locales/zh.ts
+@@ -31,7 +31,7 @@ export const zh = {
+   'collapse': '收起',
+   'expand': '展开',
+   'back': '返回',
+-  'brand.localBuild': 'DSH 本地构建',
++  'brand.localBuild': 'Harness Studio',
+   'workspace.defaultName': '默认工作区',
+   'unknown': '未知',
+   'none': '无',
+diff --git a/packages/client/ui-brand-official/src/client/Brand.tsx b/packages/client/ui-brand-official/src/client/Brand.tsx
+index 9ac6dd7c..719b8b71 100644
+--- a/packages/client/ui-brand-official/src/client/Brand.tsx
++++ b/packages/client/ui-brand-official/src/client/Brand.tsx
+@@ -1,13 +1,13 @@
+-import { BrandWordmark, FishLogo } from '@deepseek-ai/dsh-client-ui-primitives'
++import { BrandWordmark, HarnessStudioMark } from '@deepseek-ai/dsh-client-ui-primitives'
+ import type { SidebarBrandMarkOwnerProps } from '@deepseek-ai/dsh-client-ui-sidebar/client'
+ 
+ /**
+- * Render the official mark with the presentation requested by its host surface.
++ * Render Harness Studio's mark with the presentation requested by its host surface.
+  * @param props - Host-supplied mark presentation.
+- * @returns the official whale mark.
++ * @returns the target mark on its blue tile, the same artwork as the app and extension icons.
+  */
+ export function OfficialBrandMark({ size }: SidebarBrandMarkOwnerProps) {
+-  return <FishLogo size={size} />
++  return <HarnessStudioMark size={size} />
+ }
+ 
+ /**
+diff --git a/packages/client/ui-brand-official/src/client/index.ts b/packages/client/ui-brand-official/src/client/index.ts
+index 332a5f60..0fca51d7 100644
+--- a/packages/client/ui-brand-official/src/client/index.ts
++++ b/packages/client/ui-brand-official/src/client/index.ts
+@@ -2,7 +2,7 @@
+ import type { Context as ClientContext } from '@deepseek-ai/cordis'
+ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
+-import { OfficialBrandMark, OfficialBrandName } from './Brand.tsx'
++import { OfficialBrandMark } from './Brand.tsx'
+ 
+ /** Required service: the UI slot registry. */
+ export const inject = ['slots']
+@@ -15,9 +15,8 @@ export const inject = ['slots']
+  */
+ export function apply(ctx: ClientContext): void {
+   if (process.env.DSH_CLIENT_BUILD_PROFILE !== 'official') return
+-  ctx.slots.inject('sidebar.brand.mark', () =>
+-    ctx.slots.inject('sidebar.brand.name', function* () {
+-      yield ctx.slots.register({ name: 'sidebar.brand.mark' }, OfficialBrandMark)
+-      yield ctx.slots.register({ name: 'sidebar.brand.name' }, OfficialBrandName)
+-    }))
++  // Harness Studio: only the mark is filled; the name slot keeps the shell's text fallback, the product title.
++  ctx.slots.inject('sidebar.brand.mark', function* () {
++    yield ctx.slots.register({ name: 'sidebar.brand.mark' }, OfficialBrandMark)
++  })
+ }
+diff --git a/packages/client/ui-brand-official/tests/browser-plugin.client.spec.tsx b/packages/client/ui-brand-official/tests/browser-plugin.client.spec.tsx
+index 47e32068..141e9a94 100644
+--- a/packages/client/ui-brand-official/tests/browser-plugin.client.spec.tsx
++++ b/packages/client/ui-brand-official/tests/browser-plugin.client.spec.tsx
+@@ -12,9 +12,9 @@ afterEach(() => {
+   vi.unstubAllEnvs()
+ })
+ 
++// Harness Studio registers only the mark; the name hole keeps the shell's product-title fallback.
+ const HOLES = [
+   'sidebar.brand.mark',
+-  'sidebar.brand.name',
+ ] as const
+ 
+ const HERO_HOLE = 'conversation.hero.brand.mark'
+diff --git a/packages/client/ui-conversation/src/client/locales.ts b/packages/client/ui-conversation/src/client/locales.ts
+index f1f70807..360fa7ac 100644
+--- a/packages/client/ui-conversation/src/client/locales.ts
++++ b/packages/client/ui-conversation/src/client/locales.ts
+@@ -74,7 +74,7 @@ export const zh = {
+   'settings.enter.description': '智能体运行时 Enter 键和发送按钮的行为；Cmd/Ctrl+Enter 使用另一行为',
+   'settings.enter.queue': '排队发送',
+   'settings.enter.steer': '插话发送',
+-  'hero.headline': '探索未至之境',
++  'hero.headline': '今天想构建什么？',
+   'hero.preview': '预览版',
+   'hero.chooseWorkspace': '选择工作区',
+   'session.hierarchy': '会话层级',
+@@ -454,7 +454,7 @@ export const en = {
+   'settings.enter.description': 'What Enter and the Send button do while the agent is running; Cmd/Ctrl+Enter uses the other behavior',
+   'settings.enter.queue': 'Queue',
+   'settings.enter.steer': 'Steer',
+-  'hero.headline': 'Into the Unknown',
++  'hero.headline': 'What should we build?',
+   'hero.preview': 'Preview',
+   'hero.chooseWorkspace': 'Choose workspace',
+   'session.hierarchy': 'Session hierarchy',
+diff --git a/packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx b/packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx
+index 40df8726..fa84f35f 100644
+--- a/packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx
++++ b/packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx
+@@ -1,10 +1,9 @@
+ // The composer remains in ConversationRoot so switching out of the blank-draft
+ // phase does not remount its textarea.
+ 
+-import { useState } from 'react'
+ import type { ReactNode, RefObject } from 'react'
+ import {
+-  FISH_LOGO_PATH, FISH_LOGO_VIEWBOX, IconChevronDownOutlineRegular, IconFolderCloseRegular, IconFolderOpenRegular,
++  HarnessStudioMark, IconChevronDownOutlineRegular, IconFolderCloseRegular, IconFolderOpenRegular,
+ } from '@deepseek-ai/dsh-client-ui-primitives'
+ import { workspaceTitleOf } from '@deepseek-ai/dsh-util-workspace-path'
+ import type { ConversationContentProps } from '../contract/slots.ts'
+@@ -71,82 +70,20 @@ export interface HeroShellProps {
+   children?: ReactNode
+ }
+ 
+-/* Hover swim morph targets: the resting FISH_LOGO_PATH with weighted
+-   regional deformation baked in (generated programmatically — parse the
+-   path's absolute M/C/L/Z commands, displace points with smoothstep falloff
+-   weights, emit the same command structure so SMIL can interpolate `d`
+-   between them). Tail: rotation about (15.6, 5.2) with weight growing toward
+-   the tail tip (x>15, y<8.5) — UP -7°, DOWN +6°. Mouth/fin swoosh: a bend,
+-   not a rotation — vertical lift with weight-squared falloff from the body
+-   anchor (14.1, 15.0), so the near end stays seated and the mouth corner
+-   sweeps most, a smile lift (UP -0.7 units at the tip, DOWN +0.5). The eye
+-   subpaths carry zero weight and stay fixed. */
+-const HERO_SWIM_UP_PATH =
+-  'M22.403 0.567C22.145 0.477 22.068 0.718 21.939 0.85C21.895 0.893 21.86 0.947 21.824 0.997C21.515 1.421 21.13 1.721 20.591 1.77C19.829 1.867 19.221 2.244 18.712 2.958C18.535 2.227 18.116 1.839 17.516 1.626C17.203 1.506 16.887 1.379 16.663 1.064C16.508 0.839 16.462 0.581 16.383 0.329C16.332 0.176 16.283 0.02 16.121 -0.002C15.944 -0.029 15.875 0.133 15.805 0.269C15.52 0.822 15.408 1.43 15.42 2.046C15.449 3.432 16.031 4.532 17.202 5.274C17.337 5.356 17.374 5.445 17.335 5.582C17.261 5.862 17.169 6.134 17.086 6.413C17.032 6.59 16.952 6.63 16.764 6.558C16.118 6.301 15.562 5.909 15.074 5.433C14.248 4.633 13.5 3.751 12.568 3.06C12.349 2.898 12.13 2.748 11.903 2.605C10.952 1.682 12.028 0.923 12.277 0.833C12.537 0.739 12.367 0.416 11.526 0.42C10.684 0.424 9.914 0.706 8.933 1.081C8.789 1.138 8.638 1.179 8.484 1.213C7.593 1.044 6.668 1.006 5.702 1.115C3.883 1.318 2.43 2.178 1.362 3.646C0.079 5.41 -0.223 7.415 0.147 9.506C0.535 11.71 1.66 13.535 3.389 14.962C5.181 16.441 7.246 17.166 9.601 17.027C11.032 16.944 12.624 16.753 14.421 15.232C14.874 15.458 15.35 15.548 16.138 15.615C16.746 15.672 17.331 15.585 17.784 15.491C18.493 15.341 18.444 14.684 18.188 14.564C16.108 13.595 16.565 13.989 16.15 13.67C17.206 12.42 18.82 10.198 19.363 7.086C19.421 6.709 19.484 6.171 19.469 5.866C19.458 5.681 19.493 5.604 19.681 5.556C20.199 5.412 20.691 5.172 21.125 4.806C22.366 3.824 22.758 2.554 22.708 1.1C22.7 0.878 22.649 0.654 22.403 0.567ZM11.175 14.451C9.159 12.726 8.182 12.088 7.778 12.067C7.401 12.047 7.469 12.505 7.552 12.807C7.639 13.103 7.752 13.313 7.91 13.581C8.02 13.758 8.095 14.01 7.801 14.16C7.152 14.487 6.023 13.806 5.97 13.772C4.657 12.85 3.559 11.766 2.785 10.369C2.037 9.025 1.603 7.583 1.532 6.044C1.513 5.672 1.622 5.541 1.992 5.473C2.479 5.383 2.981 5.364 3.468 5.436C5.525 5.736 7.276 6.675 8.744 8.323C9.582 9.299 10.216 10.425 10.869 11.496C11.563 12.592 12.31 13.603 13.262 14.414C13.598 14.696 13.866 14.91 14.123 15.068C13.349 15.154 12.058 15.167 11.175 14.452L11.175 14.451ZM12.141 8.26C12.141 8.095 12.273 7.963 12.439 7.963C12.476 7.963 12.511 7.971 12.541 7.982C12.582 7.997 12.62 8.019 12.65 8.053C12.704 8.106 12.733 8.181 12.733 8.26C12.733 8.425 12.601 8.556 12.435 8.556C12.27 8.556 12.141 8.425 12.141 8.26ZM15.142 9.799C14.949 9.878 14.757 9.945 14.572 9.953C14.284 9.968 13.972 9.851 13.802 9.709C13.537 9.487 13.348 9.363 13.27 8.977C13.236 8.812 13.255 8.556 13.284 8.41C13.352 8.094 13.277 7.892 13.055 7.708C12.873 7.558 12.643 7.516 12.39 7.516C12.296 7.516 12.209 7.475 12.145 7.441C12.039 7.389 11.952 7.257 12.035 7.096C12.062 7.043 12.19 6.916 12.22 6.893C12.563 6.698 12.96 6.762 13.326 6.908C13.665 7.047 13.922 7.302 14.292 7.663C14.669 8.098 14.738 8.218 14.953 8.545C15.123 8.801 15.277 9.063 15.383 9.364C15.447 9.551 15.364 9.705 15.142 9.799Z'
+-const HERO_SWIM_DOWN_PATH =
+-  'M23.271 2.216C23.039 2.071 22.91 2.287 22.755 2.388C22.703 2.42 22.656 2.464 22.61 2.505C22.214 2.848 21.771 3.054 21.225 2.956C20.412 2.784 19.68 2.919 19.005 3.435C18.92 2.663 18.493 2.157 17.808 1.798C17.446 1.621 17.08 1.449 16.83 1.111C16.656 0.872 16.611 0.612 16.524 0.354C16.469 0.198 16.414 0.039 16.223 0.009C16.017 -0.024 15.936 0.137 15.856 0.271C15.539 0.822 15.418 1.43 15.429 2.046C15.454 3.432 16.041 4.538 17.196 5.36C17.325 5.456 17.356 5.547 17.312 5.674C17.229 5.936 17.134 6.191 17.051 6.454C16.999 6.623 16.921 6.659 16.738 6.58C16.107 6.306 15.56 5.909 15.074 5.433C14.248 4.633 13.5 3.751 12.568 3.06C12.349 2.898 12.13 2.748 11.903 2.605C10.952 1.682 12.028 0.923 12.277 0.833C12.537 0.739 12.367 0.416 11.526 0.42C10.684 0.424 9.914 0.706 8.933 1.081C8.789 1.138 8.638 1.179 8.484 1.213C7.593 1.044 6.668 1.006 5.702 1.115C3.883 1.318 2.43 2.178 1.362 3.646C0.079 5.41 -0.223 7.415 0.147 9.506C0.535 11.71 1.66 13.535 3.389 14.962C5.181 16.441 7.246 17.166 9.601 17.027C11.032 16.944 12.624 16.753 14.421 15.232C14.874 15.458 15.35 15.548 16.138 15.615C16.746 15.672 17.331 15.585 17.784 15.491C18.493 15.341 18.444 14.684 18.188 14.564C16.108 13.595 16.565 13.989 16.15 13.67C17.206 12.42 18.82 10.198 19.278 7.246C19.318 6.948 19.375 6.534 19.371 6.293C19.371 6.145 19.411 6.092 19.597 6.098C20.113 6.109 20.619 6.051 21.096 5.891C22.503 5.375 23.169 4.232 23.448 2.804C23.49 2.586 23.491 2.356 23.271 2.216ZM11.175 14.49C9.159 13.005 8.182 12.567 7.778 12.621C7.401 12.673 7.469 13.087 7.552 13.354C7.639 13.619 7.752 13.797 7.91 14.024C8.02 14.175 8.095 14.406 7.801 14.609C7.152 15.063 6.023 14.63 5.97 14.609C4.657 13.941 3.559 12.965 2.785 11.569C2.037 10.225 1.603 8.783 1.532 7.244C1.513 6.872 1.622 6.741 1.992 6.673C2.479 6.583 2.981 6.564 3.468 6.636C5.525 6.936 7.276 7.843 8.744 9.163C9.582 9.888 10.216 10.783 10.869 11.679C11.563 12.659 12.31 13.617 13.262 14.415C13.598 14.696 13.866 14.91 14.123 15.068C13.349 15.155 12.058 15.177 11.175 14.491L11.175 14.49ZM12.141 8.26C12.141 8.095 12.273 7.963 12.439 7.963C12.476 7.963 12.511 7.971 12.541 7.982C12.582 7.997 12.62 8.019 12.65 8.053C12.704 8.106 12.733 8.181 12.733 8.26C12.733 8.425 12.601 8.556 12.435 8.556C12.27 8.556 12.141 8.425 12.141 8.26ZM15.142 9.799C14.949 9.878 14.757 9.945 14.572 9.953C14.284 9.968 13.972 9.851 13.802 9.709C13.537 9.487 13.348 9.363 13.27 8.977C13.236 8.812 13.255 8.556 13.284 8.41C13.352 8.094 13.277 7.892 13.055 7.708C12.873 7.558 12.643 7.516 12.39 7.516C12.296 7.516 12.209 7.475 12.145 7.441C12.039 7.389 11.952 7.257 12.035 7.096C12.062 7.043 12.19 6.916 12.22 6.893C12.563 6.698 12.96 6.762 13.326 6.908C13.665 7.047 13.922 7.302 14.292 7.663C14.669 8.098 14.738 8.218 14.953 8.545C15.123 8.801 15.277 9.063 15.383 9.364C15.447 9.551 15.364 9.705 15.142 9.799Z'
+-
+-/**
+- * The hero fish (34px wide), static at rest. Hovering swims the whale in
+- * place: a gentle head-up sway (CSS, on the hitbox hover) while the body
+- * itself morphs — SMIL interpolates `d` through the tail-up and tail-down
+- * targets on the same 1.6s period, so the tail wags and the fin flutters in
+- * real curve deformation. Decorative — hidden from the accessibility tree;
+- * reduced motion keeps the static filled logo on hover (sampled at
+- * mouseenter; a mid-hover preference change takes effect on the next enter).
+- * @param props.hovering - driven by the hitbox parent's pointer state.
+- * @returns the fish svg element.
+- */
+-function HeroFish({ hovering }: { hovering: boolean }) {
+-  return (
+-    <svg
+-      className={css.fish}
+-      width={34}
+-      height={(34 * FISH_LOGO_VIEWBOX.height) / FISH_LOGO_VIEWBOX.width}
+-      viewBox={`0 0 ${FISH_LOGO_VIEWBOX.width} ${FISH_LOGO_VIEWBOX.height}`}
+-      fill="none"
+-      aria-hidden="true"
+-    >
+-      <path d={FISH_LOGO_PATH} fill="currentColor">
+-        {hovering && (
+-          <animate
+-            attributeName="d"
+-            values={`${FISH_LOGO_PATH};${HERO_SWIM_UP_PATH};${FISH_LOGO_PATH};${HERO_SWIM_DOWN_PATH};${FISH_LOGO_PATH}`}
+-            keyTimes="0;0.35;0.55;0.75;1"
+-            calcMode="spline"
+-            keySplines="0.45 0 0.55 1;0.45 0 0.55 1;0.45 0 0.55 1;0.45 0 0.55 1"
+-            dur="1.6s"
+-            repeatCount="indefinite"
+-          />
+-        )}
+-      </path>
+-    </svg>
+-  )
+-}
+-
+ /**
+  * Render the hero chrome (headline only; no composer, no workspace row).
+  * @param props - see {@link HeroShellProps}.
+  * @returns the centered hero element tree.
+  */
+ export function HeroShell({ t, renderSlot, children }: HeroShellProps) {
+-  const [hovering, setHovering] = useState(false)
+   return (
+     <div className={css.root}>
+       <div className={css.stack}>
+         <div className={css.headline}>
+-          {/* figma 34:10412: fish 34×25 leading the headline, gap 10. */}
+-          <span
+-            className={css.fishHitbox}
+-            onMouseEnter={() => {
+-              if (window.matchMedia('(hover: hover) and (prefers-reduced-motion: no-preference)').matches) {
+-                setHovering(true)
+-              }
+-            }}
+-            onMouseLeave={() => { setHovering(false) }}
+-          >
++          {/* figma 34:10412: mark leading the headline, gap 10; Harness Studio's square mark is 34×34. */}
++          <span className={css.fishHitbox}>
+             {renderSlot('conversation.hero.brand.mark', { size: 34, className: css.fish }, {
+-              fallback: <HeroFish hovering={hovering} />,
++              fallback: <HarnessStudioMark size={34} className={css.fish} />,
+             })}
+           </span>
+           <span className={css.titleGroup}>
+diff --git a/packages/client/ui-conversation/tests/skeleton.client.spec.tsx b/packages/client/ui-conversation/tests/skeleton.client.spec.tsx
+index bcd1005a..aa8cb1d9 100644
+--- a/packages/client/ui-conversation/tests/skeleton.client.spec.tsx
++++ b/packages/client/ui-conversation/tests/skeleton.client.spec.tsx
+@@ -389,7 +389,7 @@ describe('Hero chrome', () => {
+   it('renders the English preview badge through the hero locale seat', () => {
+     const renderSlot = vi.fn<HeroShellProps['renderSlot']>(() => null)
+     const view = render(<HeroShell t={makeTranslate(en, commonEn)} renderSlot={renderSlot} />)
+-    expect(view.getByText('Into the Unknown')).toBeTruthy()
++    expect(view.getByText('What should we build?')).toBeTruthy()
+     expect(view.getByText('Preview')).toBeTruthy()
+     expect(renderSlot).toHaveBeenCalledOnce()
+     expect(renderSlot.mock.calls[0]?.[0]).toBe('conversation.hero.brand.mark')
+@@ -553,7 +553,7 @@ describe('ConversationRoot resident composer', () => {
+     expect(b.view.queryByRole('tablist')).toBeNull()
+     expect(b.slotCalls).not.toContain('conversation.session.header.utilities')
+     expect(b.slotCalls).not.toContain('conversation.session.header.actions')
+-    expect(b.view.getByText('探索未至之境')).toBeTruthy()
++    expect(b.view.getByText('今天想构建什么？')).toBeTruthy()
+     expect(b.view.getByText('预览版')).toBeTruthy()
+     expect(b.view.queryByTestId('view-chat')).toBeNull()
+     // The same machine-backed textarea is live in the hero, and the
+@@ -587,7 +587,7 @@ describe('ConversationRoot resident composer', () => {
+     expect(conversationPhase(failed, EMPTY_CONVERSATION_SNAPSHOT)).toBe('engaging')
+     const b = mount(failed, undefined, undefined, { summaryBlank: true })
+     expect(b.view.container.querySelector('[data-phase]')?.getAttribute('data-phase')).toBe('active')
+-    expect(b.view.queryByText('探索未至之境')).toBeNull()
++    expect(b.view.queryByText('今天想构建什么？')).toBeNull()
+   })
+ 
+   it('settling phase: a summary that does not prove the session blank hides the composer while it opens', () => {
+@@ -619,7 +619,7 @@ describe('ConversationRoot resident composer', () => {
+     // blank the column for the history round-trip.
+     const root = b.view.container.querySelector('[data-phase]')
+     expect(root?.getAttribute('data-phase')).toBe('hero')
+-    expect(b.view.getByText('探索未至之境')).toBeTruthy()
++    expect(b.view.getByText('今天想构建什么？')).toBeTruthy()
+     expect(b.view.getByRole('textbox')).toBeTruthy()
+   })
+ 
+diff --git a/packages/client/ui-primitives/src/HarnessStudioMark.tsx b/packages/client/ui-primitives/src/HarnessStudioMark.tsx
+new file mode 100644
+index 00000000..b5c222e1
+--- /dev/null
++++ b/packages/client/ui-primitives/src/HarnessStudioMark.tsx
+@@ -0,0 +1,21 @@
++import type { IconProps } from './icons/props.ts'
++
++/**
++ * Render Harness Studio's mark: a white target on a blue tile, the same artwork as the
++ * app and Chrome extension icons.
++ * @param props.size - square edge in px (default 24).
++ * @param props.className - extra class for layout placement.
++ * @returns the mark svg (aria-hidden; pair with the product name for accessibility).
++ */
++export function HarnessStudioMark({ size = 24, className }: IconProps) {
++  return (
++    <svg width={size} height={size} className={className} viewBox="100 100 824 824" aria-hidden="true">
++      <rect x="100" y="100" width="824" height="824" rx="185" fill="#2563eb" />
++      <g stroke="#fff" strokeWidth="64" strokeLinecap="round" fill="none">
++        <circle cx="512" cy="512" r="190" />
++        <path d="M512 230v60M512 734v60M230 512h60M734 512h60" />
++      </g>
++      <circle cx="512" cy="512" r="62" fill="#fff" />
++    </svg>
++  )
++}
+diff --git a/packages/client/ui-primitives/src/index.ts b/packages/client/ui-primitives/src/index.ts
+index 18f95444..385ca96c 100644
+--- a/packages/client/ui-primitives/src/index.ts
++++ b/packages/client/ui-primitives/src/index.ts
+@@ -44,6 +44,7 @@ export type { RiskConfirmationProps } from './RiskConfirmation.tsx'
+ export { ConnectionIndicator } from './ConnectionIndicator.tsx'
+ export type { ConnectionIndicatorState } from './ConnectionIndicator.tsx'
+ export { FishLogo, FISH_LOGO_PATH, FISH_LOGO_VIEWBOX } from './FishLogo.tsx'
++export { HarnessStudioMark } from './HarnessStudioMark.tsx'
+ export { BrandWordmark } from './BrandWordmark.tsx'
+ export type { BrandWordmarkProps } from './BrandWordmark.tsx'
+ export {
+diff --git a/packages/client/ui-sidebar/src/client/SidebarRoot.tsx b/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
+index 46c01930..ff26cd5a 100644
+--- a/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
++++ b/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
+@@ -19,7 +19,7 @@
+ import { useEffect, useRef, useState } from 'react'
+ import clsx from 'clsx'
+ import {
+-  FishLogo, IconNewChatOutlineMedium, IconNewChatOutlineRegular, IconPanelLeftOutlineRegular, isDarwinDesktop, ShortcutKeys, Tooltip,
++  HarnessStudioMark, IconNewChatOutlineMedium, IconNewChatOutlineRegular, IconPanelLeftOutlineRegular, isDarwinDesktop, ShortcutKeys, Tooltip,
+ } from '@deepseek-ai/dsh-client-ui-primitives'
+ import type { InjectFace, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+ import type {
+@@ -186,7 +186,7 @@ export function SidebarRoot({
+       >
+         {!wide && !windowsTitlebar && (
+           <span className={css.railMark} aria-hidden="true">
+-            {renderSlot('sidebar.brand.mark', { size: 24 }, { fallback: <FishLogo size={24} /> })}
++            {renderSlot('sidebar.brand.mark', { size: 24 }, { fallback: <HarnessStudioMark size={24} /> })}
+           </span>
+         )}
+         {/* Rail icons render at 18 (figma rail spec); expanded keeps the glyph-native sizes. */}
+@@ -222,7 +222,7 @@ export function SidebarRoot({
+           const identity = (
+             <span className={css.brandIdentity} aria-hidden="true">
+               <span className={css.brandMark}>
+-                {renderSlot('sidebar.brand.mark', { size: 24 }, { fallback: <FishLogo size={24} /> })}
++                {renderSlot('sidebar.brand.mark', { size: 24 }, { fallback: <HarnessStudioMark size={24} /> })}
+               </span>
+               <span className={css.brandName}>
+                 {renderSlot('sidebar.brand.name', {}, {
+diff --git a/packages/client/ui-sidebar/tests/__snapshots__/sidebar-snapshot.client.spec.tsx.snap b/packages/client/ui-sidebar/tests/__snapshots__/sidebar-snapshot.client.spec.tsx.snap
+index 652e9f6b..937e428f 100644
+--- a/packages/client/ui-sidebar/tests/__snapshots__/sidebar-snapshot.client.spec.tsx.snap
++++ b/packages/client/ui-sidebar/tests/__snapshots__/sidebar-snapshot.client.spec.tsx.snap
+@@ -122,10 +122,9 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded
+             >
+               <svg
+                 aria-hidden="true"
+-                data-content="965fe321"
+-                fill="none"
+-                height="17.6580310880829"
+-                viewBox="0 0 23.16 17.04"
++                data-content="9fc19993"
++                height="24"
++                viewBox="100 100 824 824"
+                 width="24"
+               />
+             </div>
+@@ -143,7 +142,7 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded
+                 <span
+                   class="localBuildTitle"
+                 >
+-                  DSH Local Build
++                  Harness Studio
+                 </span>
+                 <span
+                   class="buildVersion"
+@@ -262,10 +261,9 @@ exports[`sidebar shell snapshots > renders the collapsed rail after the crossfad
+           >
+             <svg
+               aria-hidden="true"
+-              data-content="965fe321"
+-              fill="none"
+-              height="17.6580310880829"
+-              viewBox="0 0 23.16 17.04"
++              data-content="9fc19993"
++              height="24"
++              viewBox="100 100 824 824"
+               width="24"
+             />
+           </div>
+@@ -374,10 +372,9 @@ exports[`sidebar shell snapshots > renders the expanded column (wordmark, capsul
+             >
+               <svg
+                 aria-hidden="true"
+-                data-content="965fe321"
+-                fill="none"
+-                height="17.6580310880829"
+-                viewBox="0 0 23.16 17.04"
++                data-content="9fc19993"
++                height="24"
++                viewBox="100 100 824 824"
+                 width="24"
+               />
+             </div>
+@@ -395,7 +392,7 @@ exports[`sidebar shell snapshots > renders the expanded column (wordmark, capsul
+                 <span
+                   class="localBuildTitle"
+                 >
+-                  DSH Local Build
++                  Harness Studio
+                 </span>
+                 <span
+                   class="buildVersion"
+@@ -517,10 +514,9 @@ exports[`sidebar shell snapshots > renders the expanded column in the default lo
+             >
+               <svg
+                 aria-hidden="true"
+-                data-content="965fe321"
+-                fill="none"
+-                height="17.6580310880829"
+-                viewBox="0 0 23.16 17.04"
++                data-content="9fc19993"
++                height="24"
++                viewBox="100 100 824 824"
+                 width="24"
+               />
+             </div>
+@@ -538,7 +534,7 @@ exports[`sidebar shell snapshots > renders the expanded column in the default lo
+                 <span
+                   class="localBuildTitle"
+                 >
+-                  DSH 本地构建
++                  Harness Studio
+                 </span>
+                 <span
+                   class="buildVersion"
+diff --git a/packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx b/packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx
+index c0aee40a..e19501da 100644
+--- a/packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx
++++ b/packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx
+@@ -151,7 +151,7 @@ describe('SidebarRoot shell', () => {
+         options?.fallback ?? null) as SidebarRootComponentProps['renderSlot']}
+     />)
+ 
+-    expect(screen.getByText('DSH Local Build')).toBeTruthy()
++    expect(screen.getByText('Harness Studio')).toBeTruthy()
+     expect(screen.getByText('1.2.3-rc.4-0123456-dirty')).toBeTruthy()
+     expect(container.querySelector('svg')).not.toBeNull()
+   })
+@@ -172,7 +172,7 @@ describe('SidebarRoot shell', () => {
+         options?.fallback ?? null) as SidebarRootComponentProps['renderSlot']}
+     />)
+ 
+-    expect(screen.getByText('DSH Local Build')).toBeTruthy()
++    expect(screen.getByText('Harness Studio')).toBeTruthy()
+     expect(screen.getByText(expected)).toBeTruthy()
+   })
+ 
+@@ -188,7 +188,7 @@ describe('SidebarRoot shell', () => {
+         options?.fallback ?? null) as SidebarRootComponentProps['renderSlot']}
+     />)
+ 
+-    expect(screen.getByText('DSH Local Build')).toBeTruthy()
++    expect(screen.getByText('Harness Studio')).toBeTruthy()
+   })
+ 
+   it('hands the region its wide flag and clamps expandSidebar to the collapsed state', () => {
