@@ -1,0 +1,70 @@
+# Builds the unsigned Harness Studio desktop app for Linux: an AppImage and a .deb for x64 and arm64.
+# Native packages are installed for the build machine, so each architecture runs on its own GitHub-hosted
+# Ubuntu runner, then the .deb is installed and smoke-tested on a virtual display. The packages, their
+# checksums and the smoke-test screenshots are kept as workflow artifacts for 30 days. Run it from
+# the Actions tab, or push a tag starting with "v".
+name: Build Linux app
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: pnpm/action-setup@v5.0.0
+        with:
+          version: 11.28.5
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential python3 ruby ruby-dev rpm libarchive-tools
+          if [ "${{ matrix.arch }}" = arm64 ]; then sudo gem install --no-document fpm; fi
+
+      - name: Build the app
+        run: desktop/build-linux.sh
+
+      - name: Smoke-test the installed .deb
+        run: |
+          sudo apt-get install -y xvfb dbus-x11 x11-utils ./dist/harness-studio_*.deb
+          desktop/smoke-linux.sh dist/smoke
+
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: harness-studio-linux-${{ matrix.arch }}-smoke
+          path: dist/smoke
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: harness-studio-linux-${{ matrix.arch }}
+          path: |
+            dist/Harness-Studio-*-linux-*.AppImage
+            dist/Harness-Studio-*-linux-*.AppImage.sha256
+            dist/harness-studio_*.deb
+            dist/harness-studio_*.deb.sha256
+          if-no-files-found: error
+          retention-days: 30

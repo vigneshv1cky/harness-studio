@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Sessions",
+    "description": "Side sessions: the agent hands work to a separate session with a brief, optionally in its own git worktree, and gets each report back."
+  }
+}

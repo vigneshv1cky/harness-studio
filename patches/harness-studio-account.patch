@@ -325,10 +325,10 @@ index fc19021f..9f5b76ed 100644
      status(): Promise<DesktopUpdatePresentation>
      open(): Promise<void>
 diff --git a/apps/desktop/src/locale.ts b/apps/desktop/src/locale.ts
-index 5d9d4607..eb6c2cdb 100644
+index 5d9d4607..2431c51c 100644
 --- a/apps/desktop/src/locale.ts
 +++ b/apps/desktop/src/locale.ts
-@@ -66,33 +66,20 @@ export const en = {
+@@ -66,36 +66,14 @@ export const en = {
    restartApplication: 'Restart',
    recoveryOperationFailed: 'The recovery operation failed',
    disableThirdPartyPlugins: 'Disable third-party plugins, back up profile patch, and restart',
@@ -355,23 +355,23 @@ index 5d9d4607..eb6c2cdb 100644
 -  welcomeAuthRetry: 'Sign in again',
 -  welcomeSignIn: 'Sign in',
 -  welcomeApiKey: 'Add API Key',
-+  welcomeDescription: 'Any model, on your code and UI.',
-+  welcomeChooseProvider: 'Choose a model provider',
-+  welcomeApiKey: 'Add DeepSeek API Key',
-   welcomeKeyTitle: 'Add an API key to get started',
+-  welcomeKeyTitle: 'Add an API key to get started',
 -  welcomeKeyDescription: 'Configure official DeepSeek models to start using Harness',
-+  welcomeKeyDescription: 'Use DeepSeek models with your own API key. Other providers are in Settings → Models.',
-   welcomeKeyPlaceholder: 'Enter API key',
-   welcomeKeySave: 'Save and continue',
+-  welcomeKeyPlaceholder: 'Enter API key',
+-  welcomeKeySave: 'Save and continue',
 -  welcomeKeyLater: 'Set up later',
 -  welcomeKeyBack: 'Back to sign in',
 -  welcomeSessionExpired: 'You have signed out of your account, please log in again.',
-+  welcomeKeyBack: 'Back',
+-  welcomeKeyBlank: 'Enter an API key.',
+-  welcomeKeyInvalid: 'Enter the API key itself, without quotes, spaces, or an environment-variable assignment.',
+-  welcomeKeyFailed: 'Could not save the API key. Please try again.',
++  welcomeDescription: 'Any model, on your code and UI.',
++  welcomeChooseProvider: 'Choose a model provider',
 +  welcomeSessionExpired: 'Harness Studio no longer uses DeepSeek account sign-in. Choose a model provider to continue.',
-   welcomeKeyBlank: 'Enter an API key.',
-   welcomeKeyInvalid: 'Enter the API key itself, without quotes, spaces, or an environment-variable assignment.',
-   welcomeKeyFailed: 'Could not save the API key. Please try again.',
-@@ -237,33 +224,20 @@ export const zh = {
+   welcomeContinueFailed: 'Could not open the workspace. Please try again.',
+   checkUpdatesMenu: 'Check for Updates…',
+   reloadPageMenu: 'Reload Page',
+@@ -237,36 +215,14 @@ export const zh = {
    restartApplication: '重启',
    recoveryOperationFailed: '恢复操作失败',
    disableThirdPartyPlugins: '禁用第三方插件、备份 profile patch 并重启',
@@ -398,22 +398,22 @@ index 5d9d4607..eb6c2cdb 100644
 -  welcomeAuthRetry: '重新登录',
 -  welcomeSignIn: '登录',
 -  welcomeApiKey: '添加 API Key',
-+  welcomeDescription: '任意模型，作用于你的代码与界面',
-+  welcomeChooseProvider: '选择模型服务',
-+  welcomeApiKey: '添加 DeepSeek API Key',
-   welcomeKeyTitle: '添加一个 API Key 开始使用',
+-  welcomeKeyTitle: '添加一个 API Key 开始使用',
 -  welcomeKeyDescription: '配置 DeepSeek 官方模型，即可开始使用',
-+  welcomeKeyDescription: '使用你自己的 API Key 调用 DeepSeek 模型。其他模型服务在“设置 → 模型”中添加。',
-   welcomeKeyPlaceholder: '输入 API 密钥',
-   welcomeKeySave: '保存并继续',
+-  welcomeKeyPlaceholder: '输入 API 密钥',
+-  welcomeKeySave: '保存并继续',
 -  welcomeKeyLater: '稍后配置',
 -  welcomeKeyBack: '返回登录',
 -  welcomeSessionExpired: '登录信息已失效，请重新登录',
-+  welcomeKeyBack: '返回',
+-  welcomeKeyBlank: '请输入 API 密钥。',
+-  welcomeKeyInvalid: '请仅输入 API 密钥，不要包含引号、空格或环境变量赋值。',
+-  welcomeKeyFailed: '无法保存 API 密钥，请重试。',
++  welcomeDescription: '任意模型，作用于你的代码与界面',
++  welcomeChooseProvider: '选择模型服务',
 +  welcomeSessionExpired: 'Harness Studio 不再使用 DeepSeek 账号登录。请选择模型服务以继续。',
-   welcomeKeyBlank: '请输入 API 密钥。',
-   welcomeKeyInvalid: '请仅输入 API 密钥，不要包含引号、空格或环境变量赋值。',
-   welcomeKeyFailed: '无法保存 API 密钥，请重试。',
+   welcomeContinueFailed: '无法打开工作区，请重试。',
+   checkUpdatesMenu: '检查更新…',
+   reloadPageMenu: '刷新页面',
 diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
 index 2afdfd71..eb6f4a72 100644
 --- a/apps/desktop/src/main.ts
@@ -1335,6 +1335,46 @@ index f3cc85ea..7cac244b 100644
  }
  
  /**
+diff --git a/packages/client/ui-settings-models/src/client/index.ts b/packages/client/ui-settings-models/src/client/index.ts
+index bf3c7e13..9130a096 100644
+--- a/packages/client/ui-settings-models/src/client/index.ts
++++ b/packages/client/ui-settings-models/src/client/index.ts
+@@ -150,7 +150,9 @@ export function apply(ctx: ClientContext): void {
+     order: -100,
+     inject: welcomeInjected,
+   }, WelcomeNotice))
+-  ctx.slots.inject('settings.onboarding', () => ctx.slots.register({
++  // Harness Studio: the desktop has no DeepSeek sign-in, and its welcome window already leads to Settings → Models.
++  // Registered there, this first-run step appeared once sessions loaded and closed a Settings panel opened earlier.
++  if (!('dshDesktop' in globalThis)) ctx.slots.inject('settings.onboarding', () => ctx.slots.register({
+     name: 'settings.onboarding',
+     id: 'deepseek-official',
+     children: { 'settings.models.sign-in': { kind: 'single', scope: 'root' } },
+diff --git a/packages/client/ui-settings-models/tests/apply.client.spec.ts b/packages/client/ui-settings-models/tests/apply.client.spec.ts
+index f9dac62c..0972cac5 100644
+--- a/packages/client/ui-settings-models/tests/apply.client.spec.ts
++++ b/packages/client/ui-settings-models/tests/apply.client.spec.ts
+@@ -94,6 +94,20 @@ describe('ui-settings-models apply', () => {
+     }
+   })
+ 
++  it('registers no first-run onboarding step in the Harness Studio desktop app', async () => {
++    const { ctx, slots } = await bench()
++    declare(slots)
++    vi.stubGlobal('dshDesktop', {})
++    try {
++      const plugin = ctx.plugin({ inject: [...inject], apply })
++      await plugin.await()
++      expect(slots.entries('settings.onboarding')).toEqual([])
++      expect(slots.entries('settings.section').map(entry => entry.options.id)).toEqual(['models'])
++    } finally {
++      await ctx.fiber.dispose()
++    }
++  })
++
+   it('defaults to browser onboarding and rejects malformed bootstrap options', async () => {
+     expect(hostPlugin.Config({})).toEqual({ credentialOnboarding: true })
+     expect(hostPlugin.Config['~standard'].validate({ credentialOnboarding: 'false' })).toHaveProperty('issues')
 diff --git a/packages/client/ui-settings-models/tests/components.client.spec.tsx b/packages/client/ui-settings-models/tests/components.client.spec.tsx
 index 510d23a2..272726a8 100644
 --- a/packages/client/ui-settings-models/tests/components.client.spec.tsx

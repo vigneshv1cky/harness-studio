@@ -2,11 +2,11 @@
 
 A Claude-like feel for [Harness Studio](../../README.md) in Harness's own colours: denser spacing, serif replies, calmer chrome, plus whole-app zoom.
 
-![Density before and after](../../docs/screenshots/compact-before-after.png)
+![A reply with a file table and a code block in the dark theme, at Compact's density](../../docs/screenshots/compact-density.png)
 
-![Look before and after](../../docs/screenshots/look-before-after.png)
+![A finished conversation beside the Browser pane showing the sample app](../../docs/screenshots/compact-look.png)
 
-![Sidebars before and after](../../docs/screenshots/sidebars-before-after.png)
+![The left sidebar with search and workspaces, and the right sidebar's Browser pane](../../docs/screenshots/compact-sidebars.png)
 
 ## What it changes
 

@@ -20,3 +20,9 @@ rsvg-convert -w 128 -h 128 "$logo" -o "$icons/icon-128.png"
 mkdir -p "$desktop"
 rsvg-convert -w 1024 -h 1024 "$logo" -o "$desktop/icon-macos.png"
 rsvg-convert -w 1024 -h 1024 "$windows" -o "$desktop/icon-windows.png"
+
+# Linux .desktop icon set, one PNG per size.
+mkdir -p "$root/assets/logo/linux"
+for size in 16 32 48 64 128 256 512; do
+  rsvg-convert -w "$size" -h "$size" "$logo" -o "$root/assets/logo/linux/${size}x${size}.png"
+done

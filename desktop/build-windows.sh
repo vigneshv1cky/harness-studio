@@ -23,7 +23,8 @@ command -v pnpm >/dev/null || fail "needs pnpm (corepack enable)"
 echo "build-windows: Harness $pin from $upstream"
 rm -rf "$harness"
 mkdir -p "$work"
-git clone --quiet --no-checkout "$upstream" "$harness"
+# Keep LF line endings: Git for Windows converts text files to CRLF by default, and the patches would not apply.
+git clone --quiet --no-checkout -c core.autocrlf=false -c core.eol=lf "$upstream" "$harness"
 git -C "$harness" checkout --quiet "$pin"
 for patch in "$root/patches/harness-studio-brand.patch" "$root/patches/harness-studio-account.patch" "$root"/desktop/patches/*.patch; do
   echo "build-windows: applying $(basename "$patch")"
@@ -33,7 +34,10 @@ done
 mkdir -p "$harness/harness-studio-plugins"
 (cd "$root" && npm pack --silent --pack-destination "$harness/harness-studio-plugins" ./plugins/devpreview ./plugins/connectors ./plugins/compact >/dev/null)
 
-(cd "$harness" && pnpm install --frozen-lockfile \
+# Packaging runs tar on Windows paths such as D:\...; Git Bash's GNU tar reads "D:" as a remote host, so
+# Windows' own tar (System32) must come first, as it does outside Git Bash.
+system32="$(cygpath -u "$SYSTEMROOT")/System32"
+(cd "$harness" && export PATH="$system32:$PATH" && pnpm install --frozen-lockfile \
   && pnpm --filter @deepseek-ai/dsh-desktop run render:tray-icon \
   && pnpm --filter @deepseek-ai/dsh-desktop run package:win:x64:unsigned)
 

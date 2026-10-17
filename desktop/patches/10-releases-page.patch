@@ -1,0 +1,92 @@
+diff --git a/apps/desktop/src/studio-identity.ts b/apps/desktop/src/studio-identity.ts
+--- a/apps/desktop/src/studio-identity.ts
++++ b/apps/desktop/src/studio-identity.ts
+@@ -15,3 +15,6 @@
+   app.setPath('sessionData', userData)
+   if (process.env.DSH_HOME === undefined) process.env.DSH_HOME = join(homedir(), '.harness-studio')
+ }
++
++/** Harness Studio publishes no update feed, so Check for Updates opens the public releases instead. */
++export const STUDIO_RELEASES_URL = 'https://github.com/vigneshv1cky/harness-studio/releases'
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -1,4 +1,4 @@
+-import './studio-identity.ts'
++import { STUDIO_RELEASES_URL } from './studio-identity.ts'
+ import type { ProductEventMap, ProductEvent } from '@deepseek-ai/dsh-client-product-analytics/types'
+ import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
+ /** Electron shell: desktop project ownership, custom protocol, windows, and lifecycle. */
+@@ -970,7 +970,7 @@
+         click: () => { void showAbout().catch((error: unknown) => { console.error(error) }) } }
+       : { label: currentDesktopLocale().messages.aboutMenu, role: 'about' },
+     { type: 'separator' },
+-    { label: currentDesktopLocale().messages.checkUpdatesMenu, click: () => { void openUpdatePrompt(true) } },
++    { label: currentDesktopLocale().messages.checkUpdatesMenu, click: () => { void shell.openExternal(STUDIO_RELEASES_URL) } },
+     ...process.platform === 'darwin' || process.platform === 'win32'
+       ? [{ label: currentDesktopLocale().messages.cliCommandMenu, click: () => { void commandManager.show() } }] : [],
+     { label: currentDesktopLocale().messages.browserSignInMenu, type: 'checkbox', checked: browserSignIn,
+diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-startup.spec.ts
+--- a/apps/desktop/tests/main-startup.spec.ts
++++ b/apps/desktop/tests/main-startup.spec.ts
+@@ -597,7 +597,8 @@
+     expect(harness.updateDownload).not.toHaveBeenCalled()
+   })
+ 
+-  it('checks updates from the application menu without offering disabled test authentication', async () => {
++  // Harness Studio's menu opens the releases page instead of running this manual check.
++  it.skip('checks updates from the application menu without offering disabled test authentication', async () => {
+     configureTestAuthPopup(false)
+     harness.embeddedPolicy = { origin: 'https://policy.example.com', authentication: 'feishu-test',
+       allowedAuthOrigins: ['https://login.example.com'], allowedPageOrigins: ['https://downloads.example.com'] }
+@@ -785,8 +786,6 @@
+       vi.stubEnv('DSH_DESKTOP_UPDATE_JOURNAL_DIR', directory)
+       await readyForUpdate()
+       harness.publishUpdate({ phase: 'error', failedOperation: 'download', version: '1.2.3', message: 'ENOSPC secret-url' })
+-      const checkUpdates = applicationMenuItems().find(item => item.label === en.checkUpdatesMenu)!.click as () => void
+-      checkUpdates()
+       await vi.advanceTimersByTimeAsync(0)
+       for (const host of harness.hosts) host.exited.resolve()
+       harness.app.quit()
+@@ -795,7 +794,7 @@
+       expect(files).toHaveLength(1)
+       const contents = readFileSync(join(directory, files[0]!), 'utf8')
+       const records = contents.trim().split('\n').map(line => JSON.parse(line) as { event: string })
+-      expect(records.map(row => row.event)).toEqual(expect.arrayContaining(['started', 'workspace-ready', 'state', 'check-requested', 'quit-requested']))
++      expect(records.map(row => row.event)).toEqual(expect.arrayContaining(['started', 'workspace-ready', 'state', 'quit-requested']))
+       expect(contents).toContain('ENOSPC')
+       expect(contents).not.toContain('secret-url')
+     } finally {
+@@ -1587,11 +1586,6 @@
+       expect((harness.dialog.showMessageBox.mock.calls[0]![0] as { signal: AbortSignal }).signal.aborted).toBe(false)
+       return Promise.resolve({ response: 0 })
+     })
+-    const submenu = applicationMenuItems()
+-    const action = submenu.find(item => item.label === 'Check for Updates…')
+-    expect(action?.click).toBeTypeOf('function')
+-    // Electron supplies menu arguments that this callback does not consume.
+-    Reflect.apply(action!.click!, undefined, [])
+     const prompt = Promise.resolve(invoke(DESKTOP_IPC.updatesOpen, 'app'))
+     const signal = await checking.promise
+     await requested.promise
+@@ -1659,7 +1653,19 @@
+     }
+   })
+ 
+-  it('lets a confirmed mandatory policy preempt an ordinary result dialog', async () => {
++  it('opens the Harness Studio releases page from Check for Updates without checking a feed', async () => {
++    await readyForUpdate()
++    harness.updateCheck.mockClear()
++    const action = applicationMenuItems().find(item => item.label === 'Check for Updates…')
++    expect(action?.click).toBeTypeOf('function')
++    // Electron supplies menu arguments that this callback does not consume.
++    Reflect.apply(action!.click!, undefined, [])
++    expect(harness.openExternal).toHaveBeenCalledExactlyOnceWith('https://github.com/vigneshv1cky/harness-studio/releases')
++    expect(harness.updateCheck).not.toHaveBeenCalled()
++  })
++
++  // Harness Studio's menu opens the releases page, so the manual update dialog this covers is unreachable.
++  it.skip('lets a confirmed mandatory policy preempt an ordinary result dialog', async () => {
+     harness.embeddedPolicy = { origin: 'https://policy.example.com',
+       allowedPageOrigins: ['https://downloads.example.com'] }
+     const policy = Promise.withResolvers<Response>()

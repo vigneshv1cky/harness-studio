@@ -878,18 +878,66 @@ window.__ModuleLoader__.load({
     const ICON_COMPUTER = 'M2.5 3h11v7.5h-11zM6 13.5h4M8 10.5v3'
     const ICON_BRANCH = 'M5 3v10M5 13a1.5 1.5 0 1 0 0-.01M11 3a1.5 1.5 0 1 0 0 .01M11 4.5c0 3-6 3-6 6'
 
+    /**
+     * The usage readings Harness shows under the message box (turns and steps, speed, tokens, cache hit,
+     * context used), mirrored for the Session pane. They are read from the readings' own accessible
+     * labels, so the pane always matches what Harness shows there, and the originals stay where they are.
+     */
+    function readComposerStats() {
+      const slot = [...document.querySelectorAll('[data-slot="conversation.composer.dock"]')].find(d => d.closest('[class*="_centerCol"]') && d.parentElement && d.parentElement.getBoundingClientRect().width > 0)
+      const dock = slot && slot.parentElement
+      if (!dock) return { dock: null, rows: [] }
+      const labels = [...new Set([...dock.querySelectorAll('[aria-label]')].map(e => e.getAttribute('aria-label').trim()).filter(Boolean))]
+      const rows = []
+      for (const label of labels) {
+        for (const part of label.split(/\s+·\s+/)) {
+          let m
+          if ((m = /^(\d[\d,.]*)\s+turns?\s+(\d[\d,.]*)\s+steps?$/i.exec(part))) { rows.push(['Turns', m[1]], ['Steps', m[2]]) }
+          else if ((m = /^([\d,.]+\s*tok\/s)$/i.exec(part))) rows.push(['Speed', m[1]])
+          else if ((m = /^([\d,.]+[KMB]?)\s*tok$/i.exec(part))) rows.push(['Tokens', m[1]])
+          else if ((m = /^Cache hit\s+([\d.]+%)$/i.exec(part))) rows.push(['Cache hit', m[1]])
+          else if ((m = /^([\d.]+%)\s+of context used$/i.exec(part))) rows.push(['Context used', m[1]])
+          else rows.push(['', part]) // a reading this pane doesn't know yet: shown as Harness words it
+        }
+      }
+      return { dock, rows }
+    }
+
+    function useComposerStats() {
+      const [rows, setRows] = useState(() => readComposerStats().rows)
+      useEffect(() => {
+        let observed = null
+        const observer = new MutationObserver(() => update())
+        const update = () => {
+          const { dock, rows: next } = readComposerStats()
+          setRows(prev => JSON.stringify(prev) === JSON.stringify(next) ? prev : next)
+          if (dock !== observed) {
+            observer.disconnect()
+            observed = dock
+            if (dock) observer.observe(dock, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['aria-label'] })
+          }
+        }
+        update()
+        const timer = setInterval(update, 2000) // the message box can be replaced when switching sessions
+        return () => { clearInterval(timer); observer.disconnect() }
+      }, [])
+      return rows
+    }
+
     function DetailsPane({ sessionId, useSessions, sidebar }) {
+      const usage = useComposerStats()
       const cwd = useSessions(sessions => sessions.byId[sessionId]?.cwd)
       const [state] = useGitStatus(cwd)
       const status = state.kind === 'ready' ? state.status : undefined
-      const parent = cwd ? cwd.replace(/\/[^/]*$/, '') : ''
-      const folder = cwd ? cwd.slice(parent.length + 1) : ''
+      // Windows paths use backslashes; the home folder shows as ~ on macOS, Linux and Windows.
+      const folder = cwd ? cwd.split(/[\\/]/).pop() : ''
+      const parent = cwd ? cwd.slice(0, Math.max(0, cwd.length - folder.length - 1)) : ''
       return h('div', { style: detailStyles.root, 'data-testid': 'studio-details' },
         h('div', { style: detailStyles.card },
           h('div', { style: detailStyles.title }, 'Environment'),
           h('div', { style: detailStyles.row }, h('span', { style: detailStyles.icon }, h(Icon, { d: ICON_COMPUTER })), 'This computer'),
           h('div', { style: detailStyles.row, title: cwd }, h('span', { style: detailStyles.icon }, h(Icon, { d: ICON_FOLDER })),
-            h('span', { style: { flexShrink: 0 } }, folder || 'No folder'), parent ? h('span', { style: detailStyles.dim }, '· ' + parent.replace(/^\/Users\/[^/]+/, '~')) : null),
+            h('span', { style: { flexShrink: 0 } }, folder || 'No folder'), parent ? h('span', { style: detailStyles.dim }, '· ' + parent.replace(/^(?:\/Users\/[^/]+|\/home\/[^/]+|[A-Za-z]:\\Users\\[^\\]+)/, '~')) : null),
           status && status.repo ? h('div', { style: detailStyles.row }, h('span', { style: detailStyles.icon }, h(Icon, { d: ICON_BRANCH })), status.branch) : null),
         h('div', { style: detailStyles.card },
           h('div', { style: detailStyles.title }, 'Changes'),
@@ -902,7 +950,14 @@ window.__ModuleLoader__.load({
                 h('span', { style: gitStyles.plus }, '+' + status.totals.added),
                 h('span', { style: gitStyles.minus }, '−' + status.totals.deleted),
                 h('span', { style: detailStyles.dim }, status.fileCount + (status.fileCount === 1 ? ' file' : ' files'))),
-            status && status.repo ? h('button', { type: 'button', style: detailStyles.link, onClick: () => sidebar.openTab(CHANGES_KIND) }, 'Review') : null)))
+            status && status.repo ? h('button', { type: 'button', style: detailStyles.link, onClick: () => sidebar.openTab(CHANGES_KIND) }, 'Review') : null)),
+        usage.length ? h('div', { style: detailStyles.card, 'data-testid': 'studio-usage' },
+          h('div', { style: detailStyles.title }, 'Usage'),
+          // Two readings per row, each value right beside its label.
+          h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', columnGap: 16, rowGap: 6 } },
+            usage.map(([label, value], i) => h('div', { key: i, style: { display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 } },
+              label ? h('span', { style: { color: 'var(--dsw-alias-label-tertiary)', whiteSpace: 'nowrap' } }, label + ':') : null,
+              h('span', { style: { fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, value))))) : null)
     }
 
     const CHANGES_TAB_ID = '@harness-studio/changes'

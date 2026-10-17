@@ -1,0 +1,93 @@
+diff --git a/apps/desktop/renderer/welcome.css b/apps/desktop/renderer/welcome.css
+--- a/apps/desktop/renderer/welcome.css
++++ b/apps/desktop/renderer/welcome.css
+@@ -341,3 +341,63 @@
+ .actions .welcome-loading { color: inherit; }
+ 
+ .auth-waiting .copy-link:disabled { cursor: default; }
++
++/* Harness Studio: a compact welcome. The mark, greeting and action sit together in the middle of a
++   420 x 340 window instead of being spread over 600 x 700, and the copy uses the system font. */
++.welcome {
++  display: flex;
++  flex-direction: column;
++  justify-content: center;
++  gap: 20px;
++  padding: 0 32px 28px;
++}
++
++.brand {
++  width: auto;
++  height: 26px;
++}
++
++.tagline {
++  color: var(--dsw-alias-label-primary);
++  font-family: var(--dsw-font-family);
++  font-size: 17px;
++  font-weight: 600;
++  line-height: 22px;
++  letter-spacing: -0.01em;
++}
++
++.tagline em,
++:lang(en) .tagline em {
++  font-family: inherit;
++  font-size: inherit;
++  font-weight: inherit;
++}
++
++.tagline > p {
++  margin-top: 4px;
++  color: var(--dsw-alias-label-secondary);
++  font-size: 13px;
++  font-weight: 400;
++  line-height: 18px;
++  letter-spacing: 0;
++}
++
++.tagline .key-error {
++  position: static;
++  margin-top: 8px;
++  color: var(--dsw-alias-label-primary);
++}
++
++.actions {
++  align-self: center;
++  gap: 8px;
++  width: 200px;
++}
++
++.actions button {
++  height: 32px;
++  padding: 6px 14px;
++  border-radius: 8px;
++  font-size: 13px;
++  line-height: 18px;
++}
+diff --git a/apps/desktop/src/welcome-window.ts b/apps/desktop/src/welcome-window.ts
+--- a/apps/desktop/src/welcome-window.ts
++++ b/apps/desktop/src/welcome-window.ts
+@@ -15,8 +15,8 @@
+  */
+ export function welcomeWindowOptions(platform: NodeJS.Platform, locale: DesktopLocale): BrowserWindowConstructorOptions {
+   return {
+-    width: 600,
+-    height: 700,
++    width: 420,
++    height: 340,
+     useContentSize: true,
+     center: true,
+     resizable: false,
+diff --git a/apps/desktop/tests/welcome-window.spec.ts b/apps/desktop/tests/welcome-window.spec.ts
+--- a/apps/desktop/tests/welcome-window.spec.ts
++++ b/apps/desktop/tests/welcome-window.spec.ts
+@@ -53,7 +53,7 @@
+   it.each(['darwin', 'win32', 'linux'] as const)('keeps the %s preview fixed-size and sandboxed', (platform) => {
+     const options = welcomeWindowOptions(platform, resolveDesktopLocale('zh-CN'))
+     expect(options).toMatchObject({
+-      width: 600, height: 700, useContentSize: true, center: true, show: false,
++      width: 420, height: 340, useContentSize: true, center: true, show: false,
+       resizable: false, maximizable: false, fullscreenable: false,
+       webPreferences: {
+         nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true,

@@ -1,6 +1,6 @@
 # Harness Studio desktop app
 
-Build files for the downloadable Harness Studio app: [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) at the commit pinned in [docs/HARNESS_PIN.md](../docs/HARNESS_PIN.md), with Harness Studio's name and logo, the three plugins built in, and telemetry off. Everything is applied by script to a fresh clone, so the build can be repeated and moved to a new Harness commit.
+Build files for the downloadable Harness Studio app (macOS and Linux; Windows is paused, see [below](#windows-paused)): [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) at the commit pinned in [docs/HARNESS_PIN.md](../docs/HARNESS_PIN.md), with Harness Studio's name and logo, the three plugins built in, and telemetry off. Everything is applied by script to a fresh clone, so the build can be repeated and moved to a new Harness commit.
 
 Harness Studio is an independent project. It is not affiliated with or endorsed by DeepSeek or Anthropic. The patches carry lines of DeepSeek Harness's source as context; see [patches/NOTICE.md](../patches/NOTICE.md) for its MIT licence notice.
 
@@ -20,6 +20,7 @@ Harness Studio is an independent project. It is not affiliated with or endorsed 
 | Feedback | none: no thumbs, Feedback command or menu item, and no Session-log upload | thumbs, Feedback command and menu, Session-log upload on by default |
 | DeepSeek account | none: no sign-in, account menu or Settings → Account, and models never use an account sign-in; DeepSeek works with an API key like any other provider | sign-in, account pages, account-based models |
 | Browser pane sign-in | off by default; app menu → **Allow Sign-in in Browser Pane** (see below) | not available |
+| First-use workspace | `Documents/Harness Studio/default-workspace`, or an existing `Documents/deepseek-harness/default-workspace` | `Documents/deepseek-harness/default-workspace` |
 
 Both apps can be installed side by side; they share no data.
 
@@ -33,6 +34,12 @@ desktop/build-mac.sh
 
 The script clones Harness into `dist/build/harness` (replacing an earlier copy), applies `patches/harness-studio-brand.patch`, `patches/harness-studio-account.patch` and then `desktop/patches/*.patch` in order, copies the logo, packs the three plugins into the app, and runs Harness's own unsigned macOS packaging. It writes `dist/Harness-Studio-<version>-mac-arm64.dmg` and a `.sha256` file; the version is in [VERSION](VERSION), and the About panel shows the Harness version it is built on.
 
+[smoke-mac.sh](smoke-mac.sh) checks a DMG without touching your own Harness Studio data: it runs a copy of the app on a throwaway home folder and checks the welcome screen, the built-in plugins and their pages, the first-use workspace (including that an existing `deepseek-harness` one is kept), the `harness-studio://` link and Office to PDF:
+
+```sh
+desktop/smoke-mac.sh dist/Harness-Studio-<version>-mac-arm64.dmg dist/smoke-mac
+```
+
 An unsigned app opens only after the person allows it once: open the DMG, drag Harness Studio to Applications, open it, then **System Settings → Privacy & Security → Open Anyway**.
 
 ### Signing and notarisation
@@ -44,17 +51,32 @@ Needs an [Apple Developer Program](https://developer.apple.com/programs/) member
 
 `HARNESS_STUDIO_SIGNING_IDENTITY=-` signs ad hoc and skips notarisation, which checks the signing steps without credentials.
 
-## Build for Windows (x64)
+## Windows (paused)
 
-Harness packages Windows only on a Windows x64 machine. [.github/workflows/build-windows.yml](../.github/workflows/build-windows.yml) runs [build-windows.sh](build-windows.sh) on a GitHub-hosted Windows runner: run **Build Windows app** from the repository's Actions tab, or push a tag starting with `v`. The unsigned installer, `Harness-Studio-<version>-win-x64-setup.exe`, and its checksum are kept as a workflow artifact for 30 days. Windows shows "Windows protected your PC" for an unsigned installer: **More info → Run anyway**. Removing that warning needs a code-signing certificate.
+Downloads are for macOS and Linux; Windows isn't available yet. Windows packaging takes 35–40 minutes per build on GitHub's Windows runners, so its workflows were paused on 2026-10-17. Everything needed is kept: [build-windows.sh](build-windows.sh), [smoke-windows.sh](smoke-windows.sh), the Windows patches and icons, and the two workflows in [.github/workflows-paused](../.github/workflows-paused). To bring Windows back, move those two workflow files back into `.github/workflows` ([how](../.github/workflows-paused/README.md)); the build then produces an unsigned `Harness-Studio-<version>-win-x64-setup.exe` and smoke-tests it on the runner.
 
-## Linux
+## Build for Linux (x64 and arm64)
 
-Harness has no packaged Linux desktop app. Run Harness from source and use the Web app with the plugins installed; see the main [README](../README.md#running-the-harness-from-source). The desktop-only features (the Browser pane's embedded browser, picking elements on live websites, Browser pane sign-in) are not available there.
+Native packages are installed for the build machine, so each architecture is built on Linux of that architecture. [.github/workflows/build-linux.yml](../.github/workflows/build-linux.yml) runs [build-linux.sh](build-linux.sh) on GitHub's `ubuntu-24.04` (x64) and `ubuntu-24.04-arm` (arm64) runners: run **Build Linux app** from the Actions tab, or push a tag starting with `v`. Each job then installs the `.deb` on that runner and smoke-tests it on a virtual display with [smoke-linux.sh](smoke-linux.sh): the welcome screen, "Choose a model provider" opening Settings → Models, the three built-in plugins and their pages, the first-use workspace in `~/Documents/Harness Studio`, the window matching its launcher entry, and no DeepSeek account, feedback or sign-in. The AppImage, the `.deb`, their checksums and the smoke-test screenshots are kept as workflow artifacts for 30 days.
+
+To build on your own Linux machine you need Node.js 24, pnpm, Git, `build-essential` and `python3`, and on arm64 also `fpm` (`sudo gem install fpm`):
+
+```sh
+desktop/build-linux.sh
+```
+
+It writes `dist/Harness-Studio-<version>-linux-<arch>.AppImage` and `dist/harness-studio_<version>_<amd64|arm64>.deb`.
+
+Installing:
+
+- **.deb (Debian, Ubuntu):** `sudo apt install ./harness-studio_<version>_amd64.deb`, then start **Harness Studio** from the applications menu or run `harness-studio`.
+- **AppImage (most distributions):** `chmod +x Harness-Studio-*.AppImage` and run it. Ubuntu 22.04 and later need `libfuse2` (`libfuse2t64` on 24.04) to run AppImages, and a minimal system also needs the sound library (`libasound2t64` on 24.04, `libasound2` before). The arm64 AppImage also needs `zlib1g-dev`, which provides the `libz.so` its launcher loads.
+
+On Linux the app has a normal window frame with a menu bar instead of the macOS title bar. The welcome screen, built-in plugins, Browser pane and settings are the same as on the other platforms. The Web app from source (main [README](../README.md#running-the-harness-from-source)) remains an option when a packaged app is not wanted.
 
 ## Browser pane sign-in
 
-Off by default, the Browser pane behaves exactly like upstream Harness: each workspace gets its own browser storage, forgotten when the app quits, and Google refuses to sign in inside it. **Allow Sign-in in Browser Pane** in the app menu (on Windows, the menu in the title bar) shows the trade-offs and restarts the app with sign-in compatibility on: an identity Google's sign-in accepts, a page-size fix, and one browser store kept on disk and shared by all workspaces. Read [patches/NOTICE.md](../patches/NOTICE.md#the-patch-is-opt-in) before turning it on. The setting is stored in `~/Library/Application Support/Harness Studio/desktop/browser-pane.json`.
+Off by default, the Browser pane behaves exactly like upstream Harness: each workspace gets its own browser storage, forgotten when the app quits, and Google refuses to sign in inside it. **Allow Sign-in in Browser Pane** in the app menu shows the trade-offs and restarts the app with sign-in compatibility on: an identity Google's sign-in accepts, a page-size fix, and one browser store kept on disk and shared by all workspaces. Read [patches/NOTICE.md](../patches/NOTICE.md#the-patch-is-opt-in) before turning it on. The setting is stored in `~/Library/Application Support/Harness Studio/desktop/browser-pane.json`.
 
 ## Patches
 
@@ -71,6 +93,10 @@ Applied in this order to the pinned commit:
 | [`05-telemetry-off.patch`](patches/05-telemetry-off.patch) | Product analytics and session telemetry off; Session-log upload off by default |
 | [`06-unsigned-windows.patch`](patches/06-unsigned-windows.patch) | Unsigned Windows builds use the same local settings as unsigned macOS builds, without DeepSeek's release configuration or forced-update policy |
 | [`07-upstream-tests.patch`](patches/07-upstream-tests.patch) | Harness's own desktop tests updated for the changes above (names, menu, URL scheme, bundled plugins), so they pass on the patched copy |
+| [`08-linux.patch`](patches/08-linux.patch) | Linux targets (`linux-x64`, `linux-arm64`) in Harness's packaging: an AppImage and a `.deb` named `harness-studio`, with the Harness Studio icon set; the Linux sandbox launcher unpacked from the app archive so it can run; the packaging smoke test for the Linux layout; Linux kept out of the release upload and retention scripts; and the matching Harness tests |
+| [`09-default-workspace-folder.patch`](patches/09-default-workspace-folder.patch) | The first-use workspace in `Documents/Harness Studio` for new installs, keeping an existing `Documents/deepseek-harness`; with the matching Harness tests |
+| [`10-releases-page.patch`](patches/10-releases-page.patch) | **Check for Updates…** opens the public [Releases page](https://github.com/vigneshv1cky/harness-studio/releases) instead of checking an update feed Harness Studio doesn't publish; with the matching Harness tests |
+| [`11-compact-welcome.patch`](patches/11-compact-welcome.patch) | A compact first-launch welcome: a 420 × 340 window with the mark, greeting and "Choose a model provider" grouped in the middle, the greeting and description in the system font, and a 32 px button; with the matching Harness test |
 
 ## Moving to a new Harness commit
 
@@ -93,3 +119,6 @@ The [Chrome extension](../chrome-bridge) is not inside the app. For now it is di
 - The three built-in plugins do not appear on the Plugins page and are always on.
 - Anyone who used a DeepSeek account sign-in must add an API key (DeepSeek's or another provider's) after updating; the welcome screen leads there.
 - The app has no update feed; new versions come from GitHub Releases.
+- **Linux:** Word, Excel and PowerPoint files convert to PDF with the Office kit's WebAssembly engine, as no native Linux engine exists; it is slower than the native engine on macOS.
+- **Linux:** CI smoke-tests only the `.deb`, on a virtual display. Both packages were also tried by hand on Ubuntu 24.04 (x64 and arm64) with an Xfce desktop. `harness-studio://` links need the `.deb`, or an AppImage integrated with the desktop.
+- **Linux:** when the system reports no separate Documents folder, the first-use workspace goes in `~/Documents/Harness Studio`.

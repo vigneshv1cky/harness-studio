@@ -1,0 +1,54 @@
+# Reruns the Windows smoke test (desktop/smoke-windows.sh) on the installer from an earlier "Build Windows app"
+# run, without rebuilding it. Start it from the Actions tab with that run's ID.
+name: Smoke-test Windows app
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: ID of the "Build Windows app" run whose installer to test
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  smoke:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - uses: actions/download-artifact@v8.0.1
+        with:
+          name: harness-studio-windows-x64
+          path: dist
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Fetch the Office test document
+        run: |
+          pin=$(sed -n 's/^Pinned commit: \([0-9a-f]\{40\}\).*/\1/p' docs/HARNESS_PIN.md)
+          curl -fsSL -o dist/color-blocks.docx \
+            "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/$pin/scripts/fixtures/office-render/color-blocks.docx"
+
+      - name: Smoke-test the installer
+        run: desktop/smoke-windows.sh dist/Harness-Studio-*-win-x64-setup.exe dist/smoke dist/color-blocks.docx
+
+      - if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: harness-studio-windows-x64-smoke
+          path: dist/smoke
+          if-no-files-found: ignore
+          retention-days: 30

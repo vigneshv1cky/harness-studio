@@ -25,6 +25,7 @@
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
   "files": [
@@ -35,6 +36,7 @@
     "store.js",
     "worktree.js",
     "cordis.patch.yml",
+    "locale/*.json",
     "icon.svg",
     "README.md"
   ],

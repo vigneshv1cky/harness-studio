@@ -1,0 +1,167 @@
+diff --git a/packages/api/workspace-controller/README.md b/packages/api/workspace-controller/README.md
+index 27c26c7d..5d3826e3 100644
+--- a/packages/api/workspace-controller/README.md
++++ b/packages/api/workspace-controller/README.md
+@@ -31,7 +31,7 @@ The Client entry provides `ClientWorkspaceModel` and `createWorkspaceStateStream
+ <a id="first-use-workspace"></a>
+ ### First-use Workspace
+ 
+-`workspace.initializeDefault()` returns the durable default Workspace; the Client service exposes it as `workspaces.initializeDefault(signal?)`. It takes no request: the Host owns the fixed `default-workspace` directory name, and the registry derives the initial title from that same segment, so one installation keeps one on-disk path and one stored title in every language. The Host places the directory under its account's `<Documents>/deepseek-harness`, including on remote Web hosts. OS filename restrictions apply. Linux system lookup requires `xdg-user-dir` with an enabled Documents directory; hosts without it must configure `documentsDirectory` or use the folder picker.
++`workspace.initializeDefault()` returns the durable default Workspace; the Client service exposes it as `workspaces.initializeDefault(signal?)`. It takes no request: the Host owns the fixed `default-workspace` directory name, and the registry derives the initial title from that same segment, so one installation keeps one on-disk path and one stored title in every language. The Host places the directory under its account's `<Documents>/Harness Studio`, including on remote Web hosts; when `<Documents>/deepseek-harness/default-workspace` already exists, from DeepSeek Harness or an earlier Harness Studio build, the Host uses that directory instead of creating a second one. OS filename restrictions apply. On Linux the Host asks `xdg-user-dir` for the Documents directory and uses `~/Documents` when the command is missing or reports the home directory.
+ 
+ The [Workspace registry](../../workspace/workspace/README.md#first-use-workspace) owns eligibility, directory creation, and durable initialization. An existing default Workspace is returned without another Documents lookup and is never renamed or relocated. Ineligible first use returns `undefined`, so startup can leave directory selection to the user. Lookup and creation failures use standard Remote error handling. Initialization creates no Session and sends no message.
+ 
+diff --git a/packages/api/workspace-controller/README.zh.md b/packages/api/workspace-controller/README.zh.md
+index 4772d0c9..571c8dcf 100644
+--- a/packages/api/workspace-controller/README.zh.md
++++ b/packages/api/workspace-controller/README.zh.md
+@@ -31,7 +31,7 @@ Client 入口提供 `ClientWorkspaceModel` 和 `createWorkspaceStateStream()`。
+ <a id="first-use-workspace"></a>
+ ### 首次使用工作区
+ 
+-`workspace.initializeDefault()` 返回持久化的默认工作区；Client service 通过 `workspaces.initializeDefault(signal?)` 提供该操作。它不接受请求参数：固定目录名 `default-workspace` 由 Host 拥有，注册表也以同一路径片段作为初始标题，因此任何语言下同一安装环境都只有一个磁盘路径和一个存储标题。Host 将目录放在其账户的 `<Documents>/deepseek-harness` 下，远程 Web Host 也遵循此规则。操作系统的文件名限制同样适用。Linux 系统查询要求存在 `xdg-user-dir` 且启用了 Documents 目录；不具备该条件的 Host 必须配置 `documentsDirectory` 或使用文件夹选择器。
++`workspace.initializeDefault()` 返回持久化的默认工作区；Client service 通过 `workspaces.initializeDefault(signal?)` 提供该操作。它不接受请求参数：固定目录名 `default-workspace` 由 Host 拥有，注册表也以同一路径片段作为初始标题，因此任何语言下同一安装环境都只有一个磁盘路径和一个存储标题。Host 将目录放在其账户的 `<Documents>/Harness Studio` 下，远程 Web Host 也遵循此规则；若 `<Documents>/deepseek-harness/default-workspace` 已存在（来自 DeepSeek Harness 或较早的 Harness Studio 版本），Host 会继续使用该目录，而不再新建第二个。操作系统的文件名限制同样适用。在 Linux 上，Host 通过 `xdg-user-dir` 查询 Documents 目录；该命令缺失或返回主目录时，改用 `~/Documents`。
+ 
+ [Workspace 注册表](../../workspace/workspace/README.zh.md#first-use-workspace)负责资格判断、目录创建和持久化初始化。已有默认工作区直接返回，不再查询 Documents，也不会被重命名或迁移。不满足首次使用条件时返回 `undefined`，启动流程可将目录选择留给用户。查询和创建失败遵循标准 Remote 错误处理。初始化不创建 Session，也不发送消息。
+ 
+diff --git a/packages/api/workspace-controller/src/default-directory.ts b/packages/api/workspace-controller/src/default-directory.ts
+index fe895be5..afbb3c1f 100644
+--- a/packages/api/workspace-controller/src/default-directory.ts
++++ b/packages/api/workspace-controller/src/default-directory.ts
+@@ -1,5 +1,6 @@
+ /** Resolve the Host account's Documents directory for first-use Workspace creation. */
+ 
++import { stat } from 'node:fs/promises'
+ import { homedir } from 'node:os'
+ import { posix, win32 } from 'node:path'
+ import { runNativeCommand, type NativeCommandRunner } from '@deepseek-ai/dsh-native-command'
+@@ -10,6 +11,26 @@ interface DocumentsDirectoryInternals {
+   readonly platform?: NodeJS.Platform
+   readonly home?: string
+   readonly run?: NativeCommandRunner
++  readonly isDirectory?: (path: string) => Promise<boolean>
++}
++
++/** Harness Studio: the Documents folder that holds the first-use Workspace. */
++const WORKSPACE_PARENT = 'Harness Studio'
++/** The folder DeepSeek Harness and earlier Harness Studio builds used; an existing first-use Workspace there is kept. */
++const LEGACY_WORKSPACE_PARENT = 'deepseek-harness'
++
++/**
++ * Report whether a directory exists, treating a missing path as absent.
++ * @param path - absolute path.
++ * @returns whether the path is an existing directory.
++ */
++async function isDirectory(path: string): Promise<boolean> {
++  try {
++    return (await stat(path)).isDirectory()
++  } catch (error) {
++    if ((error as NodeJS.ErrnoException).code === 'ENOENT' || (error as NodeJS.ErrnoException).code === 'ENOTDIR') return false
++    throw error
++  }
+ }
+ 
+ /**
+@@ -28,10 +49,11 @@ export function validateDocumentsDirectory(directory: string, platform: NodeJS.P
+ }
+ 
+ /**
+- * Resolve the first-use directory on the Host without creating files.
++ * Resolve the first-use directory on the Host without creating files: `<Documents>/Harness Studio/default-workspace`,
++ * or `<Documents>/deepseek-harness/default-workspace` when that directory already exists.
+  * @param documentsDirectory - explicit deployment override for the system Documents directory.
+  * @param signal - caller lifetime and lookup deadline.
+- * @param internals - platform facts and native command runner.
++ * @param internals - platform facts, native command runner and directory probe.
+  * @returns the absolute candidate path.
+  */
+ export async function defaultWorkspaceDirectory(
+@@ -81,5 +103,9 @@ export async function defaultWorkspaceDirectory(
+   }
+   directory = validateDocumentsDirectory(directory, platform)
+   signal.throwIfAborted()
+-  return paths.join(directory, 'deepseek-harness', DEFAULT_WORKSPACE_DIRECTORY)
++  // Keep a first-use Workspace that already holds the user's files rather than starting a second, empty one.
++  const legacy = paths.join(directory, LEGACY_WORKSPACE_PARENT, DEFAULT_WORKSPACE_DIRECTORY)
++  if (await (internals.isDirectory ?? isDirectory)(legacy)) return legacy
++  signal.throwIfAborted()
++  return paths.join(directory, WORKSPACE_PARENT, DEFAULT_WORKSPACE_DIRECTORY)
+ }
+diff --git a/packages/api/workspace-controller/src/default-workspace.ts b/packages/api/workspace-controller/src/default-workspace.ts
+index de7112aa..eecc2856 100644
+--- a/packages/api/workspace-controller/src/default-workspace.ts
++++ b/packages/api/workspace-controller/src/default-workspace.ts
+@@ -8,7 +8,7 @@
+ 
+ /**
+  * Leaf directory name of the first-use Workspace under
+- * `<Documents>/deepseek-harness`. Language-neutral, so one installation keeps
++ * `<Documents>/Harness Studio` (or an existing `<Documents>/deepseek-harness`). Language-neutral, so one installation keeps
+  * one on-disk path across language switches. The registry derives the initial
+  * title from this same segment, which is the title
+  * {@link workspaceDisplayTitle} recognizes as automatic.
+diff --git a/packages/api/workspace-controller/tests/default-directory.host.spec.ts b/packages/api/workspace-controller/tests/default-directory.host.spec.ts
+index 9fc6fa7a..13f91f3a 100644
+--- a/packages/api/workspace-controller/tests/default-directory.host.spec.ts
++++ b/packages/api/workspace-controller/tests/default-directory.host.spec.ts
+@@ -4,9 +4,9 @@ import { defaultWorkspaceDirectory, validateDocumentsDirectory } from '../src/de
+ 
+ describe('system Documents directory', () => {
+   it.each([
+-    ['darwin', '/Users/a/文档/\n', '/Users/a/文档/deepseek-harness/default-workspace', 'osascript'],
+-    ['win32', 'D:\\Redirected Documents\r\n', 'D:\\Redirected Documents\\deepseek-harness\\default-workspace', 'powershell.exe'],
+-    ['linux', '/home/a/My Documents\n', '/home/a/My Documents/deepseek-harness/default-workspace', 'xdg-user-dir'],
++    ['darwin', '/Users/a/文档/\n', '/Users/a/文档/Harness Studio/default-workspace', 'osascript'],
++    ['win32', 'D:\\Redirected Documents\r\n', 'D:\\Redirected Documents\\Harness Studio\\default-workspace', 'powershell.exe'],
++    ['linux', '/home/a/My Documents\n', '/home/a/My Documents/Harness Studio/default-workspace', 'xdg-user-dir'],
+   ] as const)('uses the %s account directory and preserves spaces and Unicode', async (platform, stdout, path, command) => {
+     const run = vi.fn<NativeCommandRunner>(async () => ({ stdout, stderr: '' }))
+     const signal = new AbortController().signal
+@@ -14,23 +14,31 @@ describe('system Documents directory', () => {
+     expect(run).toHaveBeenCalledWith(command, expect.any(Array), signal, 'hidden')
+   })
+ 
++  it('keeps an existing deepseek-harness first-use Workspace instead of starting a second one', async () => {
++    const isDirectory = vi.fn(async (path: string) => path === '/documents/deepseek-harness/default-workspace')
++    await expect(defaultWorkspaceDirectory('/documents', new AbortController().signal, { platform: 'linux', isDirectory }))
++      .resolves.toBe('/documents/deepseek-harness/default-workspace')
++    await expect(defaultWorkspaceDirectory('/other', new AbortController().signal, { platform: 'linux', isDirectory }))
++      .resolves.toBe('/other/Harness Studio/default-workspace')
++  })
++
+   it('uses the configured directory without a system lookup', async () => {
+     const run = vi.fn<NativeCommandRunner>()
+     await expect(defaultWorkspaceDirectory('/documents', new AbortController().signal, { platform: 'linux', run }))
+-      .resolves.toBe('/documents/deepseek-harness/default-workspace')
++      .resolves.toBe('/documents/Harness Studio/default-workspace')
+     expect(run).not.toHaveBeenCalled()
+   })
+ 
+   it.each(['', '\r\n', '/home/a\n', '/home/a/\n'])('falls back to ~/Documents for an unavailable XDG directory %j', async (stdout) => {
+     const run: NativeCommandRunner = async () => ({ stdout, stderr: '' })
+     await expect(defaultWorkspaceDirectory(undefined, new AbortController().signal, { platform: 'linux', home: '/home/a', run }))
+-      .resolves.toBe('/home/a/Documents/deepseek-harness/default-workspace')
++      .resolves.toBe('/home/a/Documents/Harness Studio/default-workspace')
+   })
+ 
+   it('falls back to ~/Documents when xdg-user-dir is not installed', async () => {
+     const run: NativeCommandRunner = async () => { throw new Error('spawn xdg-user-dir ENOENT') }
+     await expect(defaultWorkspaceDirectory(undefined, new AbortController().signal, { platform: 'linux', home: '/home/a', run }))
+-      .resolves.toBe('/home/a/Documents/deepseek-harness/default-workspace')
++      .resolves.toBe('/home/a/Documents/Harness Studio/default-workspace')
+   })
+ 
+   it('propagates lookup failure and cancellation', async () => {
+diff --git a/packages/api/workspace-controller/tests/workspace-controller.host.spec.ts b/packages/api/workspace-controller/tests/workspace-controller.host.spec.ts
+index c00531e0..abfbdd12 100644
+--- a/packages/api/workspace-controller/tests/workspace-controller.host.spec.ts
++++ b/packages/api/workspace-controller/tests/workspace-controller.host.spec.ts
+@@ -594,7 +594,7 @@ describe('first-use Remote', () => {
+     const { controller, ctx, root } = await harness()
+     const signal = new AbortController().signal
+     const result = await controller.initializeDefault(signal)
+-    expect(result!.workspace.path).toBe(join(root, 'deepseek-harness', DEFAULT_WORKSPACE_DIRECTORY))
++    expect(result!.workspace.path).toBe(join(root, 'Harness Studio', DEFAULT_WORKSPACE_DIRECTORY))
+     expect(result!.workspace.title).toBe(DEFAULT_WORKSPACE_DIRECTORY)
+     expect(existsSync(result!.workspace.path)).toBe(true)
+     expect(ctx.sessions.list()).toEqual([])

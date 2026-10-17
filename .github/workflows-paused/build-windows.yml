@@ -1,6 +1,7 @@
 # Builds the unsigned Harness Studio installer for Windows (x64). Harness packages Windows only on a
-# Windows x64 machine, so this runs desktop/build-windows.sh on a GitHub-hosted Windows runner and keeps
-# the installer and its checksum as a workflow artifact for 30 days. Run it from the Actions tab, or push
+# Windows x64 machine, so this runs desktop/build-windows.sh on a GitHub-hosted Windows runner, then
+# installs and smoke-tests the result there (desktop/smoke-windows.sh). The installer, its checksum and the
+# smoke-test screenshots are kept as workflow artifacts for 30 days. Run it from the Actions tab, or push
 # a tag starting with "v".
 name: Build Windows app
 
@@ -20,6 +21,9 @@ jobs:
       run:
         shell: bash
     steps:
+      # Check out with LF line endings so the patches and shell scripts match the pinned Harness files.
+      - run: git config --global core.autocrlf false
+
       - uses: actions/checkout@v7.0.1
 
       - uses: pnpm/action-setup@v5.0.0
@@ -40,4 +44,16 @@ jobs:
             dist/Harness-Studio-*-win-x64-setup.exe
             dist/Harness-Studio-*-win-x64-setup.exe.sha256
           if-no-files-found: error
+          retention-days: 30
+
+      - name: Smoke-test the installer
+        timeout-minutes: 25
+        run: desktop/smoke-windows.sh dist/Harness-Studio-*-win-x64-setup.exe dist/smoke
+
+      - if: always()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: harness-studio-windows-x64-smoke
+          path: dist/smoke
+          if-no-files-found: ignore
           retention-days: 30

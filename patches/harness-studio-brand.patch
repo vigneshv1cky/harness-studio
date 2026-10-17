@@ -189,7 +189,7 @@ index 212560ed..bbb6802f 100644
 +  </g>
  </svg>
 diff --git a/apps/desktop/scripts/development-app.ts b/apps/desktop/scripts/development-app.ts
-index ff09b8b7..16687e2b 100644
+index ff09b8b7..a3b7a969 100644
 --- a/apps/desktop/scripts/development-app.ts
 +++ b/apps/desktop/scripts/development-app.ts
 @@ -1,7 +1,8 @@
@@ -233,17 +233,19 @@ index ff09b8b7..16687e2b 100644
  function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'` }
  
  /**
-@@ -26,30 +51,39 @@ function quote(value: string): string { return `'${value.replaceAll("'", "'\\''"
+@@ -26,30 +51,41 @@ function quote(value: string): string { return `'${value.replaceAll("'", "'\\''"
   */
  export function prepareDevelopmentApp(options: DevelopmentAppOptions): string {
    const source = dirname(dirname(dirname(options.electron)))
 -  const bundle = join(options.directory, 'Harness Dev.app')
 -  const executable = join(bundle, 'Contents', 'MacOS', 'HarnessDev')
-+  const bundle = join(options.directory, 'Harness Studio.app')
-+  const executable = join(bundle, 'Contents', 'MacOS', 'HarnessStudio')
-+  // Earlier builds named the bundle "Harness Dev"; drop it so Launch Services and Spotlight list one app.
-+  const legacy = join(options.directory, 'Harness Dev.app')
-+  if (existsSync(legacy)) {
++  const bundle = join(options.directory, 'Harness Studio Dev.app')
++  const executable = join(bundle, 'Contents', 'MacOS', 'HarnessStudioDev')
++  // Earlier builds named the bundle "Harness Dev" and then "Harness Studio"; drop them so Launch Services
++  // and Spotlight list one development app, distinct from the installed Harness Studio.
++  for (const name of ['Harness Dev.app', 'Harness Studio.app']) {
++    const legacy = join(options.directory, name)
++    if (!existsSync(legacy)) continue
 +    execFileSync(LSREGISTER, ['-u', legacy], { stdio: 'pipe' })
 +    rmSync(legacy, { recursive: true, force: true })
 +  }
@@ -262,9 +264,9 @@ index ff09b8b7..16687e2b 100644
 -      CFBundleName: 'Harness Dev',
 -      CFBundleDisplayName: 'Harness Dev',
 -      CFBundleExecutable: 'HarnessDev',
-+      CFBundleName: 'Harness Studio',
-+      CFBundleDisplayName: 'Harness Studio',
-+      CFBundleExecutable: 'HarnessStudio',
++      CFBundleName: 'Harness Studio Dev',
++      CFBundleDisplayName: 'Harness Studio Dev',
++      CFBundleExecutable: 'HarnessStudioDev',
        CFBundleURLTypes: [{ CFBundleURLName: 'DeepSeek Harness', CFBundleURLSchemes: ['dsh'], CFBundleTypeRole: 'Viewer' }],
      }
      for (const [key, value] of Object.entries(values)) {
@@ -281,7 +283,7 @@ index ff09b8b7..16687e2b 100644
  }
  
 diff --git a/apps/web/index.html b/apps/web/index.html
-index f5c2ffac..0960c229 100644
+index f5c2ffac..6fa5c816 100644
 --- a/apps/web/index.html
 +++ b/apps/web/index.html
 @@ -6,7 +6,7 @@
@@ -289,12 +291,12 @@ index f5c2ffac..0960c229 100644
      <link rel="icon" type="image/svg+xml" href="/favicon-dark.svg" media="(prefers-color-scheme: dark)" />
      <link rel="icon" type="image/svg+xml" href="/favicon.svg" media="(prefers-color-scheme: light)" />
 -    <title>DSH Local Build</title>
-+    <title>Harness Studio</title>
++    <title>Harness Studio Dev</title>
    </head>
    <body>
      <div id="root"></div>
 diff --git a/apps/web/tests/built-boot.expected.e2e.ts b/apps/web/tests/built-boot.expected.e2e.ts
-index c7b7f41b..19daa5c2 100644
+index c7b7f41b..da693057 100644
 --- a/apps/web/tests/built-boot.expected.e2e.ts
 +++ b/apps/web/tests/built-boot.expected.e2e.ts
 @@ -63,7 +63,7 @@ it('boots the built plugin graph and renders a fixture session end to end', asyn
@@ -302,7 +304,7 @@ index c7b7f41b..19daa5c2 100644
    if (clientBuildValue('DSH_CLIENT_BUILD_PROFILE') === 'official') {
      expect(document.querySelector('svg[viewBox="26 0 156 24"]')).not.toBeNull()
 -    expect(screen.queryByText('DSH Local Build')).toBeNull()
-+    expect(screen.queryByText('Harness Studio')).toBeNull()
++    expect(screen.queryByText('Harness Studio Dev')).toBeNull()
    } else {
      expect(document.querySelector('svg[viewBox="0 0 23.16 17.04"]')).not.toBeNull()
      const version = clientBuildValue('DSH_CLIENT_VERSION')
@@ -311,7 +313,7 @@ index c7b7f41b..19daa5c2 100644
        + (commit === undefined ? '' : `-${commit}`)
        + (clientBuildValue('DSH_CLIENT_GIT_DIRTY') === 'true' ? '-dirty' : '')
 -    screen.getByText('DSH Local Build')
-+    screen.getByText('Harness Studio')
++    screen.getByText('Harness Studio Dev')
      screen.getByText(buildVersion)
    }
    // The compact layout dropped group session counts; the fixture workspace
@@ -448,7 +450,7 @@ index 613eb4a7..ce0e930f 100644
  
        releaseOpening()
 diff --git a/apps/web/vite.config.ts b/apps/web/vite.config.ts
-index d0463af0..abba9329 100644
+index d0463af0..a1158db5 100644
 --- a/apps/web/vite.config.ts
 +++ b/apps/web/vite.config.ts
 @@ -12,7 +12,7 @@ const src = (rel: string): string => fileURLToPath(new URL(rel, import.meta.url)
@@ -456,7 +458,7 @@ index d0463af0..abba9329 100644
    + 'From a repository checkout, run `pnpm dsh web`; an installed package uses `dsh web`. '
    + 'For client-plugin HMR, run `pnpm run dev:web`, which starts `dsh web` and the rebuild watchers together.'
 -const DEFAULT_CLIENT_TITLE = 'DSH Local Build'
-+const DEFAULT_CLIENT_TITLE = 'Harness Studio'
++const DEFAULT_CLIENT_TITLE = 'Harness Studio Dev'
  
  /** Escape build-time text before placing it in the HTML title element. */
  function escapeHtmlText(value: string): string {
@@ -465,12 +467,12 @@ index d0463af0..abba9329 100644
      name: 'dsh-client-document-title',
      transformIndexHtml(html) {
 -      return html.replace('<title>DSH Local Build</title>', `<title>${title}</title>`)
-+      return html.replace('<title>Harness Studio</title>', `<title>${title}</title>`)
++      return html.replace('<title>Harness Studio Dev</title>', `<title>${title}</title>`)
      },
    }
  }
 diff --git a/packages/client/locale/src/locales/en.ts b/packages/client/locale/src/locales/en.ts
-index b649bbc3..d468a34c 100644
+index b649bbc3..9858edb3 100644
 --- a/packages/client/locale/src/locales/en.ts
 +++ b/packages/client/locale/src/locales/en.ts
 @@ -33,7 +33,7 @@ export const en = {
@@ -478,12 +480,12 @@ index b649bbc3..d468a34c 100644
    'expand': 'Expand',
    'back': 'Back',
 -  'brand.localBuild': 'DSH Local Build',
-+  'brand.localBuild': 'Harness Studio',
++  'brand.localBuild': 'Harness Studio Dev',
    'workspace.defaultName': 'Default workspace',
    'unknown': 'Unknown',
    'none': 'None',
 diff --git a/packages/client/locale/src/locales/zh.ts b/packages/client/locale/src/locales/zh.ts
-index 11ff789b..fffdb8e2 100644
+index 11ff789b..fae1d300 100644
 --- a/packages/client/locale/src/locales/zh.ts
 +++ b/packages/client/locale/src/locales/zh.ts
 @@ -31,7 +31,7 @@ export const zh = {
@@ -491,7 +493,7 @@ index 11ff789b..fffdb8e2 100644
    'expand': '展开',
    'back': '返回',
 -  'brand.localBuild': 'DSH 本地构建',
-+  'brand.localBuild': 'Harness Studio',
++  'brand.localBuild': 'Harness Studio Dev',
    'workspace.defaultName': '默认工作区',
    'unknown': '未知',
    'none': '无',
@@ -763,7 +765,7 @@ index 18f95444..385ca96c 100644
  export type { BrandWordmarkProps } from './BrandWordmark.tsx'
  export {
 diff --git a/packages/client/ui-sidebar/src/client/SidebarRoot.tsx b/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
-index 46c01930..ff26cd5a 100644
+index 46c01930..07e5f950 100644
 --- a/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
 +++ b/packages/client/ui-sidebar/src/client/SidebarRoot.tsx
 @@ -19,7 +19,7 @@
@@ -775,7 +777,16 @@ index 46c01930..ff26cd5a 100644
  } from '@deepseek-ai/dsh-client-ui-primitives'
  import type { InjectFace, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
  import type {
-@@ -186,7 +186,7 @@ export function SidebarRoot({
+@@ -101,6 +101,8 @@ export function SidebarRoot({
+   const shortcut = useShortcuts(rows => rows.find(row => row.id === 'sidebar.left.toggle'))
+   const newShortcut = useShortcuts(rows => rows.find(row => row.id === 'session.new'))
+   const toggleLabel = collapsed ? t('toggle.open') : t('toggle.collapse')
++  // The build's own product title (official builds set it), else the local-build name, as the window title uses.
++  const productTitle = process.env.DSH_CLIENT_TITLE ?? t('brand.localBuild')
+   // Wide content stays mounted while the collapse animates (fading via
+   // .collapsed .wide), unmounts at settle, and remounts right away on expand.
+   const [settled, setSettled] = useState(collapsed)
+@@ -186,7 +188,7 @@ export function SidebarRoot({
        >
          {!wide && !windowsTitlebar && (
            <span className={css.railMark} aria-hidden="true">
@@ -784,7 +795,7 @@ index 46c01930..ff26cd5a 100644
            </span>
          )}
          {/* Rail icons render at 18 (figma rail spec); expanded keeps the glyph-native sizes. */}
-@@ -222,7 +222,7 @@ export function SidebarRoot({
+@@ -222,15 +224,15 @@ export function SidebarRoot({
            const identity = (
              <span className={css.brandIdentity} aria-hidden="true">
                <span className={css.brandMark}>
@@ -793,8 +804,18 @@ index 46c01930..ff26cd5a 100644
                </span>
                <span className={css.brandName}>
                  {renderSlot('sidebar.brand.name', {}, {
+                   fallback: buildVersion === undefined
+-                    ? <span className={css.fallbackBrandName}>{t('brand.localBuild')}</span>
++                    ? <span className={css.fallbackBrandName}>{productTitle}</span>
+                     : (
+                       <span className={css.localBuildBrand}>
+-                        <span className={css.localBuildTitle}>{t('brand.localBuild')}</span>
++                        <span className={css.localBuildTitle}>{productTitle}</span>
+                         <span className={css.buildVersion}>{buildVersion}</span>
+                       </span>
+                     ),
 diff --git a/packages/client/ui-sidebar/tests/__snapshots__/sidebar-snapshot.client.spec.tsx.snap b/packages/client/ui-sidebar/tests/__snapshots__/sidebar-snapshot.client.spec.tsx.snap
-index 652e9f6b..937e428f 100644
+index 652e9f6b..e49117c2 100644
 --- a/packages/client/ui-sidebar/tests/__snapshots__/sidebar-snapshot.client.spec.tsx.snap
 +++ b/packages/client/ui-sidebar/tests/__snapshots__/sidebar-snapshot.client.spec.tsx.snap
 @@ -122,10 +122,9 @@ exports[`sidebar shell snapshots > renders Windows caption controls in expanded
@@ -816,7 +837,7 @@ index 652e9f6b..937e428f 100644
                    class="localBuildTitle"
                  >
 -                  DSH Local Build
-+                  Harness Studio
++                  Harness Studio Dev
                  </span>
                  <span
                    class="buildVersion"
@@ -853,7 +874,7 @@ index 652e9f6b..937e428f 100644
                    class="localBuildTitle"
                  >
 -                  DSH Local Build
-+                  Harness Studio
++                  Harness Studio Dev
                  </span>
                  <span
                    class="buildVersion"
@@ -876,12 +897,12 @@ index 652e9f6b..937e428f 100644
                    class="localBuildTitle"
                  >
 -                  DSH 本地构建
-+                  Harness Studio
++                  Harness Studio Dev
                  </span>
                  <span
                    class="buildVersion"
 diff --git a/packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx b/packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx
-index c0aee40a..e19501da 100644
+index c0aee40a..6f6ccc57 100644
 --- a/packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx
 +++ b/packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx
 @@ -151,7 +151,7 @@ describe('SidebarRoot shell', () => {
@@ -889,7 +910,7 @@ index c0aee40a..e19501da 100644
      />)
  
 -    expect(screen.getByText('DSH Local Build')).toBeTruthy()
-+    expect(screen.getByText('Harness Studio')).toBeTruthy()
++    expect(screen.getByText('Harness Studio Dev')).toBeTruthy()
      expect(screen.getByText('1.2.3-rc.4-0123456-dirty')).toBeTruthy()
      expect(container.querySelector('svg')).not.toBeNull()
    })
@@ -898,7 +919,7 @@ index c0aee40a..e19501da 100644
      />)
  
 -    expect(screen.getByText('DSH Local Build')).toBeTruthy()
-+    expect(screen.getByText('Harness Studio')).toBeTruthy()
++    expect(screen.getByText('Harness Studio Dev')).toBeTruthy()
      expect(screen.getByText(expected)).toBeTruthy()
    })
  
@@ -907,7 +928,7 @@ index c0aee40a..e19501da 100644
      />)
  
 -    expect(screen.getByText('DSH Local Build')).toBeTruthy()
-+    expect(screen.getByText('Harness Studio')).toBeTruthy()
++    expect(screen.getByText('Harness Studio Dev')).toBeTruthy()
    })
  
    it('hands the region its wide flag and clamps expandSidebar to the collapsed state', () => {
