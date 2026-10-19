@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Harness Studio Chrome bridge",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Lets your AI agent (Harness Studio, or any MCP client) read and act in your Chrome tabs through a paired local bridge.",
   "homepage_url": "https://github.com/vigneshv1cky/harness-studio/tree/main/chrome-bridge",
   "minimum_chrome_version": "116",

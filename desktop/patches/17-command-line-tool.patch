@@ -1,0 +1,683 @@
+diff --git a/apps/desktop/README.md b/apps/desktop/README.md
+index b5967d94..eeb2ff84 100644
+--- a/apps/desktop/README.md
++++ b/apps/desktop/README.md
+@@ -56,11 +56,13 @@ Press F12 (Fn+F12 on media-key keyboards), Command+Option+I on macOS, or Ctrl+Sh
+ 
+ ## Terminal command
+ 
+-The application menu's **Manage dsh Command…** entry, immediately below **Check for Updates…**, shows the current command and offers Install, Repair, and Remove. The command uses Desktop's installed runtime and the ordinary [dsh CLI](../cli/README.md), including when the Desktop application is closed. Open a new terminal after installation and run `dsh --version`.
++The application menu's **Install Command-Line Tool…** entry, immediately below **Check for Updates…**, shows the current command and offers Install, Repair, and Remove. The `harness-studio` command uses Desktop's installed runtime and the ordinary [dsh CLI](../cli/README.md), including when the Desktop application is closed. Open a new terminal after installation and run `harness-studio --version`.
+ 
+-On macOS, installation creates `/usr/local/bin/dsh` and requests administrator authentication when the directory requires it. Shell startup files are unchanged. On Windows, the management dialog registers the command in the current user's PATH. A pre-existing command requires confirmation before switching; repairing Desktop's own selected command does not repeat that confirmation. The macOS link preserves and restores the displaced launcher; Windows preserves other PATH entries, including entries that predate registration. A command with higher PATH precedence is reported with its location. After moving the application, use Repair on macOS or Install from the new location on Windows. Remove leaves unrelated installations intact.
++The launcher sets `DSH_HOME` to `~/.harness-studio` unless it is already set, so the command shares the application's settings, saved model key and sessions. A first argument that is not a launcher mode, flag or profile name (`web`, `plugin`, `acp`, `headless`, `sdk`, `sdk-minimal`, `desktop`, `harness-studio`, `--profile`, `--from-default-profile`, a config dump, `--version` or `--help`), or no argument at all, selects the `harness-studio` profile: one headless task (from the argument, or from stdin when there is none) with `@harness-studio/connectors`, `@harness-studio/remember`, `@harness-studio/hooks` and `@harness-studio/compact` over `dsh-base`. Compact's host half carries its site approval there; with no approval card to show, a web fetch or page to a site the network setting does not allow is refused. Its other flags, such as `--json` and `--session-id`, are the [headless runner's](../../packages/bundle/headless/README.md).
+ 
+-Command registration is optional after installing Desktop. Use **Manage dsh Command… → Remove** before uninstalling Desktop to remove its CLI registration; the application uninstaller does not remove it. Finish CLI commands before updating or uninstalling Desktop. The CLI runtime version follows the installed Desktop release. See [bundled command runtime](#bundled-command-runtime) for Desktop plugin commands and runtime limitations.
++On macOS, installation creates `/usr/local/bin/harness-studio` and requests administrator authentication when the directory requires it. Shell startup files are unchanged. On Windows, the management dialog registers the command in the current user's PATH. A pre-existing command requires confirmation before switching; repairing Desktop's own selected command does not repeat that confirmation. The macOS link preserves and restores the displaced launcher; Windows preserves other PATH entries, including entries that predate registration. A command with higher PATH precedence is reported with its location. After moving the application, use Repair on macOS or Install from the new location on Windows. Remove leaves unrelated installations intact.
++
++Command registration is optional after installing Desktop. Use **Install Command-Line Tool… → Remove** before uninstalling Desktop to remove its CLI registration; the application uninstaller does not remove it. Finish CLI commands before updating or uninstalling Desktop. The CLI runtime version follows the installed Desktop release. See [bundled command runtime](#bundled-command-runtime) for Desktop plugin commands and runtime limitations.
+ 
+ <a id="closing-the-window-and-quitting"></a>
+ 
+diff --git a/apps/desktop/cli/dsh b/apps/desktop/cli/dsh
+index ee657a3d..765c0d19 100644
+--- a/apps/desktop/cli/dsh
++++ b/apps/desktop/cli/dsh
+@@ -11,4 +11,14 @@ while [ -L "$launcher" ]; do
+   esac
+ done
+ resources=$(CDPATH= cd -- "$(dirname -- "$launcher")/../../.." && pwd -P)
+-ELECTRON_RUN_AS_NODE=1 exec "$resources/../MacOS/DeepSeek Harness" --expose-internals "$resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js" "$@"
++# Harness Studio keeps its settings, keys and sessions in ~/.harness-studio, like the app; an explicit
++# DSH_HOME still wins.
++: "${DSH_HOME:=$HOME/.harness-studio}"
++export DSH_HOME
++# A task with no mode runs one headless session in Harness Studio's command-line profile, which adds its
++# connectors, memory and hooks to the base composition. Launcher modes, flags and named profiles pass through.
++case "${1-}" in
++  web|plugin|acp|headless|sdk|sdk-minimal|desktop|harness-studio|--profile|--profile=*|--from-default-profile|--from-default-profile=*|--dump-config|--dump-default-config|--dump-config-schema|--version|-V|--help|-h) ;;
++  *) set -- --profile harness-studio "$@" ;;
++esac
++ELECTRON_RUN_AS_NODE=1 exec "$resources/../MacOS/Harness Studio" --expose-internals "$resources/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/cli.js" "$@"
+diff --git a/apps/desktop/cli/dsh.cmd b/apps/desktop/cli/dsh.cmd
+index 73af3353..cc38ea76 100644
+--- a/apps/desktop/cli/dsh.cmd
++++ b/apps/desktop/cli/dsh.cmd
+@@ -1,5 +1,6 @@
+ @echo off
+ setlocal DisableDelayedExpansion
+ set "ELECTRON_RUN_AS_NODE=1"
+-"%~dp0..\..\..\..\DeepSeek Harness.exe" --expose-internals "%~dp0..\..\..\app.asar\dsh\node_modules\@deepseek-ai\dsh-desktop-host\lib\cli.js" %*
++if not defined DSH_HOME set "DSH_HOME=%USERPROFILE%\.harness-studio"
++"%~dp0..\..\..\..\Harness Studio.exe" --expose-internals "%~dp0..\..\..\app.asar\dsh\node_modules\@deepseek-ai\dsh-desktop-host\lib\cli.js" %*
+ exit /b %errorlevel%
+diff --git a/apps/desktop/src/command-management.ts b/apps/desktop/src/command-management.ts
+index 34c7848d..a709e647 100644
+--- a/apps/desktop/src/command-management.ts
++++ b/apps/desktop/src/command-management.ts
+@@ -112,7 +112,7 @@ export function presentCommandManagement(
+ async function shellCommand(): Promise<{ activeCommand?: string; selectionUnknown?: boolean }> {
+   const shell = userInfo().shell
+   if (shell === null) return { selectionUnknown: true }
+-  const script = "printf '\\0DSH_COMMAND\\0'; command -v dsh; printf '\\0'"
++  const script = "printf '\\0DSH_COMMAND\\0'; command -v harness-studio; printf '\\0'"
+   const { stdout } = await promisify(execFile)(shell, ['-ilc', script], { timeout: 5000, maxBuffer: 65536 })
+   const value = stdout.split('\0DSH_COMMAND\0')[1]?.split('\0')[0]?.trim()
+   if (value === undefined) return { selectionUnknown: true }
+diff --git a/apps/desktop/src/command-manager-entry.ts b/apps/desktop/src/command-manager-entry.ts
+index edfd61c2..c406db4c 100644
+--- a/apps/desktop/src/command-manager-entry.ts
++++ b/apps/desktop/src/command-manager-entry.ts
+@@ -15,7 +15,7 @@ try {
+   if (!['inspect', 'install', 'remove'].includes(operation ?? '')) throw new CommandInstallationError('EINVAL', 'Invalid command-management operation.')
+   if (operation !== 'inspect' && !/^[a-f0-9]{64}$/u.test(fingerprint)) throw new CommandInstallationError('EINVAL', 'Missing command confirmation.')
+   if (process.platform === 'darwin') {
+-    const options = { destination: '/usr/local/bin/dsh', launcher: join(resources, 'runtime', 'cli', 'bin', 'dsh'),
++    const options = { destination: '/usr/local/bin/harness-studio', launcher: join(resources, 'runtime', 'cli', 'bin', 'dsh'),
+       linkHelper: join(resources, 'runtime', 'cli', 'link-entry') }
+     const state = operation === 'inspect' ? await inspectFileCommand(options)
+       : operation === 'install' ? await installFileCommand(options, fingerprint) : await removeFileCommand(options, fingerprint)
+diff --git a/apps/desktop/src/locale.ts b/apps/desktop/src/locale.ts
+index 89afc4c5..e225a647 100644
+--- a/apps/desktop/src/locale.ts
++++ b/apps/desktop/src/locale.ts
+@@ -9,31 +9,31 @@ export const en = {
+   browserSignInConfirmOn: 'Turn On and Restart',
+   browserSignInConfirmOff: 'Turn Off and Restart',
+   browserSignInCancel: 'Cancel',
+-  cliCommandMenu: 'Manage dsh Command…',
+-  cliCommandTitle: 'Manage dsh Command',
+-  cliCommandLocation: 'Desktop command: {path}',
+-  cliCommandSelected: 'Current dsh command: {path}',
++  cliCommandMenu: 'Install Command-Line Tool…',
++  cliCommandTitle: 'Harness Studio Command-Line Tool',
++  cliCommandLocation: 'Harness Studio command: {path}',
++  cliCommandSelected: 'Current harness-studio command: {path}',
+   cliCommandTarget: 'Current launcher target: {path}',
+-  cliCommandShadowed: 'Another dsh takes precedence. Remove or reorder that installation to use the Desktop command by default. You can also run the Desktop command by its full path.',
+-  cliCommandSelectionUnknown: 'Your shell command could not be verified. An alias or another dsh installation may take precedence.',
+-  cliCommandInstalled: 'The Desktop command is installed.',
+-  cliCommandNotInstalled: 'Add the Desktop command to your terminal.',
+-  cliCommandBroken: 'The Desktop command needs repair.',
++  cliCommandShadowed: 'Another harness-studio takes precedence. Remove or reorder that installation to use this app\'s command by default. You can also run this app\'s command by its full path.',
++  cliCommandSelectionUnknown: 'Your shell command could not be verified. An alias or another harness-studio installation may take precedence.',
++  cliCommandInstalled: 'The harness-studio command is installed.',
++  cliCommandNotInstalled: 'Add the harness-studio command to your terminal, to run tasks from scripts and CI.',
++  cliCommandBroken: 'The harness-studio command needs repair.',
+   cliCommandInstall: 'Install',
+   cliCommandRepair: 'Repair',
+   cliCommandRemove: 'Remove',
+   cliCommandClose: 'Close',
+-  cliCommandSwitch: 'Continue with the Desktop command?',
++  cliCommandSwitch: 'Continue with this app\'s harness-studio command?',
+   cliCommandPreserve: 'An existing command will be preserved. Other installations and shell startup files will not be changed.',
+   cliCommandContinue: 'Continue',
+-  cliCommandInstallApp: 'Install Desktop in your Applications folder before managing the dsh command.',
++  cliCommandInstallApp: 'Move Harness Studio to your Applications folder before installing the command.',
+   cliCommandUpdating: 'An update is being installed. Manage the command after installation finishes.',
+-  cliCommandNewTerminal: 'Open a new terminal and run dsh --version.',
+-  cliCommandRemoved: 'Desktop command registration removed.',
++  cliCommandNewTerminal: 'Open a new terminal and run harness-studio --version.',
++  cliCommandRemoved: 'The harness-studio command was removed.',
+   cliCommandPreviousRestored: 'The previous launcher has been restored.',
+   cliCommandOtherKept: 'Other command installations have been left in place.',
+   cliCommandBackupKept: 'A previous launcher is preserved at: {path}',
+-  cliCommandChanged: 'The command or PATH changed while this dialog was open. Open Manage dsh Command again to review the current state.',
++  cliCommandChanged: 'The command or PATH changed while this dialog was open. Open Install Command-Line Tool again to review the current state.',
+   cliCommandOwnershipError: 'The command registration or backup changed. No unrelated command was removed.',
+   cliCommandFailed: 'The command could not be updated. Check that the application is installed and the destination is writable, then retry.',
+   application: 'Application',
+@@ -166,31 +166,31 @@ export const zh = {
+   browserSignInConfirmOn: '开启并重新启动',
+   browserSignInConfirmOff: '关闭并重新启动',
+   browserSignInCancel: '取消',
+-  cliCommandMenu: '管理 dsh 命令…',
+-  cliCommandTitle: '管理 dsh 命令',
+-  cliCommandLocation: 'Desktop 命令：{path}',
+-  cliCommandSelected: '当前 dsh 命令：{path}',
++  cliCommandMenu: '安装命令行工具…',
++  cliCommandTitle: 'Harness Studio 命令行工具',
++  cliCommandLocation: 'Harness Studio 命令：{path}',
++  cliCommandSelected: '当前 harness-studio 命令：{path}',
+   cliCommandTarget: '当前启动器目标：{path}',
+-  cliCommandShadowed: '另一个 dsh 的优先级更高。请移除或调整该安装的顺序，以默认使用 Desktop 命令；也可以通过完整路径运行 Desktop 命令。',
+-  cliCommandSelectionUnknown: '无法确认 shell 中的命令。别名或另一个 dsh 安装可能具有更高优先级。',
+-  cliCommandInstalled: 'Desktop 命令已安装。',
+-  cliCommandNotInstalled: '将 Desktop 命令添加到终端。',
+-  cliCommandBroken: 'Desktop 命令需要修复。',
++  cliCommandShadowed: '另一个 harness-studio 的优先级更高。请移除或调整该安装的顺序，以默认使用本应用的命令；也可以通过完整路径运行本应用的命令。',
++  cliCommandSelectionUnknown: '无法确认 shell 中的命令。别名或另一个 harness-studio 安装可能具有更高优先级。',
++  cliCommandInstalled: 'harness-studio 命令已安装。',
++  cliCommandNotInstalled: '将 harness-studio 命令添加到终端，以便在脚本和 CI 中运行任务。',
++  cliCommandBroken: 'harness-studio 命令需要修复。',
+   cliCommandInstall: '安装',
+   cliCommandRepair: '修复',
+   cliCommandRemove: '移除',
+   cliCommandClose: '关闭',
+-  cliCommandSwitch: '继续使用 Desktop 命令？',
++  cliCommandSwitch: '继续使用本应用的 harness-studio 命令？',
+   cliCommandPreserve: '现有命令会被保留，不会修改其他安装或 shell 启动文件。',
+   cliCommandContinue: '继续',
+-  cliCommandInstallApp: '请先将 Desktop 安装到“应用程序”文件夹，再管理 dsh 命令。',
++  cliCommandInstallApp: '请先将 Harness Studio 移到“应用程序”文件夹，再安装命令。',
+   cliCommandUpdating: '正在安装更新。请在安装完成后管理命令。',
+-  cliCommandNewTerminal: '打开新终端并运行 dsh --version。',
+-  cliCommandRemoved: '已移除 Desktop 命令注册。',
++  cliCommandNewTerminal: '打开新终端并运行 harness-studio --version。',
++  cliCommandRemoved: '已移除 harness-studio 命令。',
+   cliCommandPreviousRestored: '已恢复之前的启动器。',
+   cliCommandOtherKept: '其他命令安装保持不变。',
+   cliCommandBackupKept: '之前的启动器保留在：{path}',
+-  cliCommandChanged: '对话框打开期间命令或 PATH 已改变。请重新打开“管理 dsh 命令”检查当前状态。',
++  cliCommandChanged: '对话框打开期间命令或 PATH 已改变。请重新打开“安装命令行工具”检查当前状态。',
+   cliCommandOwnershipError: '命令注册或备份已改变，未移除无关命令。',
+   cliCommandFailed: '无法更新命令。请检查应用是否已安装、目标位置是否可写，然后重试。',
+   application: '应用',
+diff --git a/apps/desktop/tests/cli-launcher.spec.ts b/apps/desktop/tests/cli-launcher.spec.ts
+index 67e38da2..b3ef6d17 100644
+--- a/apps/desktop/tests/cli-launcher.spec.ts
++++ b/apps/desktop/tests/cli-launcher.spec.ts
+@@ -3,7 +3,7 @@
+ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+ import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs'
+ import { rm } from 'node:fs/promises'
+-import { tmpdir } from 'node:os'
++import { homedir, tmpdir } from 'node:os'
+ import { dirname, join, relative } from 'node:path'
+ import { expect, it, onTestFinished } from 'vitest'
+ import { prepareDesktopCli } from '../scripts/prepare-cli.ts'
+@@ -24,7 +24,7 @@ function fixture() {
+   const resources = join(application, ...platform === 'darwin' ? ['Contents', 'Resources'] : ['resources'])
+   const cli = join(resources, 'runtime', 'cli')
+   prepareDesktopCli(cli, platform)
+-  const electron = join(application, ...platform === 'darwin' ? ['Contents', 'MacOS', 'DeepSeek Harness'] : ['DeepSeek Harness.exe'])
++  const electron = join(application, ...platform === 'darwin' ? ['Contents', 'MacOS', 'Harness Studio'] : ['Harness Studio.exe'])
+   mkdirSync(dirname(electron), { recursive: true })
+   if (platform === 'win32') copyFileSync(process.execPath, electron)
+   else symlinkSync(process.execPath, electron)
+@@ -34,19 +34,19 @@ function fixture() {
+   writeFileSync(entry, [
+     'const chunks = []',
+     'for await (const chunk of process.stdin) chunks.push(chunk)',
+-    "process.stdout.write(JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), value: process.env.DSH_CLI_TEST_VALUE, nodeMode: process.env.ELECTRON_RUN_AS_NODE, input: Buffer.concat(chunks).toString('hex') }))",
++    "process.stdout.write(JSON.stringify({ args: process.argv.slice(2), cwd: process.cwd(), value: process.env.DSH_CLI_TEST_VALUE, nodeMode: process.env.ELECTRON_RUN_AS_NODE, home: process.env.DSH_HOME, input: Buffer.concat(chunks).toString('hex') }))",
+     "process.stderr.write('separate stderr\\n')",
+     'process.exitCode = 23',
+     '',
+   ].join('\n'))
+   const command = join(cli, 'bin', platform === 'win32' ? 'dsh.cmd' : 'dsh')
+-  function start(args: string[], executable = command) {
++  function start(args: string[], executable = command, extraEnv: Record<string, string | undefined> = {}) {
+     // cmd fixture inputs contain no metacharacters; POSIX cases exercise literal expansion characters separately.
+     const child = platform === 'win32'
+       ? spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', `""${executable}" ${args.map(value => `"${value}"`).join(' ')}"`], {
+-        cwd: root, env: { ...process.env, DSH_CLI_TEST_VALUE: 'kept' }, stdio: 'pipe', windowsVerbatimArguments: true,
++        cwd: root, env: { ...process.env, DSH_CLI_TEST_VALUE: 'kept', ...extraEnv }, stdio: 'pipe', windowsVerbatimArguments: true,
+       })
+-      : spawn(executable, args, { cwd: root, env: { ...process.env, DSH_CLI_TEST_VALUE: 'kept' }, stdio: 'pipe' })
++      : spawn(executable, args, { cwd: root, env: { ...process.env, DSH_CLI_TEST_VALUE: 'kept', ...extraEnv }, stdio: 'pipe' })
+     children.push(child)
+     const closed = new Promise<number | null>((resolve, reject) => {
+       child.once('error', reject)
+@@ -69,7 +69,7 @@ it('preserves common arguments, cwd, environment, binary input, stderr and exit
+   const input = Buffer.from([0, 1, 10, 255])
+   run.child.stdin.end(input)
+   expect(await run.closed, run.stderr()).toBe(23)
+-  expect(JSON.parse(run.stdout())).toEqual({ args, cwd: f.root, value: 'kept', nodeMode: '1', input: input.toString('hex') })
++  expect(JSON.parse(run.stdout())).toEqual({ args, cwd: f.root, value: 'kept', nodeMode: '1', home: process.env.DSH_HOME ?? join(homedir(), '.harness-studio'), input: input.toString('hex') })
+   expect(run.stderr()).toBe('separate stderr\n')
+ })
+ 
+@@ -83,5 +83,25 @@ it.skipIf(process.platform === 'win32')('resolves chained command symlinks witho
+   const run = f.start(args, command)
+   run.child.stdin.end()
+   expect(await run.closed, run.stderr()).toBe(23)
+-  expect(JSON.parse(run.stdout())).toMatchObject({ args, cwd: f.root, nodeMode: '1' })
++  expect(JSON.parse(run.stdout())).toMatchObject({ args: ['--profile', 'harness-studio', ...args], cwd: f.root, nodeMode: '1' })
++})
++
++it.skipIf(process.platform === 'win32')('runs a bare task in the Harness Studio profile and home, and passes launcher modes through', async () => {
++  const f = fixture()
++  const task = f.start(['fix the failing test'], f.command, { DSH_HOME: undefined })
++  task.child.stdin.end()
++  expect(await task.closed, task.stderr()).toBe(23)
++  expect(JSON.parse(task.stdout())).toMatchObject({ args: ['--profile', 'harness-studio', 'fix the failing test'], home: join(homedir(), '.harness-studio') })
++
++  const piped = f.start([], f.command, { DSH_HOME: '/custom/home' })
++  piped.child.stdin.end('summarize this log')
++  expect(await piped.closed, piped.stderr()).toBe(23)
++  expect(JSON.parse(piped.stdout())).toMatchObject({ args: ['--profile', 'harness-studio'], home: '/custom/home', input: Buffer.from('summarize this log').toString('hex') })
++
++  for (const args of [['--version'], ['web', '--port', '8080'], ['--profile', 'headless', 'job'], ['plugin', 'list']]) {
++    const run = f.start(args)
++    run.child.stdin.end()
++    expect(await run.closed, run.stderr()).toBe(23)
++    expect(JSON.parse(run.stdout()).args).toEqual(args)
++  }
+ })
+diff --git a/apps/desktop/tests/command-management.spec.ts b/apps/desktop/tests/command-management.spec.ts
+index bef9121d..cd5aa14f 100644
+--- a/apps/desktop/tests/command-management.spec.ts
++++ b/apps/desktop/tests/command-management.spec.ts
+@@ -5,16 +5,16 @@ import { en, zh } from '../src/locale.ts'
+ import { presentCommandManagement } from '../src/command-management.ts'
+ 
+ it.each([en, zh])('shows installation, repair/removal and shadowed command locations', (messages) => {
+-  const destination = '/usr/local/bin/dsh'
++  const destination = '/usr/local/bin/harness-studio'
+   const missing = presentCommandManagement({ managed: false, available: false, destination }, messages, 'darwin')
+   expect(missing.buttons).toEqual([messages.cliCommandInstall, messages.cancel])
+   expect(missing.cancelId).toBe(1)
+   const installed = presentCommandManagement({ managed: true, available: true, destination, activeCommand: destination }, messages, 'darwin')
+   expect(installed.buttons).toEqual([messages.cliCommandClose, messages.cliCommandRepair, messages.cliCommandRemove])
+   expect(installed.cancelId).toBe(0)
+-  const shadowed = presentCommandManagement({ managed: true, available: true, destination, activeCommand: '/opt/homebrew/bin/dsh' }, messages, 'darwin')
++  const shadowed = presentCommandManagement({ managed: true, available: true, destination, activeCommand: '/opt/homebrew/bin/harness-studio' }, messages, 'darwin')
+   expect(shadowed.type).toBe('warning')
+-  expect(shadowed.detail).toContain('/opt/homebrew/bin/dsh')
++  expect(shadowed.detail).toContain('/opt/homebrew/bin/harness-studio')
+   expect(shadowed.detail).toContain(messages.cliCommandShadowed)
+   const unknown = presentCommandManagement({ managed: false, available: false, destination, selectionUnknown: true }, messages, 'darwin')
+   expect(unknown.detail).toContain(messages.cliCommandSelectionUnknown)
+@@ -24,8 +24,8 @@ it.each([
+   ['darwin', 'en-US', en], ['darwin', 'zh-CN', zh],
+   ['win32', 'en-US', en], ['win32', 'zh-CN', zh],
+ ] as const)('records command status on %s in %s', async (platform, language, messages) => {
+-  const destination = platform === 'darwin' ? '/usr/local/bin/dsh' : 'C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd'
+-  const other = platform === 'darwin' ? '/opt/homebrew/bin/dsh' : 'C:\\Program Files\\nodejs\\dsh.cmd'
++  const destination = platform === 'darwin' ? '/usr/local/bin/harness-studio' : 'C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd'
++  const other = platform === 'darwin' ? '/opt/homebrew/bin/harness-studio' : 'C:\\Program Files\\nodejs\\dsh.cmd'
+   const states = [
+     { managed: false, available: false, destination },
+     { managed: true, available: true, destination, activeCommand: destination },
+diff --git a/apps/desktop/tests/expected/application-menu-en-US.json b/apps/desktop/tests/expected/application-menu-en-US.json
+index b75179df..16ba6758 100644
+--- a/apps/desktop/tests/expected/application-menu-en-US.json
++++ b/apps/desktop/tests/expected/application-menu-en-US.json
+@@ -3,7 +3,7 @@
+     "label": "Check for Updates…"
+   },
+   {
+-    "label": "Manage dsh Command…"
++    "label": "Install Command-Line Tool…"
+   },
+   {
+     "role": "hide",
+diff --git a/apps/desktop/tests/expected/application-menu-zh-CN.json b/apps/desktop/tests/expected/application-menu-zh-CN.json
+index 37580cc9..e53bc7a0 100644
+--- a/apps/desktop/tests/expected/application-menu-zh-CN.json
++++ b/apps/desktop/tests/expected/application-menu-zh-CN.json
+@@ -3,7 +3,7 @@
+     "label": "检查更新…"
+   },
+   {
+-    "label": "管理 dsh 命令…"
++    "label": "安装命令行工具…"
+   },
+   {
+     "role": "hide",
+diff --git a/apps/desktop/tests/expected/command-management-darwin-en-US.json b/apps/desktop/tests/expected/command-management-darwin-en-US.json
+index 02f12214..e4dc8604 100644
+--- a/apps/desktop/tests/expected/command-management-darwin-en-US.json
++++ b/apps/desktop/tests/expected/command-management-darwin-en-US.json
+@@ -2,9 +2,9 @@
+   "dialogs": [
+     {
+       "type": "info",
+-      "title": "Manage dsh Command",
+-      "message": "Add the Desktop command to your terminal.",
+-      "detail": "Desktop command: /usr/local/bin/dsh",
++      "title": "Harness Studio Command-Line Tool",
++      "message": "Add the harness-studio command to your terminal, to run tasks from scripts and CI.",
++      "detail": "Harness Studio command: /usr/local/bin/harness-studio",
+       "buttons": [
+         "Install",
+         "Cancel"
+@@ -14,9 +14,9 @@
+     },
+     {
+       "type": "info",
+-      "title": "Manage dsh Command",
+-      "message": "The Desktop command is installed.",
+-      "detail": "Desktop command: /usr/local/bin/dsh\n\nCurrent dsh command: /usr/local/bin/dsh",
++      "title": "Harness Studio Command-Line Tool",
++      "message": "The harness-studio command is installed.",
++      "detail": "Harness Studio command: /usr/local/bin/harness-studio\n\nCurrent harness-studio command: /usr/local/bin/harness-studio",
+       "buttons": [
+         "Close",
+         "Repair",
+@@ -27,9 +27,9 @@
+     },
+     {
+       "type": "info",
+-      "title": "Manage dsh Command",
+-      "message": "The Desktop command needs repair.",
+-      "detail": "Desktop command: /usr/local/bin/dsh",
++      "title": "Harness Studio Command-Line Tool",
++      "message": "The harness-studio command needs repair.",
++      "detail": "Harness Studio command: /usr/local/bin/harness-studio",
+       "buttons": [
+         "Close",
+         "Repair",
+@@ -40,9 +40,9 @@
+     },
+     {
+       "type": "warning",
+-      "title": "Manage dsh Command",
+-      "message": "The Desktop command is installed.",
+-      "detail": "Desktop command: /usr/local/bin/dsh\n\nCurrent dsh command: /opt/homebrew/bin/dsh\n\nAnother dsh takes precedence. Remove or reorder that installation to use the Desktop command by default. You can also run the Desktop command by its full path.",
++      "title": "Harness Studio Command-Line Tool",
++      "message": "The harness-studio command is installed.",
++      "detail": "Harness Studio command: /usr/local/bin/harness-studio\n\nCurrent harness-studio command: /opt/homebrew/bin/harness-studio\n\nAnother harness-studio takes precedence. Remove or reorder that installation to use this app's command by default. You can also run this app's command by its full path.",
+       "buttons": [
+         "Close",
+         "Repair",
+@@ -53,9 +53,9 @@
+     },
+     {
+       "type": "info",
+-      "title": "Manage dsh Command",
+-      "message": "Add the Desktop command to your terminal.",
+-      "detail": "Desktop command: /usr/local/bin/dsh\n\nYour shell command could not be verified. An alias or another dsh installation may take precedence.",
++      "title": "Harness Studio Command-Line Tool",
++      "message": "Add the harness-studio command to your terminal, to run tasks from scripts and CI.",
++      "detail": "Harness Studio command: /usr/local/bin/harness-studio\n\nYour shell command could not be verified. An alias or another harness-studio installation may take precedence.",
+       "buttons": [
+         "Install",
+         "Cancel"
+diff --git a/apps/desktop/tests/expected/command-management-darwin-zh-CN.json b/apps/desktop/tests/expected/command-management-darwin-zh-CN.json
+index 9b22c721..ff03f79e 100644
+--- a/apps/desktop/tests/expected/command-management-darwin-zh-CN.json
++++ b/apps/desktop/tests/expected/command-management-darwin-zh-CN.json
+@@ -2,9 +2,9 @@
+   "dialogs": [
+     {
+       "type": "info",
+-      "title": "管理 dsh 命令",
+-      "message": "将 Desktop 命令添加到终端。",
+-      "detail": "Desktop 命令：/usr/local/bin/dsh",
++      "title": "Harness Studio 命令行工具",
++      "message": "将 harness-studio 命令添加到终端，以便在脚本和 CI 中运行任务。",
++      "detail": "Harness Studio 命令：/usr/local/bin/harness-studio",
+       "buttons": [
+         "安装",
+         "取消"
+@@ -14,9 +14,9 @@
+     },
+     {
+       "type": "info",
+-      "title": "管理 dsh 命令",
+-      "message": "Desktop 命令已安装。",
+-      "detail": "Desktop 命令：/usr/local/bin/dsh\n\n当前 dsh 命令：/usr/local/bin/dsh",
++      "title": "Harness Studio 命令行工具",
++      "message": "harness-studio 命令已安装。",
++      "detail": "Harness Studio 命令：/usr/local/bin/harness-studio\n\n当前 harness-studio 命令：/usr/local/bin/harness-studio",
+       "buttons": [
+         "关闭",
+         "修复",
+@@ -27,9 +27,9 @@
+     },
+     {
+       "type": "info",
+-      "title": "管理 dsh 命令",
+-      "message": "Desktop 命令需要修复。",
+-      "detail": "Desktop 命令：/usr/local/bin/dsh",
++      "title": "Harness Studio 命令行工具",
++      "message": "harness-studio 命令需要修复。",
++      "detail": "Harness Studio 命令：/usr/local/bin/harness-studio",
+       "buttons": [
+         "关闭",
+         "修复",
+@@ -40,9 +40,9 @@
+     },
+     {
+       "type": "warning",
+-      "title": "管理 dsh 命令",
+-      "message": "Desktop 命令已安装。",
+-      "detail": "Desktop 命令：/usr/local/bin/dsh\n\n当前 dsh 命令：/opt/homebrew/bin/dsh\n\n另一个 dsh 的优先级更高。请移除或调整该安装的顺序，以默认使用 Desktop 命令；也可以通过完整路径运行 Desktop 命令。",
++      "title": "Harness Studio 命令行工具",
++      "message": "harness-studio 命令已安装。",
++      "detail": "Harness Studio 命令：/usr/local/bin/harness-studio\n\n当前 harness-studio 命令：/opt/homebrew/bin/harness-studio\n\n另一个 harness-studio 的优先级更高。请移除或调整该安装的顺序，以默认使用本应用的命令；也可以通过完整路径运行本应用的命令。",
+       "buttons": [
+         "关闭",
+         "修复",
+@@ -53,9 +53,9 @@
+     },
+     {
+       "type": "info",
+-      "title": "管理 dsh 命令",
+-      "message": "将 Desktop 命令添加到终端。",
+-      "detail": "Desktop 命令：/usr/local/bin/dsh\n\n无法确认 shell 中的命令。别名或另一个 dsh 安装可能具有更高优先级。",
++      "title": "Harness Studio 命令行工具",
++      "message": "将 harness-studio 命令添加到终端，以便在脚本和 CI 中运行任务。",
++      "detail": "Harness Studio 命令：/usr/local/bin/harness-studio\n\n无法确认 shell 中的命令。别名或另一个 harness-studio 安装可能具有更高优先级。",
+       "buttons": [
+         "安装",
+         "取消"
+diff --git a/apps/desktop/tests/expected/command-management-win32-en-US.json b/apps/desktop/tests/expected/command-management-win32-en-US.json
+index 34ee59a9..b3b428cf 100644
+--- a/apps/desktop/tests/expected/command-management-win32-en-US.json
++++ b/apps/desktop/tests/expected/command-management-win32-en-US.json
+@@ -2,9 +2,9 @@
+   "dialogs": [
+     {
+       "type": "info",
+-      "title": "Manage dsh Command",
+-      "message": "Add the Desktop command to your terminal.",
+-      "detail": "Desktop command: C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd",
++      "title": "Harness Studio Command-Line Tool",
++      "message": "Add the harness-studio command to your terminal, to run tasks from scripts and CI.",
++      "detail": "Harness Studio command: C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd",
+       "buttons": [
+         "Install",
+         "Cancel"
+@@ -14,9 +14,9 @@
+     },
+     {
+       "type": "info",
+-      "title": "Manage dsh Command",
+-      "message": "The Desktop command is installed.",
+-      "detail": "Desktop command: C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd\n\nCurrent dsh command: C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd",
++      "title": "Harness Studio Command-Line Tool",
++      "message": "The harness-studio command is installed.",
++      "detail": "Harness Studio command: C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd\n\nCurrent harness-studio command: C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd",
+       "buttons": [
+         "Close",
+         "Repair",
+@@ -27,9 +27,9 @@
+     },
+     {
+       "type": "info",
+-      "title": "Manage dsh Command",
+-      "message": "The Desktop command needs repair.",
+-      "detail": "Desktop command: C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd",
++      "title": "Harness Studio Command-Line Tool",
++      "message": "The harness-studio command needs repair.",
++      "detail": "Harness Studio command: C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd",
+       "buttons": [
+         "Close",
+         "Repair",
+@@ -40,9 +40,9 @@
+     },
+     {
+       "type": "warning",
+-      "title": "Manage dsh Command",
+-      "message": "The Desktop command is installed.",
+-      "detail": "Desktop command: C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd\n\nCurrent dsh command: C:\\Program Files\\nodejs\\dsh.cmd\n\nAnother dsh takes precedence. Remove or reorder that installation to use the Desktop command by default. You can also run the Desktop command by its full path.",
++      "title": "Harness Studio Command-Line Tool",
++      "message": "The harness-studio command is installed.",
++      "detail": "Harness Studio command: C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd\n\nCurrent harness-studio command: C:\\Program Files\\nodejs\\dsh.cmd\n\nAnother harness-studio takes precedence. Remove or reorder that installation to use this app's command by default. You can also run this app's command by its full path.",
+       "buttons": [
+         "Close",
+         "Repair",
+@@ -53,9 +53,9 @@
+     },
+     {
+       "type": "info",
+-      "title": "Manage dsh Command",
+-      "message": "Add the Desktop command to your terminal.",
+-      "detail": "Desktop command: C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd\n\nYour shell command could not be verified. An alias or another dsh installation may take precedence.",
++      "title": "Harness Studio Command-Line Tool",
++      "message": "Add the harness-studio command to your terminal, to run tasks from scripts and CI.",
++      "detail": "Harness Studio command: C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd\n\nYour shell command could not be verified. An alias or another harness-studio installation may take precedence.",
+       "buttons": [
+         "Install",
+         "Cancel"
+diff --git a/apps/desktop/tests/expected/command-management-win32-zh-CN.json b/apps/desktop/tests/expected/command-management-win32-zh-CN.json
+index c124453a..9bd0886d 100644
+--- a/apps/desktop/tests/expected/command-management-win32-zh-CN.json
++++ b/apps/desktop/tests/expected/command-management-win32-zh-CN.json
+@@ -2,9 +2,9 @@
+   "dialogs": [
+     {
+       "type": "info",
+-      "title": "管理 dsh 命令",
+-      "message": "将 Desktop 命令添加到终端。",
+-      "detail": "Desktop 命令：C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd",
++      "title": "Harness Studio 命令行工具",
++      "message": "将 harness-studio 命令添加到终端，以便在脚本和 CI 中运行任务。",
++      "detail": "Harness Studio 命令：C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd",
+       "buttons": [
+         "安装",
+         "取消"
+@@ -14,9 +14,9 @@
+     },
+     {
+       "type": "info",
+-      "title": "管理 dsh 命令",
+-      "message": "Desktop 命令已安装。",
+-      "detail": "Desktop 命令：C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd\n\n当前 dsh 命令：C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd",
++      "title": "Harness Studio 命令行工具",
++      "message": "harness-studio 命令已安装。",
++      "detail": "Harness Studio 命令：C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd\n\n当前 harness-studio 命令：C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd",
+       "buttons": [
+         "关闭",
+         "修复",
+@@ -27,9 +27,9 @@
+     },
+     {
+       "type": "info",
+-      "title": "管理 dsh 命令",
+-      "message": "Desktop 命令需要修复。",
+-      "detail": "Desktop 命令：C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd",
++      "title": "Harness Studio 命令行工具",
++      "message": "harness-studio 命令需要修复。",
++      "detail": "Harness Studio 命令：C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd",
+       "buttons": [
+         "关闭",
+         "修复",
+@@ -40,9 +40,9 @@
+     },
+     {
+       "type": "warning",
+-      "title": "管理 dsh 命令",
+-      "message": "Desktop 命令已安装。",
+-      "detail": "Desktop 命令：C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd\n\n当前 dsh 命令：C:\\Program Files\\nodejs\\dsh.cmd\n\n另一个 dsh 的优先级更高。请移除或调整该安装的顺序，以默认使用 Desktop 命令；也可以通过完整路径运行 Desktop 命令。",
++      "title": "Harness Studio 命令行工具",
++      "message": "harness-studio 命令已安装。",
++      "detail": "Harness Studio 命令：C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd\n\n当前 harness-studio 命令：C:\\Program Files\\nodejs\\dsh.cmd\n\n另一个 harness-studio 的优先级更高。请移除或调整该安装的顺序，以默认使用本应用的命令；也可以通过完整路径运行本应用的命令。",
+       "buttons": [
+         "关闭",
+         "修复",
+@@ -53,9 +53,9 @@
+     },
+     {
+       "type": "info",
+-      "title": "管理 dsh 命令",
+-      "message": "将 Desktop 命令添加到终端。",
+-      "detail": "Desktop 命令：C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd\n\n无法确认 shell 中的命令。别名或另一个 dsh 安装可能具有更高优先级。",
++      "title": "Harness Studio 命令行工具",
++      "message": "将 harness-studio 命令添加到终端，以便在脚本和 CI 中运行任务。",
++      "detail": "Harness Studio 命令：C:\\Users\\user\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\runtime\\cli\\bin\\dsh.cmd\n\n无法确认 shell 中的命令。别名或另一个 harness-studio 安装可能具有更高优先级。",
+       "buttons": [
+         "安装",
+         "取消"
+diff --git a/apps/desktop/tests/expected/command-repair-en-US.json b/apps/desktop/tests/expected/command-repair-en-US.json
+index 3dd2e5c6..c43e6249 100644
+--- a/apps/desktop/tests/expected/command-repair-en-US.json
++++ b/apps/desktop/tests/expected/command-repair-en-US.json
+@@ -1,6 +1,6 @@
+ [
+   {
+-    "message": "The Desktop command is installed.",
++    "message": "The harness-studio command is installed.",
+     "buttons": [
+       "Close",
+       "Repair",
+@@ -8,7 +8,7 @@
+     ]
+   },
+   {
+-    "message": "The Desktop command is installed.",
++    "message": "The harness-studio command is installed.",
+     "buttons": [
+       "Close"
+     ]
+diff --git a/apps/desktop/tests/expected/command-repair-zh-CN.json b/apps/desktop/tests/expected/command-repair-zh-CN.json
+index 83c229e1..cb39bf13 100644
+--- a/apps/desktop/tests/expected/command-repair-zh-CN.json
++++ b/apps/desktop/tests/expected/command-repair-zh-CN.json
+@@ -1,6 +1,6 @@
+ [
+   {
+-    "message": "Desktop 命令已安装。",
++    "message": "harness-studio 命令已安装。",
+     "buttons": [
+       "关闭",
+       "修复",
+@@ -8,7 +8,7 @@
+     ]
+   },
+   {
+-    "message": "Desktop 命令已安装。",
++    "message": "harness-studio 命令已安装。",
+     "buttons": [
+       "关闭"
+     ]
+diff --git a/apps/desktop/tests/main-startup.spec.ts b/apps/desktop/tests/main-startup.spec.ts
+index c0f0dd27..92b57bb4 100644
+--- a/apps/desktop/tests/main-startup.spec.ts
++++ b/apps/desktop/tests/main-startup.spec.ts
+@@ -974,7 +974,7 @@ describe('desktop main startup', () => {
+     expect(() => handler(event, 'application', NaN, 34)).toThrow('invalid popup request')
+     const application = handler(event, 'application', 48, 34)
+     expect(harness.menu.buildFromTemplate.mock.lastCall![0].map(item => item.label ?? item.type)).toEqual([
+-      '关于 Harness Studio', 'separator', '检查更新…', '管理 dsh 命令…', '允许在浏览器面板中登录', 'separator', '退出',
++      '关于 Harness Studio', 'separator', '检查更新…', '安装命令行工具…', '允许在浏览器面板中登录', 'separator', '退出',
+     ])
+     expect(harness.popup.mock.lastCall![0]).toMatchObject({ window, x: 48, y: 34 })
+     expect(harness.popup.mock.lastCall![0].callback).toBeTypeOf('function')
+diff --git a/packages/boot/app-boot/src/profile.ts b/packages/boot/app-boot/src/profile.ts
+index 8f7fce5f..13ef582b 100644
+--- a/packages/boot/app-boot/src/profile.ts
++++ b/packages/boot/app-boot/src/profile.ts
+@@ -186,6 +186,14 @@ export const PROFILE_TEMPLATES: Record<string, ProfileTemplate> = {
+   headless: {
+     bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-headless'],
+   },
++  // Harness Studio's command line (the `harness-studio` command): one headless task with the bundled plugins
++  // that work without the app window: MCP connectors, Remember with auto memory, hooks, and Compact's host
++  // half, whose site approval refuses (there is no card to ask with) web fetches to sites the network setting
++  // does not allow. A bundle the installation does not carry is skipped with a notice, so a plain dsh
++  // installation still boots it.
++  'harness-studio': {
++    bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-headless', '@harness-studio/connectors', '@harness-studio/remember', '@harness-studio/hooks', '@harness-studio/compact'],
++  },
+   sdk: {
+     bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-sdk-app'],
+   },
+diff --git a/packages/boot/app-boot/tests/profile.spec.ts b/packages/boot/app-boot/tests/profile.spec.ts
+index fbd47c20..ee788c9c 100644
+--- a/packages/boot/app-boot/tests/profile.spec.ts
++++ b/packages/boot/app-boot/tests/profile.spec.ts
+@@ -351,6 +351,10 @@ describe('loadProfile', () => {
+     expect(PROFILE_TEMPLATES['sdk-minimal']).toEqual({
+       bundles: ['@deepseek-ai/dsh-sdk-minimal'],
+     })
++    // Harness Studio's command line: Compact's host half carries the site-approval check there too.
++    expect(PROFILE_TEMPLATES['harness-studio']).toEqual({
++      bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-headless', '@harness-studio/connectors', '@harness-studio/remember', '@harness-studio/hooks', '@harness-studio/compact'],
++    })
+     loadProfile('t', 'web', anchor, home)
+     expect(readProfileManifest('t', resolveProfileDir('web', home)).dsh?.profile?.bundles)
+       .toEqual([...PROFILE_TEMPLATES.web?.bundles ?? []])

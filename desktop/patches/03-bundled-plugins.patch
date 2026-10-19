@@ -28,7 +28,7 @@ index 7e7d62ee..e08defc4 100644
    const { values } = parseArgs({
      options: { from: { type: 'string', multiple: true }, out: { type: 'string' } },
 diff --git a/apps/desktop/src/core-package-set.ts b/apps/desktop/src/core-package-set.ts
-index 0c148e22..37a35484 100644
+index 0c148e22..9a0b5061 100644
 --- a/apps/desktop/src/core-package-set.ts
 +++ b/apps/desktop/src/core-package-set.ts
 @@ -13,6 +13,12 @@ export const DESKTOP_PACKAGES_DIR = 'desktop-packages'
@@ -39,13 +39,13 @@ index 0c148e22..37a35484 100644
 + * Harness Studio plugins shipped inside the application and enabled in a new Desktop profile.
 + * Their tarballs are read from `harness-studio-plugins/` at the repository root when the package set is prepared.
 + */
-+export const STUDIO_BUNDLED_PLUGINS = ['@harness-studio/devpreview', '@harness-studio/connectors', '@harness-studio/compact'] as const
++export const STUDIO_BUNDLED_PLUGINS = ['@harness-studio/devpreview', '@harness-studio/connectors', '@harness-studio/compact', '@harness-studio/sessions', '@harness-studio/remember', '@harness-studio/hooks', '@harness-studio/undo', '@harness-studio/watch', '@harness-studio/terminal', '@harness-studio/editor'] as const
 +
  /** Package-relative Desktop Host files required before a profile can boot. */
  export const DESKTOP_HOST_RUNTIME_FILES = [
    'lib/index.js',
 diff --git a/apps/desktop/src/project-manager.ts b/apps/desktop/src/project-manager.ts
-index 270d87d6..aa1770b7 100644
+index 270d87d6..3d46357b 100644
 --- a/apps/desktop/src/project-manager.ts
 +++ b/apps/desktop/src/project-manager.ts
 @@ -16,6 +16,7 @@ import {
@@ -56,7 +56,34 @@ index 270d87d6..aa1770b7 100644
    desktopCorePackageOverrides,
    verifyDesktopCorePackageSet,
  } from './core-package-set.ts'
-@@ -170,7 +171,7 @@ export function createDevelopmentProjectMetadata(projectDir: string, release: De
+@@ -23,7 +24,7 @@ import type { DesktopPaths } from './paths.ts'
+ import type { DesktopRelease } from './release.ts'
+ import { readDesktopRuntime } from './runtime-tree.ts'
+ import {
+-  initProfile, PROFILE_TEMPLATES, removeLinkProjections, sanitizeProfile, type ProfileTemplate,
++  initProfile, PROFILE_TEMPLATES, readProfileManifest, removeLinkProjections, sanitizeProfile, writeProfileBundles, type ProfileTemplate,
+ } from '@deepseek-ai/dsh-app-boot'
+ 
+ const PROJECT_NAME = '@deepseek-ai/dsh-desktop-runtime'
+@@ -74,7 +75,8 @@ export class DesktopProjectManager {
+    * @returns Backup path after the locked profile write, or undefined if the patch was absent.
+    */
+   async disableAllPlugins(): Promise<string | undefined> {
+-    return this.withLock(() => sanitizeProfile('dsh', this.paths.profile, WEB_PROFILE.bundles))
++    // Harness Studio's built-in plugins ship with the app and stay on: recovery removes only third-party bundles.
++    return this.withLock(() => sanitizeProfile('dsh', this.paths.profile, [...WEB_PROFILE.bundles, ...STUDIO_BUNDLED_PLUGINS]))
+   }
+ 
+   /**
+@@ -86,6 +88,7 @@ export class DesktopProjectManager {
+       readDesktopRuntime(this.runtime.dsh)
+       migrateProfileSettings(this.paths.profile)
+       createPluginProfile(this.paths.profile)
++      ensureBundledPlugins(this.paths.profile)
+       removeLinkProjections(this.paths.profile)
+     })
+   }
+@@ -170,7 +173,22 @@ export function createDevelopmentProjectMetadata(projectDir: string, release: De
    writeFileSync(join(projectDir, 'pnpm-workspace.yaml'), workspaceFile(), { mode: 0o600 })
  }
  
@@ -65,7 +92,69 @@ index 270d87d6..aa1770b7 100644
  export function createPluginProfile(projectDir: string): void {
 -  initProfile(projectDir, WEB_PROFILE.bundles)
 +  initProfile(projectDir, [...WEB_PROFILE.bundles, ...STUDIO_BUNDLED_PLUGINS])
++}
++
++/**
++ * Enable every Harness Studio built-in plugin in an existing profile: one created before a plugin was added
++ * to the app (Terminal, Editor), or rewritten by an older recovery, gets the missing ones appended after its
++ * own bundles, which keep their order. The built-ins load from the installation, so the profile's
++ * dependencies stay as they are. A profile already listing them all is not rewritten.
++ * @param projectDir - the Desktop profile directory.
++ */
++export function ensureBundledPlugins(projectDir: string): void {
++  if (!existsSync(join(projectDir, 'package.json'))) return
++  const manifest = readProfileManifest('dsh', projectDir)
++  const bundles = manifest.dsh?.profile?.bundles ?? [...WEB_PROFILE.bundles]
++  const missing = STUDIO_BUNDLED_PLUGINS.filter(name => !bundles.includes(name))
++  if (missing.length > 0 || manifest.dsh?.profile?.bundles === undefined) writeProfileBundles(projectDir, manifest, [...bundles, ...missing])
  }
+diff --git a/apps/desktop/tests/project-manager.spec.ts b/apps/desktop/tests/project-manager.spec.ts
+index 1dd76b35..8aaf3713 100644
+--- a/apps/desktop/tests/project-manager.spec.ts
++++ b/apps/desktop/tests/project-manager.spec.ts
+@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
+ import { afterEach, describe, expect, it, vi } from 'vitest'
+ import { resolveDesktopPaths } from '../src/paths.ts'
+ import { DesktopProjectManager } from '../src/project-manager.ts'
++import { STUDIO_BUNDLED_PLUGINS } from '../src/core-package-set.ts'
+ import { readProfilePlugins } from '@deepseek-ai/dsh-app-boot'
+ import { runtimeFixture } from './runtime-fixture.ts'
+ 
+@@ -126,6 +127,34 @@ describe('desktop external plugin profile', () => {
+     expect(readFileSync(patch, 'utf8')).toContain('[]')
+   })
+ 
++  it('adds built-in plugins an older profile lacks on every launch, keeping its own bundles, and keeps them through recovery', async () => {
++    const { manager } = setup()
++    await manager.applyRelease()
++    seedPlugin(manager)
++    const path = join(manager.paths.profile, 'package.json')
++    const bundles = () => (JSON.parse(readFileSync(path, 'utf8')) as { dsh: { profile: { bundles: string[] } } }).dsh.profile.bundles
++    expect(bundles()).toEqual(expect.arrayContaining([...STUDIO_BUNDLED_PLUGINS, 'plugin']))
++    // A profile made before Terminal and Editor shipped, with a plugin the person added.
++    const older = JSON.parse(readFileSync(path, 'utf8')) as { dependencies: Record<string, string>, dsh: { profile: { bundles: string[] } } }
++    older.dsh.profile.bundles = older.dsh.profile.bundles.filter(name => name !== '@harness-studio/terminal' && name !== '@harness-studio/editor')
++    writeFileSync(path, JSON.stringify(older))
++    await manager.applyRelease()
++    expect(bundles().slice(0, older.dsh.profile.bundles.length)).toEqual(older.dsh.profile.bundles)
++    expect(bundles()).toEqual(expect.arrayContaining([...STUDIO_BUNDLED_PLUGINS, 'plugin']))
++    expect(bundles().filter(name => name === '@harness-studio/terminal')).toHaveLength(1)
++    expect((JSON.parse(readFileSync(path, 'utf8')) as { dependencies: Record<string, string> }).dependencies).toEqual(older.dependencies)
++    // Recovery removes the third-party plugin and keeps the built-ins.
++    await manager.disableAllPlugins()
++    expect(bundles()).not.toContain('plugin')
++    expect(bundles()).toEqual(expect.arrayContaining([...STUDIO_BUNDLED_PLUGINS]))
++    // A profile recovered by an older version, with only the base bundles, gets them back at the next launch.
++    const recovered = JSON.parse(readFileSync(path, 'utf8')) as { dsh: { profile: { bundles: string[] } } }
++    recovered.dsh.profile.bundles = recovered.dsh.profile.bundles.filter(name => !name.startsWith('@harness-studio/'))
++    writeFileSync(path, JSON.stringify(recovered))
++    await manager.applyRelease()
++    expect(bundles()).toEqual([...recovered.dsh.profile.bundles, ...STUDIO_BUNDLED_PLUGINS])
++  })
++
+   it('needs no runtime or package manifest when no plugins have been installed', async () => {
+     const { manager } = setup()
+     await expect(manager.disableAllPlugins()).resolves.toBeUndefined()
 diff --git a/packages/boot/app-boot/src/profile.ts b/packages/boot/app-boot/src/profile.ts
 index cbece01b..8f7fce5f 100644
 --- a/packages/boot/app-boot/src/profile.ts

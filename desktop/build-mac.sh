@@ -5,7 +5,7 @@
 #   desktop/build-mac.sh
 #
 # Clones Harness into dist/build/harness (replacing any earlier copy), applies patches/harness-studio-brand.patch
-# and desktop/patches/*.patch in order, copies the logo, bundles the three plugins, and runs Harness's
+# and desktop/patches/*.patch in order, copies the logo, bundles the eight plugins, and runs Harness's
 # unsigned macOS packaging. Writes dist/Harness-Studio-<version>-mac-arm64.dmg and a .sha256 file beside it.
 # When desktop/.env.signing exists, the app is signed with your Developer ID and notarised instead
 # (see desktop/README.md). HARNESS_UPSTREAM overrides the repository cloned (a local mirror, for example).
@@ -34,7 +34,7 @@ for patch in "$root/patches/harness-studio-brand.patch" "$root/patches/harness-s
 done
 "$root/scripts/copy-logo.sh" "$harness"
 mkdir -p "$harness/harness-studio-plugins"
-(cd "$root" && npm pack --silent --pack-destination "$harness/harness-studio-plugins" ./plugins/devpreview ./plugins/connectors ./plugins/compact >/dev/null)
+(cd "$root" && npm pack --silent --pack-destination "$harness/harness-studio-plugins" ./plugins/devpreview ./plugins/connectors ./plugins/compact ./plugins/sessions ./plugins/remember ./plugins/hooks ./plugins/undo ./plugins/watch ./plugins/terminal ./plugins/editor >/dev/null)
 
 (cd "$harness" && pnpm install --frozen-lockfile && pnpm --filter @deepseek-ai/dsh-desktop run package:mac:arm64:unsigned)
 

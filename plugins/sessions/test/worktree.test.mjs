@@ -89,6 +89,32 @@ test('removal is refused for uncommitted, untracked or unpushed unmerged work', 
   assert.equal(git(repo, 'rev-parse', '--verify', '--quiet', `refs/heads/${plan.branch}`).length > 0, true)
 })
 
+test('removal is refused for ignored files git would delete, but not for regenerable folders', async t => {
+  const { repo, worktrees } = await setup(t)
+  await writeFile(path.join(repo, '.gitignore'), 'node_modules/\ndist/\n.env\n*.db\n')
+  git(repo, 'add', '.gitignore')
+  git(repo, 'commit', '-q', '-m', 'ignore')
+  const plan = await worktrees.plan({ folder: repo, slug: 'ignored', prefix: 'harness/' })
+  await worktrees.add(plan)
+  execFileSync('mkdir', ['-p', path.join(plan.path, 'node_modules', 'pkg'), path.join(plan.path, 'dist')])
+  await writeFile(path.join(plan.path, 'node_modules', 'pkg', 'index.js'), '')
+  await writeFile(path.join(plan.path, 'dist', 'app.js'), '')
+  assert.equal(await worktrees.removalBlocker(plan), undefined, 'only regenerable folders are ignored')
+
+  await writeFile(path.join(plan.path, '.env'), 'LOCAL=1\n')
+  await writeFile(path.join(plan.path, 'local.db'), '')
+  const blocker = await worktrees.removalBlocker(plan)
+  assert.match(blocker, /ignored files that removing it would delete/)
+  assert.match(blocker, /\.env/)
+  assert.match(blocker, /local\.db/)
+  assert.doesNotMatch(blocker, /node_modules|dist/)
+  await assert.rejects(worktrees.remove(plan), /ignored files/)
+  assert.equal(await readFile(path.join(plan.path, '.env'), 'utf8'), 'LOCAL=1\n', 'the ignored file is still there')
+
+  for (let i = 0; i < 12; i++) await writeFile(path.join(plan.path, `extra-${i}.db`), '')
+  assert.match(await worktrees.removalBlocker(plan), /and 4 more$/)
+})
+
 test('rollback of a fresh worktree leaves one that gained work in place', async t => {
   const { repo, worktrees } = await setup(t)
   const clean = await worktrees.plan({ folder: repo, slug: 'clean', prefix: 'harness/' })

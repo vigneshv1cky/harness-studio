@@ -1,0 +1,214 @@
+diff --git a/packages/client/ui-sidebar-documentpreview/README.md b/packages/client/ui-sidebar-documentpreview/README.md
+index 51e23e22..abab41ee 100644
+--- a/packages/client/ui-sidebar-documentpreview/README.md
++++ b/packages/client/ui-sidebar-documentpreview/README.md
+@@ -29,7 +29,7 @@ Preview files in the right Sidebar and choose among registered renderers. Markdo
+ ## What it registers
+ 
+ - **The type** — `ctx.sidebarRightTabs.register(...)` with id `@deepseek-ai/dsh-client-ui-sidebar-documentpreview` (this implementation's identity in the tab system, and the key its body registers under), kind `text`, a whole-address file-resource pattern, band `fallback`. `canOpen` accepts only Session addresses, whose paths may be relative or absolute; bare `absolute` addresses are not claimed. A type registered at the `extension` or `builtin` band for a narrower pattern (say `*.png`) takes those addresses; other supported files land here. The whole address is the content identity, so two files with one name in different directories, or one path under two sessions, are two tabs; the decoded basename is the tab title, and the keyed `sidebar.right.pane.tab.title` seat places its extension-specific `FileTypeIcon` before that title.
+-- **The body** — the keyed `sidebar.right.pane.tab` seat under the type's id. Its fixed header shows the Host's absolute path when available, otherwise the requested path; the shared [`PathLabel`](../ui-primitives/README.md#component-catalog) subdues directories, preserves a clipped path’s trailing characters with a left-edge fade, and exposes the full value on hover. A dropdown appears when multiple supported renderers are available. Plain text is offered only for text-compatible sources; a single renderer shows no viewer control. A known binary container suffix without a registered renderer shows the file-type icon and an unsupported-preview message under the path header, without issuing a read. Two Session-scoped list child slots hand the previewed file to other plugins once its metadata reports a Host path, both with `absolutePath` as the owner prop: `sidebar.right.tab.document.actions` renders after the header's own controls in every state that shows the header, and `sidebar.right.tab.document.unpreviewable` renders in the unsupported empty state and in the empty state of a readable file the preview cannot render (`not-text`, `too-large`), where Retry would otherwise stand; a carrier or unclassified read failure keeps Retry, and a missing or non-regular path offers only its explanation. The shipped occupant of both is [`ui-open-in-app`](../ui-open-in-app/README.md). A wrap toggle appears only when the selected renderer declares `wrap: true`; its glyph describes the mode the click selects, and the per-tab preference starts on. Reload stays in this header, not the Sidebar's tab strip. Automatic refresh defaults to enabled; its separate toggle is hidden, with state, labels, styles, and toggle logic retained. The body reaches every pane edge; each renderer owns its content inset and may own an inner scrollport. This intentionally differs from the Files tab's 2px right-side scrollbar offset: previews keep the full pane width so edge-to-edge HTML and code scrollports end at the pane edge.
++- **The body** — the keyed `sidebar.right.pane.tab` seat under the type's id. Its fixed header shows the Host's absolute path when available, otherwise the requested path; the shared [`PathLabel`](../ui-primitives/README.md#component-catalog) subdues directories, preserves a clipped path’s trailing characters with a left-edge fade, and exposes the full value on hover. A dropdown appears when multiple supported renderers are available. A Markdown file whose top-ranked renderer is the builtin Markdown one shows a Rendered / Source switch in place of that dropdown; Source is the code renderer, or plain text without it. A tab with no manual choice opens in the view last chosen, remembered in browser storage under `harness-studio.markdown-view`, which Harness Studio's Files tab shares. Plain text is offered only for text-compatible sources; a single renderer shows no viewer control. A known binary container suffix without a registered renderer shows the file-type icon and an unsupported-preview message under the path header, without issuing a read. Two Session-scoped list child slots hand the previewed file to other plugins once its metadata reports a Host path, both with `absolutePath` as the owner prop: `sidebar.right.tab.document.actions` renders after the header's own controls in every state that shows the header, and `sidebar.right.tab.document.unpreviewable` renders in the unsupported empty state and in the empty state of a readable file the preview cannot render (`not-text`, `too-large`), where Retry would otherwise stand; a carrier or unclassified read failure keeps Retry, and a missing or non-regular path offers only its explanation. The shipped occupant of both is [`ui-open-in-app`](../ui-open-in-app/README.md). A wrap toggle appears only when the selected renderer declares `wrap: true`; its glyph describes the mode the click selects, and the per-tab preference starts on. Reload stays in this header, not the Sidebar's tab strip. Automatic refresh defaults to enabled; its separate toggle is hidden, with state, labels, styles, and toggle logic retained. The body reaches every pane edge; each renderer owns its content inset and may own an inner scrollport. This intentionally differs from the Files tab's 2px right-side scrollbar offset: previews keep the full pane width so edge-to-edge HTML and code scrollports end at the pane edge.
+ - **Shared loading and view state**, session-scoped and bucketed by tab id. The store holds accumulated pages or complete bytes, read and observed versions, pending Resource changes, automatic-refresh state, loading/failure state, renderer choice, scroll offset, wrap, and the answered navigation revision. The ordinary inject face calls Remote readers and writes through declared store actions. Reloads and loading-mode changes retire older requests; the tab's abort signal forgets its state.
+ 
+ Document implementations register metadata with `ctx.documentPreviews.register({ id, extensions, binaryExtensions?, priority, title, loading, wrap? })` and a body under the same `id` in the keyed, Session-scoped `sidebar.right.tab.document` child slot. `binaryExtensions` lists suffixes in `extensions` that cannot be read as text and omit the plain-text option. Own both registrations with effects and wait for the child slot through `ctx.slots.inject`. Bodies receive `resourceAddress`, `content`, `wrap`, `scrollportRef`, `addResource`, `setResources`, and the standard `useTabInfo`/`useResource` hooks. Dependency membership belongs to a tab-owned `ResourceGroup`; replacing dependencies always retains the root Resource. An inner scrolling element attaches `scrollportRef`; unmounting restores the shared body as scroll owner. The registry retains all matching alternatives: `extension` (the default) ranks above `builtin`, then longer suffixes rank first, then registration order. The dropdown preserves a selected implementation while it remains available. HTML, SVG, and unmatched extensions retain the plain-text fallback independently of loading mode.
+diff --git a/packages/client/ui-sidebar-documentpreview/src/client/TextPreview.module.css b/packages/client/ui-sidebar-documentpreview/src/client/TextPreview.module.css
+index ca454e9c..daad94e3 100644
+--- a/packages/client/ui-sidebar-documentpreview/src/client/TextPreview.module.css
++++ b/packages/client/ui-sidebar-documentpreview/src/client/TextPreview.module.css
+@@ -278,6 +278,39 @@
+   color: var(--dsw-alias-label-primary);
+   background: var(--dsw-alias-interactive-bg-hover);
+ }
++/* Rendered / Source for Markdown files: two segments in one rounded frame. */
++.viewSwitch {
++  display: inline-flex;
++  flex: none;
++  align-items: center;
++  gap: 2px;
++  padding: 2px;
++  border: 1px solid var(--dsw-alias-border-l2);
++  border-radius: 7px;
++}
++
++.viewOption {
++  height: 20px;
++  padding: 0 8px;
++  color: var(--dsw-alias-label-secondary);
++  font-size: 12px;
++  line-height: 20px;
++  white-space: nowrap;
++  background: transparent;
++  border: none;
++  border-radius: 5px;
++  cursor: pointer;
++}
++
++.viewOption:hover {
++  color: var(--dsw-alias-label-primary);
++}
++
++.viewOption[aria-pressed='true'] {
++  color: var(--dsw-alias-label-primary);
++  background: var(--dsw-alias-interactive-bg-hover);
++}
++
+ .viewerTool {
+   flex: none;
+   width: auto;
+diff --git a/packages/client/ui-sidebar-documentpreview/src/client/TextPreview.tsx b/packages/client/ui-sidebar-documentpreview/src/client/TextPreview.tsx
+index 101f2deb..1c26e3a7 100644
+--- a/packages/client/ui-sidebar-documentpreview/src/client/TextPreview.tsx
++++ b/packages/client/ui-sidebar-documentpreview/src/client/TextPreview.tsx
+@@ -29,12 +29,33 @@ import { binaryDocumentPath, matchingDocumentPreviews } from './document/registr
+ import type { DocumentPreviewDefinition } from './document/registry.ts'
+ import { unviewableBinaryPath } from './document/unviewable.ts'
+ import { PLAIN_BODY_ID } from './text/index.ts'
++import { CODE_BODY_ID } from './code/index.ts'
++import { MARKDOWN_BODY_ID } from './markdown/index.ts'
+ import { loadedPages, lastLineLoaded, scrollToLine } from './text/lines.ts'
+ import css from './TextPreview.module.css'
+ 
+ export { linesOf, loadedPages, lastLineLoaded, scrollToLine } from './text/lines.ts'
+ export type { LoadedPage } from './text/lines.ts'
+ 
++/** Markdown files open in the reader's last choice: rendered, or their source. */
++export type MarkdownView = 'rendered' | 'source'
++
++/**
++ * Browser storage key for that choice. Harness Studio's Files tab reads and writes the same key, so
++ * one choice applies to both places a Markdown file opens.
++ */
++export const MARKDOWN_VIEW_KEY = 'harness-studio.markdown-view'
++
++/** @returns the remembered Markdown view; rendered when none is stored or storage is unavailable. */
++export function readMarkdownView(): MarkdownView {
++  try { return globalThis.localStorage?.getItem(MARKDOWN_VIEW_KEY) === 'source' ? 'source' : 'rendered' } catch { return 'rendered' }
++}
++
++/** @param view - the choice to remember; storage failures leave it for this tab only. */
++function writeMarkdownView(view: MarkdownView): void {
++  try { globalThis.localStorage?.setItem(MARKDOWN_VIEW_KEY, view) } catch { /* private storage: not remembered */ }
++}
++
+ /** Private registration inputs; the framework binds the registry source to useDocumentPreviews. */
+ export interface TextPreviewInjected extends TextInjected {
+   readonly hooks: { readonly documentPreviews: ObservableSnapshot<readonly DocumentPreviewDefinition[]> }
+@@ -73,7 +94,16 @@ export function TextPreview({
+     const fallback = definitions.find(definition => definition.id === PLAIN_BODY_ID)
+     return fallback === undefined ? matched : [...matched, fallback]
+   }, [definitions, file.path, unviewable])
+-  const selected = candidates.find(candidate => candidate.id === state?.rendererId) ?? candidates[0]
++  // A Markdown file offers a Rendered / Source switch in place of the viewer menu: the Markdown renderer,
++  // and the highlighted code viewer (plain text when that is missing). A tab with no manual choice opens
++  // in the remembered view. A higher-ranked extension viewer keeps the menu and its default.
++  const markdownViews = useMemo(() => {
++    const rendered = candidates[0]?.id === MARKDOWN_BODY_ID ? candidates[0] : undefined
++    const source = candidates.find(candidate => candidate.id === CODE_BODY_ID) ?? candidates.find(candidate => candidate.id === PLAIN_BODY_ID)
++    return rendered === undefined || source === undefined ? undefined : { rendered, source }
++  }, [candidates])
++  const [markdownView, setMarkdownView] = useState(readMarkdownView)
++  const selected = candidates.find(candidate => candidate.id === state?.rendererId) ?? markdownViews?.[markdownView] ?? candidates[0]
+   const mode = selected?.loading
+   const contentRendererId = mode === 'renderer' ? selected?.id : undefined
+   const current = (state?.mode ?? 'text-pages') === mode && state?.contentRendererId === contentRendererId ? state : undefined
+@@ -264,7 +294,23 @@ export function TextPreview({
+         )}
+       <div className={css.header}>
+         <PathLabel path={displayPath} className={css.path} data-textpreview-path />
+-        {candidates.length > 1
++        {markdownViews !== undefined && (
++          <div className={css.viewSwitch} role="group" aria-label={t('markdownView')} data-markdown-view-switch>
++            {(['rendered', 'source'] as const).map(view => (
++              <button
++                key={view}
++                type="button"
++                className={css.viewOption}
++                aria-pressed={selected.id === markdownViews[view].id}
++                data-markdown-view={view}
++                onClick={() => { writeMarkdownView(view); setMarkdownView(view); actions.selected(tab.id, markdownViews[view].id) }}
++              >
++                {t(`markdownView.${view}`)}
++              </button>
++            ))}
++          </div>
++        )}
++        {markdownViews === undefined && candidates.length > 1
+           && (
+             <Menu
+               open={menuOpen}
+diff --git a/packages/client/ui-sidebar-documentpreview/src/client/code/index.ts b/packages/client/ui-sidebar-documentpreview/src/client/code/index.ts
+index 47094e0c..043786a4 100644
+--- a/packages/client/ui-sidebar-documentpreview/src/client/code/index.ts
++++ b/packages/client/ui-sidebar-documentpreview/src/client/code/index.ts
+@@ -5,7 +5,9 @@ import type {} from '../index.ts'
+ import { CodeBody } from './CodeBody.tsx'
+ import { en, zh } from './locales.ts'
+ 
+-const ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/code'
++/** Implementation identity shared by metadata and the document slot. */
++export const CODE_BODY_ID = '@deepseek-ai/dsh-client-ui-sidebar-documentpreview/code'
++const ID = CODE_BODY_ID
+ const NS = 'sidebarCodePreview'
+ 
+ /** @param ctx - owning plugin context. Register localized metadata and the matching keyed document body. */
+diff --git a/packages/client/ui-sidebar-documentpreview/src/client/locales.ts b/packages/client/ui-sidebar-documentpreview/src/client/locales.ts
+index f7c7c645..2946108d 100644
+--- a/packages/client/ui-sidebar-documentpreview/src/client/locales.ts
++++ b/packages/client/ui-sidebar-documentpreview/src/client/locales.ts
+@@ -21,6 +21,9 @@ export const zh = {
+   'wrap.aria': '自动换行',
+   openWith: '打开方式',
+   'viewer.text': '纯文本',
++  markdownView: 'Markdown 视图',
++  'markdownView.rendered': '渲染',
++  'markdownView.source': '源码',
+   resourceUnavailable: '文件资源服务不可用',
+   rendererUnavailable: '预览器 {name} 不可用',
+   unsupportedFile: '该格式文件暂时无法预览',
+@@ -50,6 +53,9 @@ export const en = {
+   'wrap.aria': 'Line wrap',
+   openWith: 'Open with',
+   'viewer.text': 'Plain text',
++  markdownView: 'Markdown view',
++  'markdownView.rendered': 'Rendered',
++  'markdownView.source': 'Source',
+   resourceUnavailable: 'The file resource service is unavailable.',
+   rendererUnavailable: 'The {name} preview is unavailable.',
+   unsupportedFile: 'Preview is not available for this file type yet.',
+diff --git a/packages/client/ui-sidebar-documentpreview/tests/document-seat.client.spec.tsx b/packages/client/ui-sidebar-documentpreview/tests/document-seat.client.spec.tsx
+index da67649c..024d65b9 100644
+--- a/packages/client/ui-sidebar-documentpreview/tests/document-seat.client.spec.tsx
++++ b/packages/client/ui-sidebar-documentpreview/tests/document-seat.client.spec.tsx
+@@ -15,6 +15,7 @@ import type { DocumentPreviewProps } from '../src/client/document/contract.ts'
+ import type { DocumentLoadMode } from '../src/client/document/registry.ts'
+ import type { WorkspaceFilesReadRemote } from '../src/client/rpc.ts'
+ import { PLAIN_BODY_ID } from '../src/client/text/index.ts'
++import { MARKDOWN_VIEW_KEY } from '../src/client/TextPreview.tsx'
+ 
+ const SESSION = 'documents' as SessionId
+ const SHORTCUT_CATALOG: readonly never[] = []
+@@ -175,4 +176,24 @@ describe('document extension seat', () => {
+     await waitFor(() => { expect(h.view.container.querySelector('[data-document-markdown]')).not.toBeNull() })
+     expect(h.read).toHaveBeenCalledOnce()
+   })
++
++  it('switches a Markdown file between rendered and source, and opens the next one in the remembered view', async () => {
++    localStorage.removeItem(MARKDOWN_VIEW_KEY)
++    try {
++      const h = await boot()
++      h.open('notes.md')
++      await waitFor(() => { expect(h.view.container.querySelector('[data-document-markdown]')).not.toBeNull() })
++      expect(h.view.container.querySelector('[data-document-viewer-menu]')).toBeNull()
++      const option = (view: string) => h.view.container.querySelector<HTMLButtonElement>(`[data-markdown-view="${view}"]`)!
++      expect(option('rendered').getAttribute('aria-pressed')).toBe('true')
++      fireEvent.click(option('source'))
++      await waitFor(() => { expect(h.view.container.querySelector('[data-code-preview]')).not.toBeNull() })
++      expect(option('source').getAttribute('aria-pressed')).toBe('true')
++      expect(localStorage.getItem(MARKDOWN_VIEW_KEY)).toBe('source')
++      h.open('other.md')
++      await waitFor(() => { expect(h.view.container.querySelector('[data-textpreview-url$="other.md"] [data-code-preview]')).not.toBeNull() })
++    } finally {
++      localStorage.removeItem(MARKDOWN_VIEW_KEY)
++    }
++  })
+ })

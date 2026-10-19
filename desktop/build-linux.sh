@@ -45,7 +45,7 @@ for patch in "$root/patches/harness-studio-brand.patch" "$root/patches/harness-s
 done
 "$root/scripts/copy-logo.sh" "$harness"
 mkdir -p "$harness/harness-studio-plugins"
-(cd "$root" && npm pack --silent --pack-destination "$harness/harness-studio-plugins" ./plugins/devpreview ./plugins/connectors ./plugins/compact >/dev/null)
+(cd "$root" && npm pack --silent --pack-destination "$harness/harness-studio-plugins" ./plugins/devpreview ./plugins/connectors ./plugins/compact ./plugins/sessions ./plugins/remember ./plugins/hooks ./plugins/undo ./plugins/watch ./plugins/terminal ./plugins/editor >/dev/null)
 
 (cd "$harness" && pnpm install --frozen-lockfile && pnpm --filter @deepseek-ai/dsh-desktop run "package:linux:$arch:unsigned")
 

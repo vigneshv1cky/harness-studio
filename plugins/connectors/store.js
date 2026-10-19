@@ -21,6 +21,12 @@ const ID_PATTERN = /^[a-z][a-z0-9-]{0,31}$/
  */
 export const MASK = '••••••••'
 
+/**
+ * When a connector's tool calls ask the user first: `never` (the default), `changes` (calls to tools the
+ * server does not mark read-only) or `always`.
+ */
+export const ASK_MODES = ['never', 'changes', 'always']
+
 /** Validate and normalize one connector spec typed in the Connectors page. */
 export function cleanSpec(input, existingIds) {
   if (input === null || typeof input !== 'object') throw new Error('Connector must be an object')
@@ -47,6 +53,8 @@ export function cleanSpec(input, existingIds) {
     for (let n = 2; existingIds.has(id); n++) id = `${slug.slice(0, 20)}-${n}`
   }
   const spec = { id, name, transport, enabled: input.enabled !== false }
+  if (input.ask !== undefined && !ASK_MODES.includes(input.ask)) throw new Error(`Ask must be one of ${ASK_MODES.join(', ')}`)
+  if (input.ask !== undefined && input.ask !== 'never') spec.ask = input.ask
   if (transport === 'http') {
     let url
     try { url = new URL(String(input.url ?? '').trim()) } catch { throw new Error('Enter a full URL, starting with https://') }
@@ -77,23 +85,40 @@ export function cleanSpec(input, existingIds) {
  * Fill an edit's masked or blank secrets from the stored spec: a header or environment value sent
  * back as {@link MASK} keeps the stored value for that name, and a blank client secret keeps the
  * stored one unless `clearClientSecret` is set or the client ID changed.
+ *
+ * Saved secrets were given for one server. An edit that moves a URL connector to another origin (or
+ * turns it into a command) keeps none of them: masked values are dropped and the client secret is kept
+ * only if typed again, so the old server's bearer token never reaches the new one. What was dropped is
+ * listed in `droppedSecrets` on the result (cleanSpec ignores that field).
  */
 export function mergeSecrets(input, stored) {
   if (input === null || typeof input !== 'object') return input
-  const keep = (sent, saved) => {
+  const moved = stored.transport === 'http' && (input.transport !== 'http' || originOf(input.url) !== originOf(stored.url))
+  const dropped = []
+  const keep = (sent, saved, label) => {
     if (sent === null || typeof sent !== 'object' || Array.isArray(sent)) return sent
     const out = {}
     for (const [key, value] of Object.entries(sent)) {
-      if (value === MASK) { if (saved && Object.hasOwn(saved, key.trim())) out[key] = saved[key.trim()] } else out[key] = value
+      if (value !== MASK) { out[key] = value; continue }
+      if (!saved || !Object.hasOwn(saved, key.trim())) continue
+      if (moved) dropped.push(`${label} ${key.trim()}`)
+      else out[key] = saved[key.trim()]
     }
     return out
   }
-  const merged = { ...input, headers: keep(input.headers, stored.headers), env: keep(input.env, stored.env) }
+  const merged = { ...input, headers: keep(input.headers, stored.headers, 'header'), env: keep(input.env, stored.env, 'environment variable') }
   const clientId = String(input.clientId ?? '').trim()
   if (!String(input.clientSecret ?? '').trim() && input.clearClientSecret !== true && stored.clientSecret && clientId === stored.clientId) {
-    merged.clientSecret = stored.clientSecret
+    if (moved) dropped.push('client secret')
+    else merged.clientSecret = stored.clientSecret
   }
+  if (dropped.length > 0) merged.droppedSecrets = dropped
   return merged
+}
+
+/** A URL's origin, or undefined when it does not parse. */
+function originOf(url) {
+  try { return new URL(String(url ?? '').trim()).origin } catch { return undefined }
 }
 
 /** Write a file atomically with owner-only permissions. */

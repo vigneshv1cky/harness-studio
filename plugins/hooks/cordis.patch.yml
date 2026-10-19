@@ -1,0 +1,3 @@
+- insert:
+    - id: hooks
+      name: '@harness-studio/hooks'

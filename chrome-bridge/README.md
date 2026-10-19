@@ -24,16 +24,26 @@ Harness Studio agent ──MCP (stdio)──▶ server.mjs ◀──WebSocket 12
 | `chrome_press` | Presses a key on whatever has focus: Enter, Escape, Tab, Space, the arrows, PageUp/PageDown, Home/End, Backspace/Delete or one character, with optional Shift+/Ctrl+/Alt+/Meta+ |
 | `chrome_activate` | Brings a tab to the front |
 | `chrome_close` | Closes a tab |
-| `chrome_screenshot` | Image of the visible part of the active tab |
+| `chrome_screenshot` | JPEG image of the visible part of the active tab. Harness Studio passes it to the model when the session's model accepts images; otherwise the result carries a note saying why it is not shown |
 
 Tool calls default to the active tab when no `tabId` is given.
+
+Each tool carries MCP annotations: `chrome_tabs`, `chrome_read` and `chrome_screenshot` are marked read-only;
+`chrome_open`, `chrome_click`, `chrome_type` and `chrome_press` are marked destructive and open-world, and
+`chrome_close` destructive. A connector set to **Ask before calls that can change things** therefore lets reads
+through and asks before every action.
 
 `chrome_read` sends the model the current value of each listed form field, up to 100 characters. Fields that hold
 secrets show `••••` instead when filled: password inputs, fields whose `autocomplete` is `one-time-code`,
 `cc-number`, `cc-csc`, `cc-exp`, `cc-exp-month`, `cc-exp-year`, `new-password` or `current-password`, and fields whose
-`name` or `id` reads as a password, passcode, PIN, one-time code, card number, card security code, card expiry,
-social security number or secret. Every other field's value — a search box, an address, a message you are
-drafting — is sent as it is.
+`name`, `id`, `aria-label` or label text reads as a password, passcode, PIN, one-time code, card number, card
+security code, card expiry, social security number, secret, key, API key, token (access, refresh, auth, ID),
+bearer, auth or authorization, credential, session or session id, cookie, client secret or private key — case and
+separators do not matter, so `api_key`, `apiKey` and `API-KEY` all count. A value is also masked, whatever its
+field is called, when it looks like a credential: an `sk-` key, a GitHub (`ghp_`, `github_pat_`, …), GitLab
+(`glpat-`), AWS (`AKIA…`) or Slack (`xox…-`) token, a JWT, or a run of 24 or more letters, digits, `-` and `_` that
+mixes letters with digits and is varied enough to be random. Every other field's value — a search box, an address,
+a message you are drafting — is sent as it is.
 
 A click first scrolls the element into view and checks that the click point really lands on it; when something covers every part of it (a clipped menu, an overlay) it is clicked from the page instead, and the reply says so. After a click, typing or a key press the reply waits, up to 2.5 seconds, for the page to stop changing, so pages that update in place (search results, menus) are drawn before the next read.
 
@@ -48,7 +58,7 @@ what it reports, and it only reacts to real mouse and keyboard input. React comp
 JavaScript objects, which the isolated world cannot see, so after the click one small call in the page's world reads
 the names for the picked element. The page controls that world, so the names are treated like the element's text:
 page data, kept only when they are plain identifiers (at most four, 64 characters each). Everything a pick carries —
-text, HTML, styles, selector, source path and component names — comes from the page and is untrusted. The bridge server holds a pick for up to two minutes until Harness collects it from `GET /selections/next`, which answers only Harness's own origins (`dsh-app://app`, `http://localhost:3080`, `http://127.0.0.1:3080`). The extension's badge shows ✓ when the pick was sent, or *off* when no Harness is connected.
+text, HTML, styles, selector, source path and component names — comes from the page and is untrusted. The bridge server holds a pick for up to two minutes until Harness collects it from `GET /selections/next`, which answers only Harness's own origins (`dsh-app://app`, `http://localhost:3080`, `http://127.0.0.1:3080`) and only a poll signed with the bridge's link key (see Security). The extension's badge shows ✓ when the pick was sent, or *off* when no Harness is connected.
 
 ## Install
 
@@ -66,6 +76,14 @@ text, HTML, styles, selector, source path and component names — comes from the
 
 ## Security
 
+- **Picks reach only Harness, and only real picks reach it.** The server makes a new random link key at every
+  start. The key leaves the process only over the MCP stdio pipe, as the unlisted resource
+  `harness-studio://chrome-bridge/link` (never as a tool, so a model is never offered it); Harness Studio's
+  Connectors plugin reads it and hands it to its own window. Every `GET /selections/next?nonce=<32 hex>` must carry
+  `x-hs-bridge-auth: HMAC-SHA256(key, "poll:<port>:<nonce>")`, or it gets 401, and every answer carries
+  `x-hs-bridge-sig: HMAC-SHA256(key, "pick:<nonce>:<exact body>")`, which the window checks before reading it. A
+  program holding the port (say while the connector is off) never has the key, so it can neither collect picks nor
+  put a fake pick into a conversation.
 - **Pairing.** Both sides prove they know the pairing code without sending it: the server sends a random nonce,
   the extension answers with HMAC-SHA256(code, nonce) and its own nonce, and the server answers that in turn.
   A wrong code is refused and the extension keeps waiting. The code is created by the extension with
@@ -82,6 +100,14 @@ text, HTML, styles, selector, source path and component names — comes from the
 - **Element numbers stay private.** The numbers from `chrome_read` are kept in the extension's isolated world, a
   JavaScript context the page's own scripts cannot reach, not written into the page. A page therefore cannot move
   a number onto another element to redirect the agent's next click or typing.
+- **Page content is marked untrusted.** Everything a reply carries from a page — titles, URLs, visible text, link
+  targets, field values — comes back between `<<<CHROME-PAGE-DATA` and `CHROME-PAGE-DATA>>>` lines, after a line
+  saying it is untrusted page content, never instructions. A page cannot close the fence early: the marker (in any
+  case) and runs of three or more `<` or `>` are removed from page text, repeatedly, until none is left. The
+  server's MCP instructions say the same.
+- **Pings.** A connection may ping at most 10 times a second; more closes it. Before pairing, a connection that
+  leaves more than 64 KB of the server's answers unread is cut off, so a local program cannot make the server
+  hold its output.
 - **URLs.** `chrome_open` only opens `http:` and `https:` URLs.
 - **Visible input.** Clicks and typing attach `chrome.debugger` to the tab, so Chrome shows its
   "… started debugging this browser" bar while the agent acts; it detaches after 8 seconds idle. Where the
@@ -93,12 +119,20 @@ text, HTML, styles, selector, source path and component names — comes from the
 
 ## Tests
 
-The server test runs the real server with a stand-in extension and a stand-in MCP client (25 checks), including
-malformed input before pairing, the message-size caps, the handshake timeout, the unpaired-connection limit and a
-second extension replacing the first:
+The server test runs the real server with a stand-in extension and a stand-in MCP client (30 checks), including
+malformed input before pairing, the message-size caps, the ping limit, the handshake timeout, the
+unpaired-connection limit, a second extension replacing the first, the tool annotations and the untrusted-data
+fence:
 
 ```bash
 node chrome-bridge/test/server-test.mjs
+```
+
+The redaction test runs the extension's page-reading function against a stand-in page (4 checks): fields named or
+labelled like credentials, values shaped like credentials, and ordinary fields that must keep their values:
+
+```bash
+node chrome-bridge/test/redaction-test.mjs
 ```
 
 The end-to-end test drives a real Chrome with the real extension (10 checks). It needs a throwaway Chrome with

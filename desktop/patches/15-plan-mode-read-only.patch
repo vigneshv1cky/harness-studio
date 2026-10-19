@@ -1,0 +1,463 @@
+diff --git a/packages/plan/plan-mode/README.md b/packages/plan/plan-mode/README.md
+index 35084ddb..7c496508 100644
+--- a/packages/plan/plan-mode/README.md
++++ b/packages/plan/plan-mode/README.md
+@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
+ 
+ ## Summary
+ 
+-Plan mode asks an agent to explore and design before execution, then presents the finished plan for your approval. Enter it with `/plan`, optionally with a message or ordered image and file attachments; leave with `/plan off`, approve the review to continue, or return feedback for more planning. Deployment-defined guidance controls planning behavior, but every tool remains available, so use sandbox mode and approval prompts for enforced limits. The active state survives session resume and forks. Choose it when you want a reviewed plan before the agent acts.
++Plan mode asks an agent to explore and design before execution, then presents the finished plan for your approval. Enter it with `/plan`, optionally with a message or ordered image and file attachments; leave with `/plan off`, approve the review to continue, or return feedback for more planning. Deployment-defined guidance controls planning behavior. Every tool stays listed, and when a sandbox policy is composed the session is also held read-only: file changes the sandbox governs are denied, even through an approved escalation, until the plan is approved or plan mode is switched off. The active state survives session resume and forks. Choose it when you want a reviewed plan before the agent acts.
+ 
+ ## Table of Contents
+ 
+@@ -29,7 +29,7 @@ When plan mode is active, the agent works under your instructions and presents i
+ 
+ ### When to choose it
+ 
+-Choose plan mode when the agent should explore and design before executing and you want to approve the plan first. It does not restrict the agent: every tool stays callable, so use sandbox mode and approval prompts when you need enforced limits. Skip it when the agent should act on your requests immediately, without a planning phase.
++Choose plan mode when the agent should explore and design before executing and you want to approve the plan first. Every tool stays callable, but with a sandbox policy composed the session resolves read-only while plan mode is on, so commands and file tools cannot change files until you approve the plan; subagents and workflow children it starts are held read-only too. Skip it when the agent should act on your requests immediately, without a planning phase.
+ 
+ ### Minimal configuration
+ 
+@@ -78,7 +78,7 @@ This section explains the design decisions behind the package and points at the
+ 
+ ### Design philosophy
+ 
+-Plan mode is a product package, not a capability seam: there is no swappable backend, so the state, guidance, command, and exit tool live in one place. The durable stance is one log-only whole-value-replace event, never a live mirror, so resume, fork, and compaction recover it by folding the log. Guidance is a soft layer — the package registers one prompt section and one tool, and restrains through text rather than filtering capabilities.
++Plan mode is a product package, not a capability seam: there is no swappable backend, so the state, guidance, command, and exit tool live in one place. The durable stance is one log-only whole-value-replace event, never a live mirror, so resume, fork, and compaction recover it by folding the log. Guidance is a soft layer — the package registers one prompt section and one tool and filters no capabilities. Enforcement goes through the sandbox: when `ctx.sandboxPolicy` is composed, the package registers a read-only ceiling for every session whose selected plan state (a pending selection, else the logged state) is active, the same state the prompt section follows.
+ 
+ ### Durable state and step-boundary appends
+ 
+@@ -181,7 +181,7 @@ Mode transitions do not change the tool catalog; plan arguments and review resul
+ 
+ These limits describe when plan mode does not behave as you might expect or needs extra care. They are current package constraints, not a roadmap.
+ 
+-- **Guidance, not enforcement** — plan mode restrains through text only; deployments that need enforced restrictions configure sandbox mode and approval policy independently.
++- **Enforcement needs a sandbox policy** — without `ctx.sandboxPolicy`, plan mode restrains through text only. The read-only ceiling covers what the sandbox governs (file effects of confined commands and file tools), not network access or tools outside the sandbox.
+ - **Pending selections are process-local** — a selection made after the turn's final accepted pre-step is lost if the process exits before another accepted in-turn pre-step; the UI must reapply it.
+ - **No creation-time plan option** — forked agents inherit logged plan state, while newly spawned agents begin inactive.
+ - **Live children cannot open the review** — a child owned by another live agent fails the `exit_plan_mode` call and is told to include the unresolved decision in its final result; durable fork lineage alone does not prevent a session resumed as a runtime root from opening the review.
+diff --git a/packages/plan/plan-mode/package.json b/packages/plan/plan-mode/package.json
+index 78f31dc9..f2042c5d 100644
+--- a/packages/plan/plan-mode/package.json
++++ b/packages/plan/plan-mode/package.json
+@@ -42,6 +42,7 @@
+     "@deepseek-ai/dsh-commands": "workspace:*",
+     "@deepseek-ai/dsh-llm": "workspace:*",
+     "@deepseek-ai/dsh-session": "workspace:*",
++    "@deepseek-ai/dsh-sandbox-policy": "workspace:*",
+     "@deepseek-ai/dsh-session-projection": "workspace:*",
+     "@deepseek-ai/dsh-system-prompt": "workspace:*",
+     "@deepseek-ai/dsh-tools": "workspace:*",
+@@ -64,6 +65,7 @@
+     "@deepseek-ai/dsh-commands": "workspace:*",
+     "@deepseek-ai/dsh-llm": "workspace:*",
+     "@deepseek-ai/dsh-session": "workspace:*",
++    "@deepseek-ai/dsh-sandbox-policy": "workspace:*",
+     "@deepseek-ai/dsh-session-projection": "workspace:*",
+     "@deepseek-ai/dsh-system-prompt": "workspace:*",
+     "@deepseek-ai/dsh-tools": "workspace:*",
+diff --git a/packages/plan/plan-mode/src/index.ts b/packages/plan/plan-mode/src/index.ts
+index a2385491..9e9cdfe1 100644
+--- a/packages/plan/plan-mode/src/index.ts
++++ b/packages/plan/plan-mode/src/index.ts
+@@ -32,6 +32,7 @@ import type { Session, UserMessage } from '@deepseek-ai/dsh-session'
+ import { defineTool } from '@deepseek-ai/dsh-tools'
+ import { UserQuestionError, type AskUserQuestionAnswer } from '@deepseek-ai/dsh-user-questions'
+ import type { CommandDefinitionId, CommandId } from '@deepseek-ai/dsh-commands'
++import type {} from '@deepseek-ai/dsh-sandbox-policy'
+ import type {} from '@deepseek-ai/dsh-session-projection'
+ import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
+ import type { PlanProjection, PlanUnitState } from './types.ts'
+@@ -225,6 +226,15 @@ export class PlanModeController extends Service {
+ 
+     ctx.sessionProjections.register(planProjectionDefinition)
+ 
++    // The guidance asks the agent not to change files; when a sandbox policy is composed, plan mode also
++    // holds the session read-only, including approved escalations, until the plan is approved or plan
++    // mode is switched off. It follows the same state as the guidance section above.
++    ctx.inject(['sandboxPolicy'], (policyCtx) => {
++      policyCtx.effect(() => policyCtx.sandboxPolicy.limit(session => (this.selectedActive(session)
++        ? { mode: 'read-only', reason: 'plan mode is on, and file changes wait until the user approves the plan' }
++        : undefined)), 'dsh-plan-mode: hold planning sessions read-only')
++    })
++
+     // The command child activates only when a command registry is composed.
+     ctx.inject(['commands'], (commandCtx) => {
+       commandCtx.commands.register({
+@@ -372,6 +382,11 @@ export class PlanModeController extends Service {
+     }))
+   }
+ 
++  /** The state the guidance section follows: a pending selection, else the logged state; false for an untracked session. */
++  private selectedActive(session: Session): boolean {
++    return this.pendingIntents.get(session)?.active ?? this.ctx.sessionProjections.stateOf(session, 'plan')?.active ?? false
++  }
++
+   private loggedActive(session: Session): boolean {
+     return this.planState(session).active
+   }
+diff --git a/packages/plan/plan-mode/tests/plan-mode.spec.ts b/packages/plan/plan-mode/tests/plan-mode.spec.ts
+index 6024269b..87e0054d 100644
+--- a/packages/plan/plan-mode/tests/plan-mode.spec.ts
++++ b/packages/plan/plan-mode/tests/plan-mode.spec.ts
+@@ -13,6 +13,7 @@ import UserQuestionService, {
+ import CommandRuntime from '@deepseek-ai/dsh-commands'
+ import { PtcRuntime, type PtcRunRequest, type PtcRunResult } from '@deepseek-ai/dsh-ptc-runtime'
+ import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
++import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
+ import { turnBoundaryProjectionDefinition } from '@deepseek-ai/dsh-agent-loop'
+ import PlanModeController, { EXIT_PLAN_MODE, planProjectionDefinition, resolveConfig } from '../src/index.ts'
+ import type { PlanModeConfig } from '../src/index.ts'
+@@ -589,6 +590,49 @@ describe('no execution gating beyond the exit tool', () => {
+   })
+ })
+ 
++describe('read-only while planning', () => {
++  async function setupWithPolicy(): Promise<{ ctx: Context, plan: { dispose(): Promise<void> } }> {
++    const ctx = new Context()
++    await mountProjectionSeam(ctx)
++    await ctx.plugin(SystemPrompt)
++    await ctx.plugin(ToolRuntime)
++    await ctx.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: '/workspace' })
++    const plan = await ctx.plugin(PlanModeController, PLAN_CONFIG)
++    return { ctx, plan }
++  }
++
++  it('holds the session read-only while plan mode is on, and releases it when plan mode ends', async () => {
++    const { ctx } = await setupWithPolicy()
++    const agent = await agentWithSession(ctx)
++    const other = await agentWithSession(ctx, 'agent-2')
++    expect(ctx.sandboxPolicy.resolve({ session: agent.session }).mode).toBe('workspace-write')
++    expect(ctx.planMode.set(agent, true)).toBe('committed')
++    expect(ctx.sandboxPolicy.resolve({ session: agent.session }).mode).toBe('read-only')
++    expect(ctx.sandboxPolicy.resolve({ session: agent.session, mode: 'danger-full-access' }).mode).toBe('read-only')
++    expect(ctx.sandboxPolicy.resolve({ session: other.session }).mode).toBe('workspace-write')
++    expect(ctx.planMode.set(agent, false)).toBe('committed')
++    expect(ctx.sandboxPolicy.resolve({ session: agent.session }).mode).toBe('workspace-write')
++  })
++
++  it('follows a pending selection during an open turn, as the guidance does', async () => {
++    const { ctx } = await setupWithPolicy()
++    const agent = await agentWithSession(ctx, 'agent-1', { active: true })
++    openTurn(agent.session)
++    expect(ctx.planMode.set(agent, false)).toBe('queued')
++    expect(ctx.sandboxPolicy.resolve({ session: agent.session }).mode).toBe('workspace-write')
++    expect(ctx.planMode.set(agent, true)).toBe('cancelled')
++    expect(ctx.sandboxPolicy.resolve({ session: agent.session }).mode).toBe('read-only')
++  })
++
++  it('stops holding sessions when the plan-mode plugin is disposed', async () => {
++    const { ctx, plan } = await setupWithPolicy()
++    const agent = await agentWithSession(ctx, 'agent-1', { active: true })
++    expect(ctx.sandboxPolicy.resolve({ session: agent.session }).mode).toBe('read-only')
++    await plan.dispose()
++    expect(ctx.sandboxPolicy.resolve({ session: agent.session }).mode).toBe('workspace-write')
++  })
++})
++
+ describe('/plan', () => {
+   it('registers only when a commands service is composed and optionally submits the next-step message', async () => {
+     const bare = await setup()
+diff --git a/packages/plan/plan-mode/tsconfig.json b/packages/plan/plan-mode/tsconfig.json
+index f1878532..8b760631 100644
+--- a/packages/plan/plan-mode/tsconfig.json
++++ b/packages/plan/plan-mode/tsconfig.json
+@@ -32,6 +32,9 @@
+     {
+       "path": "../../interaction/commands"
+     },
++    {
++      "path": "../../sandbox/sandbox-policy"
++    },
+     {
+       "path": "../../session/session-projection"
+     }
+diff --git a/packages/sandbox/sandbox-policy/README.md b/packages/sandbox/sandbox-policy/README.md
+index 88648e8c..40057488 100644
+--- a/packages/sandbox/sandbox-policy/README.md
++++ b/packages/sandbox/sandbox-policy/README.md
+@@ -53,6 +53,10 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
+ 
+ A session's mode can be switched at runtime through a UI policy control or an explicit switch; the switch is recorded in the session log and takes effect on the session's next confined call. The switch survives restart through replay, and each session keeps its own mode — two sessions never see each other's state. A switched session keeps its immutable workspace cwd as the writable boundary.
+ 
++### Holding a session at a narrower mode
++
++Another plugin can hold sessions at or below a mode with `limit(source)`, where the source reports `{ mode, reason }` for a session or nothing. Plan mode uses it to keep a planning session read-only. The narrowest reported ceiling caps the resolved mode, including an approved explicit mode, so an escalation cannot lift it. Register through `ctx.effect` so the source is removed when the registering plugin unloads; `ceilingOf(session)` reports the ceiling in force. A ceiling reported for a session also holds every session started from it: the policy walks each session's `parentSession` through the agents service, so subagents and workflow children of a planning session, and theirs, stay read-only too.
++
+ ### Failures and recovery
+ 
+ An invalid configured mode is rejected when the plugin loads, so a typo fails loud instead of silently changing policy. A session without a cwd, and agentless calls, fall back to the configured workspace root; a call with an approved explicit mode uses that mode for exactly that call.
+@@ -69,7 +73,7 @@ This section explains policy resolution, the per-session store, and the model-vi
+ 
+ ### Resolution precedence
+ 
+-`resolve({ session, mode })` returns one complete per-call policy: an approved explicit mode outranks the session's last `sandbox/mode` event, which outranks the deployment default. The session's immutable `cwd` supplies the workspace root; otherwise the configured fallback applies. Absolute execution-world spelling is preserved. Enforcing providers canonicalize the root on their own filesystem, so remote `symlink/..` paths are never resolved on the Harness host.
++`resolve({ session, mode })` returns one complete per-call policy: an approved explicit mode outranks the session's last `sandbox/mode` event, which outranks the deployment default, and the narrowest registered ceiling for the session then caps the result. The session's immutable `cwd` supplies the workspace root; otherwise the configured fallback applies. Absolute execution-world spelling is preserved. Enforcing providers canonicalize the root on their own filesystem, so remote `symlink/..` paths are never resolved on the Harness host.
+ 
+ ### The per-session store
+ 
+@@ -128,6 +132,14 @@ Current DSH file policy: workspace-write. Any available operation enforced by th
+ Current DSH file policy: danger-full-access. The DSH file sandbox does not restrict file modifications by available operations.
+ ```
+ 
++##### Held by a ceiling
++
++When a ceiling narrows the mode, the text names the reason instead:
++
++```markdown
++Current DSH file policy: read-only because plan mode is on, and file changes wait until the user approves the plan. Operations enforced by the DSH file sandbox cannot widen past read-only until that changes, and a sandbox escalation cannot lift it, so do not request one.
++```
++
+ #### Token effect
+ 
+ One concise durable context message on the first request and each effective policy change; unchanged requests add nothing. `workspace-write` carries only the recorded session workspace path; platform-specific temporary paths are summarized without adding host-dependent bytes.
+diff --git a/packages/sandbox/sandbox-policy/src/index.ts b/packages/sandbox/sandbox-policy/src/index.ts
+index e97796db..ef6f0ee2 100644
+--- a/packages/sandbox/sandbox-policy/src/index.ts
++++ b/packages/sandbox/sandbox-policy/src/index.ts
+@@ -26,7 +26,7 @@ import { z as zod } from 'zod'
+ import z from '@deepseek-ai/schemastery'
+ import type {} from '@deepseek-ai/dsh-agent'
+ import type { SandboxExecutionPolicy, SandboxMode } from '@deepseek-ai/dsh-sandbox'
+-import type { Session } from '@deepseek-ai/dsh-session'
++import type { Session, SessionId } from '@deepseek-ai/dsh-session'
+ import type {} from '@deepseek-ai/dsh-session-projection'
+ import type {} from '@deepseek-ai/dsh-system-prompt'
+ 
+@@ -38,8 +38,28 @@ function resolveWorkspaceRoot(path: string): string {
+   return path
+ }
+ 
++/** Width order of the modes, narrowest first. */
++const MODE_WIDTH: Record<SandboxMode, number> = { 'read-only': 0, 'workspace-write': 1, 'danger-full-access': 2 }
++
++/**
++ * A mode a plugin holds one session at or below, such as read-only while plan mode is on, and the reason
++ * the model is given.
++ */
++export interface SandboxCeiling {
++  /** The widest mode the session may resolve to while the ceiling holds. */
++  mode: SandboxMode
++  /** Why, as a clause the model reads, such as `plan mode is on`. */
++  reason: string
++}
++
++/** Reports the ceiling for one session, or `undefined` when it sets none. Called at every resolve, so it must be cheap and synchronous. */
++export type SandboxCeilingSource = (session: Session) => SandboxCeiling | undefined
++
+ /** Render the policy without claiming which capabilities are mounted. */
+-function renderPolicyContext(policy: SandboxExecutionPolicy): string {
++function renderPolicyContext(policy: SandboxExecutionPolicy, ceiling?: SandboxCeiling): string {
++  if (ceiling !== undefined) {
++    return `Current DSH file policy: ${policy.mode} because ${ceiling.reason}. Operations enforced by the DSH file sandbox cannot widen past ${policy.mode} until that changes, and a sandbox escalation cannot lift it, so do not request one.`
++  }
+   switch (policy.mode) {
+     case 'read-only':
+       return 'Current DSH file policy: read-only. Any available operation enforced by the DSH file sandbox cannot modify files in the standing mode. Do not refuse a required modification from this policy alone: try an available tool normally and follow any denial and escalation guidance it returns.'
+@@ -144,27 +164,74 @@ export class SandboxPolicyService extends Service {
+         order: scope.systemPrompt.getContextOrder('SANDBOX_POLICY'),
+         text: (context) => {
+           const session = context.agent?.session
+-          return session === undefined
+-            ? ''
+-            : renderPolicyContext(this.resolve({ session }))
++          if (session === undefined) return ''
++          const ceiling = this.ceilingOf(session)
++          const capped = ceiling !== undefined && MODE_WIDTH[ceiling.mode] < MODE_WIDTH[this.uncappedMode({ session })]
++          return renderPolicyContext(this.resolve({ session }), capped ? ceiling : undefined)
+         },
+       })
+     })
+   }
+ 
++  /** Registered ceiling sources; see {@link limit}. */
++  private readonly ceilings = new Set<SandboxCeilingSource>()
++
++  /**
++   * Hold sessions at or below a mode while a source reports a ceiling for them. A ceiling also caps an
++   * approved escalation, so it is a hard limit for the session, not a default.
++   * @param source - reports the ceiling for a session, or `undefined` for none.
++   * @returns the disposer that removes the source; call it through `ctx.effect`.
++   */
++  limit(source: SandboxCeilingSource): () => void {
++    this.ceilings.add(source)
++    return () => { this.ceilings.delete(source) }
++  }
++
++  /**
++   * The narrowest ceiling any source reports for a session or any session above it. A hold placed on a
++   * session also holds the subagents and workflow children it starts, and theirs: each one's header names
++   * its parent, which is looked up through the agents service while it is live.
++   * @param session - the session to check.
++   * @returns that ceiling, or `undefined` when no source sets one.
++   */
++  ceilingOf(session: Session): SandboxCeiling | undefined {
++    if (this.ceilings.size === 0) return undefined
++    let narrowest: SandboxCeiling | undefined
++    const seen = new Set<string>()
++    for (let current: Session | undefined = session; current !== undefined && !seen.has(current.id);) {
++      seen.add(current.id)
++      for (const source of this.ceilings) {
++        const ceiling = source(current)
++        if (ceiling !== undefined && (narrowest === undefined || MODE_WIDTH[ceiling.mode] < MODE_WIDTH[narrowest.mode])) narrowest = ceiling
++      }
++      const parent: SessionId | undefined = current.header.parentSession
++      current = parent === undefined ? undefined : this.ctx.get('agents')?.get(parent)?.session
++    }
++    return narrowest
++  }
++
++  /** The mode before ceilings: an approved explicit mode, else the session override, else the deployment default. */
++  private uncappedMode(request: SandboxPolicyRequest): SandboxMode {
++    const { session } = request
++    return request.mode ?? (session === undefined ? undefined : this.overrideOf(session)) ?? this.defaultMode
++  }
++
+   /**
+    * Resolve the complete policy for one capability call. An approved explicit
+    * mode outranks the session's last `sandbox/mode` event, which outranks the
+-   * deployment default. A session cwd is its workspace-write boundary; the
+-   * configured root is the fallback for agentless calls and sessions without a
+-   * cwd.
++   * deployment default; the narrowest ceiling a source reports for the session
++   * (see {@link limit}) then caps the result. A session cwd is its
++   * workspace-write boundary; the configured root is the fallback for agentless
++   * calls and sessions without a cwd.
+    * @param request - optional session and approved mode override.
+    * @returns the fully resolved per-call mode and absolute workspace root.
+    */
+   resolve(request: SandboxPolicyRequest = {}): SandboxExecutionPolicy {
+     const { session } = request
++    const uncapped = this.uncappedMode(request)
++    const ceiling = session === undefined ? undefined : this.ceilingOf(session)
+     return {
+-      mode: request.mode ?? (session === undefined ? undefined : this.overrideOf(session)) ?? this.defaultMode,
++      mode: ceiling !== undefined && MODE_WIDTH[ceiling.mode] < MODE_WIDTH[uncapped] ? ceiling.mode : uncapped,
+       workspaceRoot: resolveWorkspaceRoot(session?.header.cwd ?? this.workspaceRoot),
+       ...session === undefined ? {} : { sessionId: session.id },
+     }
+diff --git a/packages/sandbox/sandbox-policy/tests/policy.spec.ts b/packages/sandbox/sandbox-policy/tests/policy.spec.ts
+index a6ed4d9f..925ec8b5 100644
+--- a/packages/sandbox/sandbox-policy/tests/policy.spec.ts
++++ b/packages/sandbox/sandbox-policy/tests/policy.spec.ts
+@@ -8,7 +8,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+ import { tmpdir } from 'node:os'
+ import { join, resolve, sep } from 'node:path'
+ import { describe, expect, it } from 'vitest'
+-import { Context } from '@deepseek-ai/cordis'
++import { Context, Service } from '@deepseek-ai/cordis'
+ import type { Agent } from '@deepseek-ai/dsh-agent'
+ import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
+ import SandboxPolicyService, { SANDBOX_MODES, setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
+@@ -22,7 +22,7 @@ async function mounted(config: { mode?: 'read-only' | 'workspace-write' | 'dange
+   return ctx
+ }
+ 
+-function session(id: string, cwd?: string): Session {
++function session(id: string, cwd?: string, parent?: Session): Session {
+   const sessionId = SessionId(id)
+   return Session.create(sessionId, undefined, {
+     version: SESSION_FORMAT_VERSION,
+@@ -30,6 +30,7 @@ function session(id: string, cwd?: string): Session {
+     createdAt: 0,
+     isSeeded: false,
+     ...cwd === undefined ? {} : { cwd },
++    ...parent === undefined ? {} : { parentSession: parent.id },
+   })
+ }
+ 
+@@ -227,6 +228,78 @@ describe('sandbox:policy request context', () => {
+   })
+ })
+ 
++describe('ceilings', () => {
++  async function promptMounted(mode: 'read-only' | 'workspace-write' | 'danger-full-access'): Promise<Context> {
++    const ctx = new Context()
++    await ctx.plugin(SystemPrompt)
++    await ctx.plugin(SessionProjectionRegistry)
++    await ctx.plugin(SandboxPolicyService, { mode, workspaceRoot: '/fallback' })
++    return ctx
++  }
++
++  it('caps the session mode, the session override and an approved escalation, for that session only', async () => {
++    const ctx = await promptMounted('danger-full-access')
++    const planning = session('sess-planning', '/projects/a')
++    const other = session('sess-other', '/projects/b')
++    ctx.sandboxPolicy.limit(target => (target === planning ? { mode: 'read-only', reason: 'plan mode is on' } : undefined))
++    expect(ctx.sandboxPolicy.resolve({ session: planning }).mode).toBe('read-only')
++    expect(ctx.sandboxPolicy.resolve({ session: planning, mode: 'workspace-write' }).mode).toBe('read-only')
++    setSandboxMode(planning, 'workspace-write')
++    expect(ctx.sandboxPolicy.resolve({ session: planning }).mode).toBe('read-only')
++    expect(ctx.sandboxPolicy.resolve({ session: other }).mode).toBe('danger-full-access')
++    expect(ctx.sandboxPolicy.resolve().mode).toBe('danger-full-access')
++  })
++
++  it('holds subagents and workflow children of a held session, however deep, through the agents service', async () => {
++    const ctx = await promptMounted('workspace-write')
++    const planning = session('sess-plan-parent', '/projects/a')
++    const child = session('sess-plan-child', '/projects/a', planning)
++    const grandchild = session('sess-plan-grandchild', '/projects/a', child)
++    const unrelated = session('sess-plan-unrelated', '/projects/a')
++    const live = new Map([planning, child, grandchild].map(s => [s.id, { session: s }]))
++    ctx.provide('agents', { get: (id: string) => live.get(id as never) } as never)
++    let held = true
++    ctx.sandboxPolicy.limit(target => (held && target === planning ? { mode: 'read-only', reason: 'plan mode is on' } : undefined))
++    expect(ctx.sandboxPolicy.resolve({ session: child }).mode).toBe('read-only')
++    expect(ctx.sandboxPolicy.resolve({ session: grandchild, mode: 'danger-full-access' }).mode).toBe('read-only')
++    expect(await policyContext(ctx, grandchild)).toContain('read-only because plan mode is on')
++    expect(ctx.sandboxPolicy.resolve({ session: unrelated }).mode).toBe('workspace-write')
++    held = false
++    expect(ctx.sandboxPolicy.resolve({ session: grandchild }).mode).toBe('workspace-write')
++    // A parent that is no longer live ends the walk instead of failing.
++    held = true
++    live.delete(child.id)
++    expect(ctx.sandboxPolicy.resolve({ session: grandchild }).mode).toBe('workspace-write')
++  })
++
++  it('applies the narrowest ceiling and never widens a narrower mode', async () => {
++    const ctx = await promptMounted('read-only')
++    const target = session('sess-narrow', '/projects/a')
++    ctx.sandboxPolicy.limit(() => ({ mode: 'workspace-write', reason: 'wide' }))
++    expect(ctx.sandboxPolicy.resolve({ session: target }).mode).toBe('read-only')
++    expect(ctx.sandboxPolicy.resolve({ session: target, mode: 'danger-full-access' }).mode).toBe('workspace-write')
++    ctx.sandboxPolicy.limit(() => ({ mode: 'read-only', reason: 'narrow' }))
++    expect(ctx.sandboxPolicy.ceilingOf(target)).toEqual({ mode: 'read-only', reason: 'narrow' })
++    expect(ctx.sandboxPolicy.resolve({ session: target, mode: 'danger-full-access' }).mode).toBe('read-only')
++  })
++
++  it('tells the model why the session is held, and stops when the source is removed', async () => {
++    const ctx = await promptMounted('workspace-write')
++    const target = session('sess-told', '/projects/a')
++    const remove = ctx.sandboxPolicy.limit(() => ({ mode: 'read-only', reason: 'plan mode is on' }))
++    expect(await policyContext(ctx, target)).toBe('Current DSH file policy: read-only because plan mode is on. Operations enforced by the DSH file sandbox cannot widen past read-only until that changes, and a sandbox escalation cannot lift it, so do not request one.')
++    remove()
++    expect(ctx.sandboxPolicy.resolve({ session: target }).mode).toBe('workspace-write')
++    expect(await policyContext(ctx, target)).toContain('Current DSH file policy: workspace-write.')
++  })
++
++  it('keeps the ordinary text when the ceiling does not narrow the mode', async () => {
++    const ctx = await promptMounted('read-only')
++    ctx.sandboxPolicy.limit(() => ({ mode: 'read-only', reason: 'plan mode is on' }))
++    expect(await policyContext(ctx, session('sess-same', '/projects/a'))).toMatch(/^Current DSH file policy: read-only\. Any available operation/)
++  })
++})
++
+ describe('the sandbox/mode session kit', () => {
+   it('SANDBOX_MODES lists every mode for advertisement and validation', () => {
+     expect(SANDBOX_MODES).toEqual(['read-only', 'workspace-write', 'danger-full-access'])
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index b7d3d401..deb6ebc1 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -11325,6 +11325,9 @@ importers:
+       '@deepseek-ai/dsh-ptc-runtime':
+         specifier: workspace:*
+         version: link:../../ptc-runtime/ptc-runtime
++      '@deepseek-ai/dsh-sandbox-policy':
++        specifier: workspace:*
++        version: link:../../sandbox/sandbox-policy
+       '@deepseek-ai/dsh-session':
+         specifier: workspace:*
+         version: link:../../core/session

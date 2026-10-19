@@ -1,0 +1,35 @@
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -444,6 +444,23 @@
+     })
+     navigation = next
+     return next.promise
++  }
++  /**
++   * Remove earlier launches' Web sign-in cookies before signing in (Harness Studio patch). The Host names its
++   * cookie after its address, port included, and listens on a new port each launch, while cookies are kept per
++   * host name only; without this every launch adds one more 127.0.0.1 cookie for days, until requests carry so
++   * many that the Host refuses them (HTTP 431) and startup fails. Only the cookie the next sign-in sets is valid.
++   * @param url - the Host's launch URL.
++   */
++  const forgetStaleHostCookies = async (url: string): Promise<void> => {
++    const origin = new URL(url).origin
++    try {
++      const cookies = await session.defaultSession.cookies.get({ domain: new URL(url).hostname })
++      await Promise.all(cookies.filter(cookie => cookie.name.startsWith('dsh-auth-'))
++        .map(cookie => session.defaultSession.cookies.remove(origin, cookie.name)))
++    } catch (error) {
++      console.warn('dsh desktop: could not remove stale Host sign-in cookies', error)
++    }
+   }
+   const platformView = new DesktopPlatformView(join(app.getAppPath(), 'lib', 'preload-platform-account.cjs'),
+     () => locale.id === 'zh-CN' ? 'zh_CN' : 'en_US', process.platform === 'win32' ? 'win32' : 'darwin')
+@@ -456,6 +473,7 @@
+     return {
+       start: async () => {
+         const ready = await host.start()
++        await forgetStaleHostCookies(ready.url)
+         hostCookie = await authenticateWebHost(ready.url)
+         hostUrl = ready.url
+         if (ready.injections === undefined) throw new Error('Desktop Host did not provide boot injections')

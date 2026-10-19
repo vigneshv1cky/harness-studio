@@ -11,14 +11,14 @@ window.__ModuleLoader__.load({
   factory(require) {
     const React = require('react')
     const h = React.createElement
-    const { useEffect, useRef, useState, useCallback } = React
+    const { useEffect, useRef, useState, useCallback, useMemo } = React
 
     const FROM_TAB = 'harness-studio-devpreview'
     const FROM_PAGE = 'harness-studio-companion'
     const CONSOLE_PREFIX = '__HS_DEVPREVIEW__'
     // Copy of plugins/devpreview-companion/companion.js (kept in sync by scripts/embed-companion.mjs).
     // Desktop injects it into pages that do not load it themselves, such as live websites.
-    const COMPANION_SOURCE = /*@companion-start*/"/*!\n * Harness Studio Dev Preview companion — DEVELOPMENT ONLY.\n *\n * Add this script to your app while it runs in development. It lets the Harness\n * Browser pane put the page into pick mode: hovering outlines elements, clicking one\n * sends a description of it (tag, selector, text, styles, HTML, React component names,\n * and the nearest data-src source location) back to the Browser pane.\n *\n * Transport:\n *   - Inside an iframe (Harness Web): window.postMessage with the parent window. Only a\n *     parent on a Harness origin is obeyed or answered: dsh-app://app,\n *     http://localhost:3080, http://127.0.0.1:3080, plus any origins listed (space\n *     separated) in the script tag's data-harness-origins attribute. Nothing is ever\n *     posted to '*', so a site that frames your dev app gets no pick mode and no data.\n *   - As a top-level page (Harness Desktop <webview>): the Browser pane calls\n *     window.__hsDevPreview.command(...) and reads replies from tagged console messages.\n *\n * The script does nothing until the Browser pane talks to it.\n */\n(function () {\n  'use strict'\n  if (window.__hsDevPreview !== undefined) return\n\n  var VERSION = 1\n  var FROM_TAB = 'harness-studio-devpreview'\n  var FROM_PAGE = 'harness-studio-companion'\n  var CONSOLE_PREFIX = '__HS_DEVPREVIEW__'\n  var framed = window.parent !== window\n  var HARNESS_ORIGINS = ['dsh-app://app', 'http://localhost:3080', 'http://127.0.0.1:3080']\n  var script = document.currentScript\n  var extraOrigins = script && script.getAttribute('data-harness-origins')\n  if (extraOrigins) HARNESS_ORIGINS = HARNESS_ORIGINS.concat(extraOrigins.split(/\\s+/).filter(Boolean))\n  var parentOrigin = undefined // a Harness origin, learned from its hello; every message goes only there\n  var picking = false\n  var hovered = undefined\n  var overlay = undefined\n  var label = undefined\n\n  // ---------- transport ----------\n\n  function send(message) {\n    message.source = FROM_PAGE\n    message.version = VERSION\n    if (framed) {\n      // Nothing goes out before a Harness parent has said hello, and then only to its origin.\n      if (parentOrigin !== undefined) window.parent.postMessage(message, parentOrigin)\n    } else {\n      console.debug(CONSOLE_PREFIX + JSON.stringify(message))\n    }\n  }\n\n  function command(cmd) {\n    if (cmd === null || typeof cmd !== 'object') return\n    if (cmd.type === 'hello') send({ type: 'ready', url: location.href })\n    else if (cmd.type === 'pick:on') setPicking(true)\n    else if (cmd.type === 'pick:off') setPicking(false)\n  }\n\n  if (framed) {\n    window.addEventListener('message', function (event) {\n      if (event.source !== window.parent) return\n      var data = event.data\n      if (data === null || typeof data !== 'object' || data.source !== FROM_TAB) return\n      if (HARNESS_ORIGINS.indexOf(event.origin) === -1) return\n      if (data.type === 'hello') parentOrigin = event.origin\n      if (event.origin !== parentOrigin) return\n      command(data)\n    })\n  }\n\n  window.__hsDevPreview = { version: VERSION, command: command }\n\n  // ---------- pick mode ----------\n\n  function ensureOverlay() {\n    if (overlay !== undefined) return\n    overlay = document.createElement('div')\n    overlay.setAttribute('data-hs-devpreview', 'overlay')\n    overlay.style.cssText = 'position:fixed;z-index:2147483646;pointer-events:none;box-sizing:border-box;' +\n      'border:2px solid #3b82f6;background:rgba(59,130,246,.12);border-radius:3px;transition:all 40ms linear;display:none'\n    label = document.createElement('div')\n    label.setAttribute('data-hs-devpreview', 'label')\n    label.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:none;padding:2px 6px;border-radius:4px;' +\n      'background:#3b82f6;color:#fff;font:600 11px/16px ui-monospace,Menlo,monospace;white-space:nowrap;display:none'\n    document.documentElement.appendChild(overlay)\n    document.documentElement.appendChild(label)\n  }\n\n  function isOwn(node) {\n    return node instanceof Element && node.hasAttribute('data-hs-devpreview')\n  }\n\n  function setPicking(on) {\n    if (picking === on) return\n    picking = on\n    if (on) {\n      ensureOverlay()\n      document.addEventListener('mousemove', onMove, true)\n      document.addEventListener('click', onClick, true)\n      document.addEventListener('mousedown', swallow, true)\n      document.addEventListener('mouseup', swallow, true)\n      document.addEventListener('keydown', onKey, true)\n      document.documentElement.style.cursor = 'crosshair'\n    } else {\n      document.removeEventListener('mousemove', onMove, true)\n      document.removeEventListener('click', onClick, true)\n      document.removeEventListener('mousedown', swallow, true)\n      document.removeEventListener('mouseup', swallow, true)\n      document.removeEventListener('keydown', onKey, true)\n      document.documentElement.style.cursor = ''\n      hovered = undefined\n      if (overlay !== undefined) { overlay.style.display = 'none'; label.style.display = 'none' }\n    }\n    send({ type: 'pick:state', picking: on })\n  }\n\n  function swallow(event) {\n    event.preventDefault()\n    event.stopPropagation()\n  }\n\n  function onMove(event) {\n    var el = event.target\n    if (!(el instanceof Element) || isOwn(el)) return\n    hovered = el\n    var r = el.getBoundingClientRect()\n    overlay.style.display = 'block'\n    overlay.style.left = r.left + 'px'\n    overlay.style.top = r.top + 'px'\n    overlay.style.width = r.width + 'px'\n    overlay.style.height = r.height + 'px'\n    var names = reactComponents(el)\n    label.textContent = (names[0] ? names[0] + ' · ' : '') + shortName(el) + '  ' + Math.round(r.width) + '×' + Math.round(r.height)\n    label.style.display = 'block'\n    label.style.left = Math.max(2, r.left) + 'px'\n    label.style.top = (r.top >= 20 ? r.top - 20 : r.bottom + 2) + 'px'\n  }\n\n  function onClick(event) {\n    swallow(event)\n    var el = hovered || event.target\n    if (!(el instanceof Element) || isOwn(el)) return\n    var payload = describe(el)\n    setPicking(false)\n    send({ type: 'selection', selection: payload })\n  }\n\n  function onKey(event) {\n    if (event.key === 'Escape') { swallow(event); setPicking(false); send({ type: 'pick:cancelled' }) }\n  }\n\n  // ---------- describing an element ----------\n\n  var STYLE_KEYS = ['display', 'position', 'width', 'height', 'margin', 'padding', 'color', 'background-color',\n    'font-family', 'font-size', 'font-weight', 'line-height', 'border', 'border-radius', 'gap', 'flex-direction',\n    'justify-content', 'align-items', 'opacity', 'box-shadow']\n\n  function shortName(el) {\n    var s = el.tagName.toLowerCase()\n    if (el.id) s += '#' + el.id\n    var cls = (el.getAttribute('class') || '').trim().split(/\\s+/).filter(Boolean).slice(0, 2)\n    if (cls.length) s += '.' + cls.join('.')\n    return s\n  }\n\n  function cssPath(el) {\n    var parts = []\n    while (el instanceof Element && el !== document.documentElement && parts.length < 8) {\n      if (el.id) { parts.unshift('#' + CSS.escape(el.id)); break }\n      var part = el.tagName.toLowerCase()\n      var parent = el.parentElement\n      if (parent) {\n        var same = Array.prototype.filter.call(parent.children, function (c) { return c.tagName === el.tagName })\n        if (same.length > 1) part += ':nth-of-type(' + (same.indexOf(el) + 1) + ')'\n      }\n      parts.unshift(part)\n      el = parent\n    }\n    return parts.join(' > ')\n  }\n\n  // Framework-internal components that say nothing about the user's code.\n  var INTERNAL_COMPONENT = /^(SegmentViewNode|SegmentStateProvider|LayoutRouterContext|InnerLayoutRouter|OuterLayoutRouter|RenderFromTemplateContext|ScrollAndFocusHandler|InnerScrollAndFocusHandler|InnerScrollHandler|ScrollHandler|RedirectBoundary|RedirectErrorBoundary|HTTPAccessFallbackBoundary|HTTPAccessFallbackErrorBoundary|LoadingBoundary|ErrorBoundary|ErrorBoundaryHandler|DevRootHTTPAccessFallbackBoundary|AppDevOverlayErrorBoundary|HotReload|Router|AppRouter|ServerRoot|Root|ClientPageRoot|ClientSegmentRoot|MetadataBoundary|ViewportBoundary|OutletBoundary|Suspense|Fragment|StrictMode|Provider|Consumer)$|Context$|Provider$/\n\n  function reactComponents(el) {\n    var key = Object.keys(el).find(function (k) { return k.indexOf('__reactFiber$') === 0 })\n    if (key === undefined) return []\n    var names = []\n    var fiber = el[key]\n    while (fiber && names.length < 4) {\n      var type = fiber.type\n      var name = typeof type === 'function' ? (type.displayName || type.name)\n        : (type && typeof type === 'object' ? (type.displayName || (type.render && (type.render.displayName || type.render.name))) : undefined)\n      if (name && !INTERNAL_COMPONENT.test(name) && names.indexOf(name) === -1) names.push(name)\n      fiber = fiber.return\n    }\n    return names\n  }\n\n  function nearestSource(el) {\n    for (var node = el; node instanceof Element; node = node.parentElement) {\n      var src = node.getAttribute('data-src') || node.getAttribute('data-inspector-relative-path')\n      if (src) return { location: src, exact: node === el }\n    }\n    return undefined\n  }\n\n  function describe(el) {\n    var r = el.getBoundingClientRect()\n    var computed = getComputedStyle(el)\n    var styles = {}\n    STYLE_KEYS.forEach(function (k) { styles[k] = computed.getPropertyValue(k) })\n    var html = el.outerHTML\n    var text = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim()\n    return {\n      pageUrl: location.href,\n      tag: el.tagName.toLowerCase(),\n      name: shortName(el),\n      selector: cssPath(el),\n      id: el.id || undefined,\n      classes: (el.getAttribute('class') || '').trim().split(/\\s+/).filter(Boolean),\n      text: text.length > 300 ? text.slice(0, 300) + '…' : text,\n      rect: { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) },\n      styles: styles,\n      html: html.length > 3000 ? html.slice(0, 3000) + '…' : html,\n      components: reactComponents(el),\n      source: nearestSource(el),\n    }\n  }\n\n  // Desktop: announce presence on the console the Browser pane reads. In an iframe the page stays\n  // silent until a Harness parent says hello, and answers that with 'ready'.\n  if (!framed) send({ type: 'ready', url: location.href })\n})()\n"/*@companion-end*/
+    const COMPANION_SOURCE = /*@companion-start*/"/*!\n * Harness Studio Dev Preview companion — DEVELOPMENT ONLY.\n *\n * Add this script to your app while it runs in development. It lets the Harness\n * Browser pane put the page into pick mode: hovering outlines elements, clicking one\n * sends a description of it (tag, selector, text, styles, HTML, React component names,\n * and the nearest data-src source location) back to the Browser pane.\n *\n * Transport:\n *   - Inside an iframe (Harness Web): window.postMessage with the parent window. Only a\n *     parent on a Harness origin is obeyed or answered: dsh-app://app,\n *     http://localhost:3080, http://127.0.0.1:3080, plus any origins listed (space\n *     separated) in the script tag's data-harness-origins attribute. Nothing is ever\n *     posted to '*', so a site that frames your dev app gets no pick mode and no data.\n *   - As a top-level page (Harness Desktop <webview>): the Browser pane calls\n *     window.__hsDevPreview.command(...) and reads replies from tagged console messages.\n *\n * The script does nothing until the Browser pane talks to it.\n */\n(function () {\n  'use strict'\n  if (window.__hsDevPreview !== undefined) return\n\n  var VERSION = 1\n  var FROM_TAB = 'harness-studio-devpreview'\n  var FROM_PAGE = 'harness-studio-companion'\n  var CONSOLE_PREFIX = '__HS_DEVPREVIEW__'\n  var framed = window.parent !== window\n  var HARNESS_ORIGINS = ['dsh-app://app', 'http://localhost:3080', 'http://127.0.0.1:3080']\n  var script = document.currentScript\n  var extraOrigins = script && script.getAttribute('data-harness-origins')\n  if (extraOrigins) HARNESS_ORIGINS = HARNESS_ORIGINS.concat(extraOrigins.split(/\\s+/).filter(Boolean))\n  var parentOrigin = undefined // a Harness origin, learned from its hello; every message goes only there\n  var picking = false\n  var hovered = undefined\n  var overlay = undefined\n  var label = undefined\n\n  // ---------- transport ----------\n\n  function send(message) {\n    message.source = FROM_PAGE\n    message.version = VERSION\n    if (framed) {\n      // Nothing goes out before a Harness parent has said hello, and then only to its origin.\n      if (parentOrigin !== undefined) window.parent.postMessage(message, parentOrigin)\n    } else {\n      console.debug(CONSOLE_PREFIX + JSON.stringify(message))\n    }\n  }\n\n  function command(cmd) {\n    if (cmd === null || typeof cmd !== 'object') return\n    if (cmd.type === 'hello') send({ type: 'ready', url: location.href })\n    else if (cmd.type === 'pick:on') setPicking(true)\n    else if (cmd.type === 'pick:off') setPicking(false)\n  }\n\n  if (framed) {\n    window.addEventListener('message', function (event) {\n      if (event.source !== window.parent) return\n      var data = event.data\n      if (data === null || typeof data !== 'object' || data.source !== FROM_TAB) return\n      if (HARNESS_ORIGINS.indexOf(event.origin) === -1) return\n      if (data.type === 'hello') parentOrigin = event.origin\n      if (event.origin !== parentOrigin) return\n      command(data)\n    })\n  }\n\n  window.__hsDevPreview = { version: VERSION, command: command }\n\n  // ---------- pick mode ----------\n\n  function ensureOverlay() {\n    if (overlay !== undefined) return\n    overlay = document.createElement('div')\n    overlay.setAttribute('data-hs-devpreview', 'overlay')\n    overlay.style.cssText = 'position:fixed;z-index:2147483646;pointer-events:none;box-sizing:border-box;' +\n      'border:2px solid #3b82f6;background:rgba(59,130,246,.12);border-radius:3px;transition:all 40ms linear;display:none'\n    label = document.createElement('div')\n    label.setAttribute('data-hs-devpreview', 'label')\n    label.style.cssText = 'position:fixed;z-index:2147483647;pointer-events:none;padding:2px 6px;border-radius:4px;' +\n      'background:#3b82f6;color:#fff;font:600 11px/16px ui-monospace,Menlo,monospace;white-space:nowrap;display:none'\n    document.documentElement.appendChild(overlay)\n    document.documentElement.appendChild(label)\n  }\n\n  function isOwn(node) {\n    return node instanceof Element && node.hasAttribute('data-hs-devpreview')\n  }\n\n  // In pick mode the page must not react to the press that picks: menus and popovers (Radix and others) open\n  // on pointerdown, drag handles start on it, and older widgets use mousedown. Touches are only stopped, not\n  // cancelled, so a tap still ends in the click that picks.\n  var SWALLOWED = ['pointerdown', 'pointerup', 'mousedown', 'mouseup']\n  var TOUCHES = ['touchstart', 'touchend']\n\n  function setPicking(on) {\n    if (picking === on) return\n    picking = on\n    if (on) {\n      ensureOverlay()\n      document.addEventListener('mousemove', onMove, true)\n      document.addEventListener('click', onClick, true)\n      SWALLOWED.forEach(function (type) { document.addEventListener(type, swallow, true) })\n      TOUCHES.forEach(function (type) { document.addEventListener(type, stopTouch, { capture: true, passive: true }) })\n      document.addEventListener('keydown', onKey, true)\n      document.documentElement.style.cursor = 'crosshair'\n    } else {\n      document.removeEventListener('mousemove', onMove, true)\n      document.removeEventListener('click', onClick, true)\n      SWALLOWED.forEach(function (type) { document.removeEventListener(type, swallow, true) })\n      TOUCHES.forEach(function (type) { document.removeEventListener(type, stopTouch, { capture: true, passive: true }) })\n      document.removeEventListener('keydown', onKey, true)\n      document.documentElement.style.cursor = ''\n      hovered = undefined\n      if (overlay !== undefined) { overlay.style.display = 'none'; label.style.display = 'none' }\n    }\n    send({ type: 'pick:state', picking: on })\n  }\n\n  function swallow(event) {\n    event.preventDefault()\n    event.stopPropagation()\n  }\n\n  function stopTouch(event) {\n    event.stopPropagation()\n  }\n\n  function onMove(event) {\n    var el = event.target\n    if (!(el instanceof Element) || isOwn(el)) return\n    hovered = el\n    var r = el.getBoundingClientRect()\n    overlay.style.display = 'block'\n    overlay.style.left = r.left + 'px'\n    overlay.style.top = r.top + 'px'\n    overlay.style.width = r.width + 'px'\n    overlay.style.height = r.height + 'px'\n    var names = reactComponents(el)\n    label.textContent = (names[0] ? names[0] + ' · ' : '') + shortName(el) + '  ' + Math.round(r.width) + '×' + Math.round(r.height)\n    label.style.display = 'block'\n    label.style.left = Math.max(2, r.left) + 'px'\n    label.style.top = (r.top >= 20 ? r.top - 20 : r.bottom + 2) + 'px'\n  }\n\n  function onClick(event) {\n    swallow(event)\n    var el = hovered || event.target\n    if (!(el instanceof Element) || isOwn(el)) return\n    var payload = describe(el)\n    setPicking(false)\n    send({ type: 'selection', selection: payload })\n  }\n\n  function onKey(event) {\n    if (event.key === 'Escape') { swallow(event); setPicking(false); send({ type: 'pick:cancelled' }) }\n  }\n\n  // ---------- describing an element ----------\n\n  var STYLE_KEYS = ['display', 'position', 'width', 'height', 'margin', 'padding', 'color', 'background-color',\n    'font-family', 'font-size', 'font-weight', 'line-height', 'border', 'border-radius', 'gap', 'flex-direction',\n    'justify-content', 'align-items', 'opacity', 'box-shadow']\n\n  function shortName(el) {\n    var s = el.tagName.toLowerCase()\n    if (el.id) s += '#' + el.id\n    var cls = (el.getAttribute('class') || '').trim().split(/\\s+/).filter(Boolean).slice(0, 2)\n    if (cls.length) s += '.' + cls.join('.')\n    return s\n  }\n\n  function cssPath(el) {\n    var parts = []\n    while (el instanceof Element && el !== document.documentElement && parts.length < 8) {\n      if (el.id) { parts.unshift('#' + CSS.escape(el.id)); break }\n      var part = el.tagName.toLowerCase()\n      var parent = el.parentElement\n      if (parent) {\n        var same = Array.prototype.filter.call(parent.children, function (c) { return c.tagName === el.tagName })\n        if (same.length > 1) part += ':nth-of-type(' + (same.indexOf(el) + 1) + ')'\n      }\n      parts.unshift(part)\n      el = parent\n    }\n    return parts.join(' > ')\n  }\n\n  // Framework-internal components that say nothing about the user's code.\n  var INTERNAL_COMPONENT = /^(SegmentViewNode|SegmentStateProvider|LayoutRouterContext|InnerLayoutRouter|OuterLayoutRouter|RenderFromTemplateContext|ScrollAndFocusHandler|InnerScrollAndFocusHandler|InnerScrollHandler|ScrollHandler|RedirectBoundary|RedirectErrorBoundary|HTTPAccessFallbackBoundary|HTTPAccessFallbackErrorBoundary|LoadingBoundary|ErrorBoundary|ErrorBoundaryHandler|DevRootHTTPAccessFallbackBoundary|AppDevOverlayErrorBoundary|HotReload|Router|AppRouter|ServerRoot|Root|ClientPageRoot|ClientSegmentRoot|MetadataBoundary|ViewportBoundary|OutletBoundary|Suspense|Fragment|StrictMode|Provider|Consumer)$|Context$|Provider$/\n\n  function reactComponents(el) {\n    var key = Object.keys(el).find(function (k) { return k.indexOf('__reactFiber$') === 0 })\n    if (key === undefined) return []\n    var names = []\n    var fiber = el[key]\n    while (fiber && names.length < 4) {\n      var type = fiber.type\n      var name = typeof type === 'function' ? (type.displayName || type.name)\n        : (type && typeof type === 'object' ? (type.displayName || (type.render && (type.render.displayName || type.render.name))) : undefined)\n      if (name && !INTERNAL_COMPONENT.test(name) && names.indexOf(name) === -1) names.push(name)\n      fiber = fiber.return\n    }\n    return names\n  }\n\n  function nearestSource(el) {\n    for (var node = el; node instanceof Element; node = node.parentElement) {\n      var src = node.getAttribute('data-src') || node.getAttribute('data-inspector-relative-path')\n      if (src) return { location: src, exact: node === el }\n    }\n    return undefined\n  }\n\n  function describe(el) {\n    var r = el.getBoundingClientRect()\n    var computed = getComputedStyle(el)\n    var styles = {}\n    STYLE_KEYS.forEach(function (k) { styles[k] = computed.getPropertyValue(k) })\n    var html = el.outerHTML\n    var text = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim()\n    return {\n      pageUrl: location.href,\n      tag: el.tagName.toLowerCase(),\n      name: shortName(el),\n      selector: cssPath(el),\n      id: el.id || undefined,\n      classes: (el.getAttribute('class') || '').trim().split(/\\s+/).filter(Boolean),\n      text: text.length > 300 ? text.slice(0, 300) + '…' : text,\n      rect: { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) },\n      styles: styles,\n      html: html.length > 3000 ? html.slice(0, 3000) + '…' : html,\n      components: reactComponents(el),\n      source: nearestSource(el),\n    }\n  }\n\n  // Desktop: announce presence on the console the Browser pane reads. In an iframe the page stays\n  // silent until a Harness parent says hello, and answers that with 'ready'.\n  if (!framed) send({ type: 'ready', url: location.href })\n})()\n"/*@companion-end*/
 
 
     // Ports the common dev servers default to: Next/CRA/Remix, Vite, Angular, Astro, Django/Rails-ish, generic.
@@ -251,7 +251,10 @@ window.__ModuleLoader__.load({
 
     const FILES_CSS = `
       .hs-files { display: flex; height: 100%; min-height: 0; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font-size: 13px; line-height: 20px; }
-      .hs-files-side { width: 248px; flex: none; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--dsw-alias-border-l2); }
+      /* A width saved in a wider pane (fullscreen) never pushes the open file and the handle out of a narrow one. */
+      .hs-files-side { width: 248px; max-width: calc(100% - 160px); flex: none; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--dsw-alias-border-l2); position: relative; }
+      /* Like Harness's own sidebar and right-panel handles: 8px, centred on the edge, shown only by the cursor. */
+      .hs-files-resize { position: absolute; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; z-index: 2; touch-action: none; background: transparent; }
       .hs-files-filter { position: relative; padding: 8px; }
       .hs-files-filter input { width: 100%; box-sizing: border-box; height: 30px; padding: 0 10px 0 32px; border-radius: 8px; outline: none; border: 1px solid var(--dsw-alias-border-l2);
         background: var(--dsw-alias-bg-base); color: inherit; font: inherit; font-size: 13px; }
@@ -279,9 +282,44 @@ window.__ModuleLoader__.load({
       .hs-files-tab button { width: 20px; height: 20px; display: grid; place-items: center; border: none; border-radius: 5px; background: transparent; color: var(--dsw-alias-label-tertiary); cursor: pointer; padding: 0; opacity: 0; }
       .hs-files-tab:hover button, .hs-files-tab.hs-active button { opacity: 1; }
       .hs-files-tab button:hover { background: var(--dsw-alias-interactive-bg-hover); }
-      .hs-files-path { display: flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 12px; color: var(--dsw-alias-label-tertiary); border-bottom: 1px solid var(--dsw-alias-border-l2); white-space: nowrap; min-width: 0; }
+      .hs-files-path { display: flex; align-items: center; gap: 6px; padding: 6px 12px 6px 16px; font-size: 12px; color: var(--dsw-alias-label-tertiary); border-bottom: 1px solid var(--dsw-alias-border-l2); white-space: nowrap; min-width: 0; }
       .hs-files-path span { overflow: hidden; text-overflow: ellipsis; }
-      .hs-files-code { flex: 1; overflow: auto; font: 13px/20px var(--dsw-font-markdown-code-font-family, ui-monospace, Menlo, monospace); padding: 6px 0 24px; }
+      .hs-files-editor { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+      /* Room between the tree (or the pane's edge, with the tree hidden) and the file: bars start 16px in, code 8px
+         further after its line numbers' own margin, and dividers still run edge to edge. */
+      .hs-files-editor .hse-bar { padding-left: 16px; }
+      .hs-files-editor .cm-scroller { padding-left: 8px; }
+      .hs-files-editor[hidden] { display: none; }
+      .hs-files-tab.hs-preview { font-style: italic; }
+      .hs-files-dot { width: 6px; height: 6px; border-radius: 3px; background: currentColor; flex: none; }
+      .hs-md-switch { display: inline-flex; flex: none; align-items: center; gap: 2px; padding: 2px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 7px; }
+      .hs-md-switch button { height: 20px; padding: 0 8px; border: none; border-radius: 5px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; line-height: 20px; white-space: nowrap; cursor: pointer; }
+      .hs-md-switch button:hover { color: var(--dsw-alias-label-primary); }
+      .hs-md-switch button[aria-pressed="true"] { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); }
+      .hs-md-doc { flex: 1; min-height: 0; overflow: auto; padding: 12px 24px 24px; font-family: var(--dsw-font, inherit); white-space: normal; }
+      .hs-files-embedded { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+      /* CSV and TSV tables in the app's table style (the Markdown tables' values in the compact plugin). */
+      .hs-table { border-collapse: separate; border-spacing: 0; border: 1px solid color-mix(in srgb, var(--dsw-alias-label-primary) 10%, transparent); border-radius: 8px; font-size: 13px; line-height: 20px; }
+      .hs-table :is(th, td) { padding: 6px 11px; text-align: center; vertical-align: middle; font-weight: 400; white-space: pre-wrap; max-width: 420px; overflow-wrap: anywhere; border-bottom: 1px solid color-mix(in srgb, var(--dsw-alias-label-primary) 10%, transparent); }
+      .hs-table th { background: color-mix(in srgb, var(--dsw-alias-label-primary) 5%, var(--dsw-alias-bg-base)); position: sticky; top: 0; }
+      .hs-table tr:first-child th:first-child { border-top-left-radius: 7px; }
+      .hs-table tr:first-child th:last-child { border-top-right-radius: 7px; }
+      .hs-table tr:last-child td { border-bottom: none; }
+      .hs-table-note { margin: 10px 0 0; font-size: 12px; color: var(--dsw-alias-label-tertiary); }
+      .hs-files-embedded > * { flex: 1; min-height: 0; }
+      .hs-files-editor > .hse-root { flex: 1; min-height: 0; }
+      .hs-files-editor .hse-preview { display: flex; flex-direction: column; }
+      /* The Files tab edits in place, so the preview's Edit (which opens an Editor tab) is not offered here; under the
+         editor's bar the path is already shown once. */
+      .hs-files-embedded button[title="Edit this file"] { display: none; }
+      /* Harness's viewer header drawn like the Files tab's own file bar: 30px, 12px text, the same divider and
+         24px controls. Under the editor's bar (a rendered web page or table) the editor's bar is the only one. */
+      .hs-files-embedded [data-document-preview] > :is([class$="_header"], [class*="_header "]) { height: auto; min-height: 30px; padding: 3px 10px 3px 16px; gap: 8px; border-bottom: 0.5px solid var(--dsw-alias-border-l2); }
+      .hs-files-embedded [data-textpreview-path] { margin-right: auto; font-size: 12px; color: var(--dsw-alias-label-secondary); }
+      .hs-files-embedded [data-document-preview] > :is([class$="_header"], [class*="_header "]) :is([class$="_tool"], [class*="_tool "]) { width: 24px; height: 24px; padding: 4px; }
+      .hs-files-embedded [data-document-preview] > :is([class$="_header"], [class*="_header "]) [data-document-viewer-menu] { width: auto; height: 24px; padding: 0 6px; }
+      .hs-files-embedded.hs-in-editor [data-document-preview] > :is([class$="_header"], [class*="_header "]) { display: none; }
+      .hs-files-code { flex: 1; overflow: auto; font: 13px/20px var(--dsw-font-markdown-code-font-family, ui-monospace, Menlo, monospace); padding: 6px 0 24px 8px; }
       .hs-files-code .hs-line { display: grid; grid-template-columns: 52px max-content; white-space: pre; }
       .hs-files-code .hs-line .hs-ln { text-align: right; padding-right: 14px; color: var(--dsw-alias-label-tertiary); user-select: none; }
       .hs-files-code .hs-line.hs-target { background: color-mix(in srgb, var(--dsw-alias-button-info-fill) 14%, transparent); }
@@ -292,16 +330,26 @@ window.__ModuleLoader__.load({
       .hs-files-tree-toggle:hover { background: var(--dsw-alias-interactive-bg-hover); }
       .hs-files-tree-toggle.hs-on { background: color-mix(in srgb, var(--dsw-alias-button-info-fill) 22%, transparent); color: var(--dsw-alias-button-info-fill); }
     `
+    /**
+     * Put a stylesheet shared by every pane of a kind into the window, or bring an existing one up to date: when
+     * the plugin is reloaded while the app is open, the window keeps the previous version's sheet. Left in place
+     * for the window's lifetime.
+     */
+    function installStyles(id, css) {
+      const existing = document.getElementById(id)
+      if (existing) {
+        if (existing.textContent !== css) existing.textContent = css
+        return
+      }
+      const style = document.createElement('style')
+      style.id = id
+      style.textContent = css
+      document.head.append(style)
+    }
+
     function useFilesStyles() {
       useChangesStyles() // shares the file icons and syntax colours
-      useEffect(() => {
-        if (document.getElementById('hs-files-css')) return undefined
-        const style = document.createElement('style')
-        style.id = 'hs-files-css'
-        style.textContent = FILES_CSS
-        document.head.append(style)
-        return undefined // shared by every Files pane; left in place for the window's lifetime
-      }, [])
+      useEffect(() => { installStyles('hs-files-css', FILES_CSS) }, [])
     }
 
     /** Special icons Claude uses for a few well-known files; everything else is tinted by language. */
@@ -319,17 +367,22 @@ window.__ModuleLoader__.load({
       return i === -1 ? text : h(React.Fragment, null, text.slice(0, i), h('mark', null, text.slice(i, i + needle.length)), text.slice(i + needle.length))
     }
 
-    /** One folder level: loads its children when first expanded. */
-    function TreeLevel({ list, path, depth, activePath, onOpen }) {
+    /**
+     * One folder level: loads its children when first expanded, and again whenever `refresh` changes (the
+     * Files pane bumps it while it is on screen). A reload keeps what is shown, and which folders are open,
+     * until the new listing arrives; an unchanged listing re-renders nothing.
+     */
+    function TreeLevel({ list, path, depth, activePath, onOpen, refresh }) {
       const [state, setState] = useState({ kind: 'loading' })
       const [expanded, setExpanded] = useState({})
       useEffect(() => {
         const controller = new AbortController()
+        const update = next => setState(prev => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next))
         list(path, controller.signal).then(
-          result => setState(result.ok ? { kind: 'ready', entries: result.value.entries } : { kind: 'failed', message: failureText(result.error) }),
-          error => { if (!controller.signal.aborted) setState({ kind: 'failed', message: String(error && error.message || error) }) })
+          result => { if (!controller.signal.aborted) update(result.ok ? { kind: 'ready', entries: result.value.entries } : { kind: 'failed', message: failureText(result.error) }) },
+          error => { if (!controller.signal.aborted) update({ kind: 'failed', message: String(error && error.message || error) }) })
         return () => controller.abort()
-      }, [list, path])
+      }, [list, path, refresh])
       const indent = 4 + depth * 12
       if (state.kind === 'loading') return depth === 0 ? h('div', { className: 'hs-files-muted' }, 'Loading…') : null
       if (state.kind === 'failed') return h('div', { className: 'hs-files-muted', style: { paddingLeft: indent + 20 } }, state.message)
@@ -344,11 +397,12 @@ window.__ModuleLoader__.load({
           h('div', {
             className: 'hs-files-row' + (activePath === child ? ' hs-active' : ''), style: { paddingLeft: indent }, title: entry.name,
             onClick: () => isDir ? setExpanded(prev => ({ ...prev, [entry.name]: !open })) : onOpen(child),
+            onDoubleClick: () => { if (!isDir) onOpen(child, undefined, true) },
           },
             h('span', { className: 'hs-chevron' }, isDir ? h(Icon, { d: open ? 'M4 6l4 4 4-4' : 'M6 4l4 4-4 4' }) : null),
             isDir ? null : h(FilesIcon, { path: entry.name }),
             h('span', { className: 'hs-name' }, entry.name)),
-          open ? h(TreeLevel, { list, path: child, depth: depth + 1, activePath, onOpen }) : null)
+          open ? h(TreeLevel, { list, path: child, depth: depth + 1, activePath, onOpen, refresh }) : null)
       }))
     }
 
@@ -369,7 +423,7 @@ window.__ModuleLoader__.load({
       return h(React.Fragment, null, matches.map(rel => {
         const slash = rel.lastIndexOf('/')
         const abs = cwd + '/' + rel
-        return h('div', { key: rel, className: 'hs-files-row' + (activePath === abs ? ' hs-active' : ''), style: { paddingLeft: 8 }, title: rel, onClick: () => onOpen(abs) },
+        return h('div', { key: rel, className: 'hs-files-row' + (activePath === abs ? ' hs-active' : ''), style: { paddingLeft: 8 }, title: rel, onClick: () => onOpen(abs), onDoubleClick: () => onOpen(abs, undefined, true) },
           h(FilesIcon, { path: rel }),
           h('span', { className: 'hs-name', style: { flex: 'none', maxWidth: '60%' } }, marked(rel.slice(slash + 1), needle)),
           h('span', { className: 'hs-dir' }, h('bdi', null, slash === -1 ? '' : rel.slice(0, slash))))
@@ -403,15 +457,116 @@ window.__ModuleLoader__.load({
       }
       const needle = query.trim().toLowerCase()
       return h(React.Fragment, null, byFile.map(group => h('div', { key: group.path },
-        h('div', { className: 'hs-files-row', style: { paddingLeft: 8 }, title: group.path, onClick: () => onOpen(cwd + '/' + group.path, group.hits[0].line) },
+        h('div', { className: 'hs-files-row', style: { paddingLeft: 8 }, title: group.path, onClick: () => onOpen(cwd + '/' + group.path, group.hits[0].line), onDoubleClick: () => onOpen(cwd + '/' + group.path, group.hits[0].line, true) },
           h(FilesIcon, { path: group.path }), h('span', { className: 'hs-name', style: { flex: 'none' } }, baseName(group.path)),
           h('span', { className: 'hs-dir' }, h('bdi', null, group.path.includes('/') ? group.path.slice(0, group.path.lastIndexOf('/')) : ''))),
-        group.hits.map(hit => h('div', { key: hit.line, className: 'hs-files-hit', onClick: () => onOpen(cwd + '/' + group.path, hit.line) },
+        group.hits.map(hit => h('div', { key: hit.line, className: 'hs-files-hit', onClick: () => onOpen(cwd + '/' + group.path, hit.line), onDoubleClick: () => onOpen(cwd + '/' + group.path, hit.line, true) },
           h('span', { className: 'hs-ln' }, hit.line), marked(hit.text.trim(), needle))))),
       state.truncated ? h('div', { className: 'hs-files-muted' }, 'Showing the first matches only') : null)
     }
 
-    function FileView({ read, path, line }) {
+    // A Markdown file opens rendered or as its source, whichever was chosen last; its switch then changes that tab
+    // and the remembered choice. Harness's own file preview (the one a file card in the chat opens) reads and
+    // writes the same key, so one choice carries over between the two.
+    const MARKDOWN_VIEW_KEY = 'harness-studio.markdown-view'
+    const isMarkdown = path => /\.(md|markdown)$/i.test(path)
+    const readMarkdownView = () => { try { return localStorage.getItem(MARKDOWN_VIEW_KEY) === 'source' ? 'source' : 'rendered' } catch { return 'rendered' } }
+    const rememberMarkdownView = value => { try { localStorage.setItem(MARKDOWN_VIEW_KEY, value) } catch { /* private storage: this tab only */ } }
+
+    function MarkdownViewSwitch({ view, onChange }) {
+      const choose = value => { rememberMarkdownView(value); onChange(value) }
+      return h('span', { className: 'hs-md-switch', role: 'group', 'aria-label': 'Markdown view' },
+        h('button', { type: 'button', 'aria-pressed': view === 'rendered', onClick: () => choose('rendered') }, 'Rendered'),
+        h('button', { type: 'button', 'aria-pressed': view === 'source', onClick: () => choose('source') }, 'Source'))
+    }
+
+    // Harness's Markdown renderer, the one its file preview uses, so a file looks the same in both places.
+    const MARKDOWN_LABELS = { code: { copyLabel: 'Copy', copiedLabel: 'Copied', toolbarLabels: { codeLabel: 'Code', wrapLabel: 'Wrap lines', unwrapLabel: 'Do not wrap lines' } }, footnotes: 'Footnotes' }
+    function MarkdownDocument({ text }) {
+      const { MarkdownText } = require('@deepseek-ai/dsh-client-ui-primitives')
+      return h('div', { className: 'hs-md-doc' }, h(MarkdownText, { text, labels: MARKDOWN_LABELS }))
+    }
+
+    // Files the editor cannot show (PDFs, images, spreadsheets, Office documents, web pages) open in Harness's own
+    // file preview, the Factory its right-panel file tabs show too.
+    const PREVIEW_FACTORY = 'sidebar.right.document.preview'
+    // Files only Harness's viewers can show, and text files that also have a rendered form (shown with a Rendered /
+    // Source switch, Source being the editor).
+    const VIEWER_ONLY = /\.(pdf|png|jpe?g|gif|webp|bmp|ico|xlsx|xls|docx?|pptx?)$/i
+    const VIEWER_RENDERED = /\.(html?|svg)$/i
+    // CSV and TSV render here as a table in the app's table style, from the editor's text.
+    const TABULAR = /\.(csv|tsv)$/i
+    const TABLE_ROWS_SHOWN = 1000
+    const encodePath = path => path.split('/').map(part => encodeURIComponent(part).replace(/%3A/gi, ':')).join('/')
+    const sessionFileAddress = (sessionId, path) => 'dsh-resource://file/session/' + encodeURIComponent(sessionId).replace(/%3A/gi, ':') + '/' + encodePath(path)
+
+    /**
+     * Harness's file preview for one file, inside this pane. The preview expects to be a tab of its own, so it gets
+     * this pane's tab information with the file's own identity: an id that keys its per-file state, the file's
+     * address, title and line, and a signal that ends that state when the file's tab here closes.
+     */
+    function EmbeddedPreview({ renderFactorySlot, useTabInfo, sessionId, path, line, inEditor, displayPath }) {
+      const signal = useMemo(() => new AbortController(), [path])
+      useEffect(() => () => signal.abort(), [signal])
+      const revision = useRef(0)
+      const navigation = useMemo(() => {
+        const address = sessionFileAddress(sessionId, path)
+        return { address, params: line >= 1 ? { line } : undefined, revision: ++revision.current }
+      }, [sessionId, path, line])
+      const useFileTabInfo = useMemo(() => function useEmbeddedTabInfo() {
+        const info = useTabInfo()
+        return useMemo(() => ({
+          ...info,
+          tab: {
+            ...info.tab,
+            id: 'harness-studio-files:' + path, contentId: navigation.address, title: baseName(path), navigation, signal: signal.signal,
+            // Reload stays in the preview's own toolbar; the pane's refresh shortcut belongs to the Files tab.
+            actions: { ...info.tab.actions, bindCommands: () => () => {} },
+          },
+        }), [info])
+      }, [useTabInfo, path, navigation, signal])
+      return h('div', { className: 'hs-files-embedded' + (inEditor ? ' hs-in-editor' : '') }, renderFactorySlot(PREVIEW_FACTORY, { useTabInfo: useFileTabInfo, displayPath }))
+    }
+
+    /** Rows of a CSV or TSV text: quoted fields may hold the separator, doubled quotes and line breaks. */
+    function parseDelimited(text, separator) {
+      const rows = []
+      let row = []
+      let field = ''
+      let quoted = false
+      for (let i = 0; i < text.length; i++) {
+        const ch = text[i]
+        if (quoted) {
+          if (ch === '"' && text[i + 1] === '"') { field += '"'; i++ }
+          else if (ch === '"') quoted = false
+          else field += ch
+        } else if (ch === '"' && field === '') quoted = true
+        else if (ch === separator) { row.push(field); field = '' }
+        else if (ch === '\n' || ch === '\r') {
+          if (ch === '\r' && text[i + 1] === '\n') i++
+          row.push(field); rows.push(row); row = []; field = ''
+        } else field += ch
+      }
+      if (field !== '' || row.length > 0) { row.push(field); rows.push(row) }
+      return rows
+    }
+
+    function TableDocument({ text, path }) {
+      const rows = useMemo(() => parseDelimited(text.replace(/^\uFEFF/, ''), /\.tsv$/i.test(path) ? '\t' : ','), [text, path])
+      if (rows.length === 0) return h('div', { className: 'hs-files-empty' }, 'This file is empty')
+      const width = Math.max(...rows.slice(0, TABLE_ROWS_SHOWN + 1).map(row => row.length))
+      const cells = row => Array.from({ length: width }, (_, i) => row[i] ?? '')
+      const body = rows.slice(1, TABLE_ROWS_SHOWN + 1)
+      return h('div', { className: 'hs-md-doc' },
+        h('table', { className: 'hs-table' },
+          h('thead', null, h('tr', null, cells(rows[0]).map((cell, i) => h('th', { key: i }, cell)))),
+          h('tbody', null, body.map((row, r) => h('tr', { key: r }, cells(row).map((cell, i) => h('td', { key: i }, cell)))))),
+        rows.length - 1 > TABLE_ROWS_SHOWN
+          ? h('p', { className: 'hs-table-note' }, `Showing the first ${TABLE_ROWS_SHOWN.toLocaleString()} of ${(rows.length - 1).toLocaleString()} rows. Source shows them all.`)
+          : null)
+    }
+
+    function FileView({ read, path, line, rendered }) {
       const [state, setState] = useState({ kind: 'loading' })
       const targetRef = useRef(null)
       useEffect(() => {
@@ -425,6 +580,7 @@ window.__ModuleLoader__.load({
       useEffect(() => { if (state.kind === 'ready' && targetRef.current) targetRef.current.scrollIntoView({ block: 'center' }) }, [state.kind, line, path])
       if (state.kind === 'loading') return h('div', { className: 'hs-files-empty' }, 'Loading…')
       if (state.kind === 'failed') return h('div', { className: 'hs-files-empty' }, /not-text|NUL/i.test(state.message) ? 'This file is not text' : state.message)
+      if (rendered) return TABULAR.test(path) ? h(TableDocument, { text: state.text, path }) : h(MarkdownDocument, { text: state.text })
       const lang = languageOf(path)
       const lines = state.text.replace(/\n$/, '').split('\n')
       return h('div', { className: 'hs-files-code' },
@@ -434,6 +590,23 @@ window.__ModuleLoader__.load({
         state.eof ? null : h('div', { className: 'hs-files-muted', style: { paddingLeft: 66 } }, 'Showing the first ' + READ_LINES + ' lines'))
     }
 
+    /**
+     * The Editor plugin's file editor, when it is installed (plugins/editor hands it over on
+     * window.__harnessStudio and announces changes with a 'harness-studio-editor' event). Without it the Files tab
+     * shows files read-only.
+     */
+    function useFileEditor() {
+      const read = () => window.__harnessStudio?.FileEditor
+      const [editor, setEditor] = useState(read)
+      useEffect(() => {
+        const update = () => setEditor(() => read())
+        window.addEventListener('harness-studio-editor', update)
+        update()
+        return () => window.removeEventListener('harness-studio-editor', update)
+      }, [])
+      return editor
+    }
+
     // Whether the Files pane shows its tree: one setting for every Files pane, remembered across restarts.
     const TREE_KEY = 'harness-studio.files-tree'
     const treeListeners = new Set()
@@ -441,12 +614,125 @@ window.__ModuleLoader__.load({
     function setTreeShown(value) {
       treeShown = value
       try { localStorage.setItem(TREE_KEY, value ? 'shown' : 'hidden') } catch { /* storage unavailable: the choice lasts for this window */ }
-      for (const listener of treeListeners) listener(value)
+      for (const listener of treeListeners) listener()
     }
-    function useTreeShown() {
-      const [value, setValue] = useState(treeShown)
-      useEffect(() => { treeListeners.add(setValue); return () => { treeListeners.delete(setValue) } }, [])
-      return value
+    // Sessions whose Files tab hides its tree because the conversation opened a file there, until the tree button or
+    // the header's Files button brings it back. The remembered setting is left as it is.
+    const treeHiddenFor = new Set()
+    function setTreeHiddenFor(sessionId, hidden) {
+      const key = String(sessionId)
+      if (hidden === treeHiddenFor.has(key)) return
+      if (hidden) treeHiddenFor.add(key); else treeHiddenFor.delete(key)
+      for (const listener of treeListeners) listener()
+    }
+
+    // ---- files opened from the conversation ----
+    // A file card, a file link or a reference in the conversation opens its file in the Files tab, instead of a tab
+    // of its own, through the right panel's resource handlers. The open waits here for the session's Files tab.
+    const pendingOpens = new Map() // sessionId → { path, line }
+    const openListeners = new Set()
+    const SESSION_FILE = /^dsh-resource:\/\/file\/session\/([^/?#]+)\/([^?#]*)$/
+    function fileOfAddress(address) {
+      const match = SESSION_FILE.exec(address)
+      if (!match) return undefined
+      try { return { sessionId: decodeURIComponent(match[1]), path: match[2].split('/').map(decodeURIComponent).join('/') } } catch { return undefined }
+    }
+    function openFromConversation(sidebar, request) {
+      const file = fileOfAddress(request.address)
+      if (!file || file.sessionId !== String(request.sessionId) || file.path === '') return false
+      const line = request.params && Number.isInteger(request.params.line) && request.params.line >= 1 ? request.params.line : undefined
+      pendingOpens.set(file.sessionId, { path: file.path, line })
+      setTreeHiddenFor(file.sessionId, true)
+      for (const listener of openListeners) listener(file.sessionId)
+      // Reveal the session's Files tab where it is; without one, open it under the pane stacking rules.
+      const s = surfaceOf(sidebar, request.sessionId)
+      const holder = s && s.layout.expanded ? dockPanesOf(s.layout).find(pane => pane.tabs.some(tabId => kindOfTab(s.layout, tabId) === FILES_KIND)) : undefined
+      if (holder) request.openTab(FILES_KIND, { paneId: holder.id })
+      else if (s && sidebar.mounted.getSnapshot() === request.sessionId) togglePane(sidebar, request.sessionId, FILES_KIND)
+      else request.openTab(FILES_KIND)
+      return true
+    }
+    // The tree's width, dragged at its right edge: one width for every Files pane, remembered across restarts.
+    const TREE_WIDTH_KEY = 'harness-studio.files-tree-width'
+    const TREE_WIDTH_DEFAULT = 248
+    const TREE_WIDTH_MIN = 160
+    /** How often a Files pane on screen lists its open folders again. */
+    const TREE_REFRESH_MS = 5000
+    const readTreeWidth = () => { try { const w = Number(localStorage.getItem(TREE_WIDTH_KEY)); return w >= TREE_WIDTH_MIN ? w : TREE_WIDTH_DEFAULT } catch { return TREE_WIDTH_DEFAULT } }
+    function saveTreeWidth(width) {
+      try { localStorage.setItem(TREE_WIDTH_KEY, String(Math.round(width))) } catch { /* storage unavailable: the width lasts for this window */ }
+    }
+    /**
+     * The drag handle on the tree's right edge. Widths are worked out from the column's measured size, so they
+     * stay right under the theme's whole-app zoom. The file keeps at least TREE_WIDTH_MIN as well, and a drag
+     * never starts with a jump when the pane is narrower than that allows. Double-click restores the default.
+     */
+    function TreeResizer({ setWidth }) {
+      const [dragging, setDragging] = useState(false)
+      const onPointerDown = event => {
+        const side = event.currentTarget.parentElement
+        const pane = side?.parentElement
+        if (!side || !pane) return
+        event.preventDefault()
+        event.currentTarget.setPointerCapture(event.pointerId)
+        const sideRect = side.getBoundingClientRect()
+        const scale = sideRect.width / (side.offsetWidth || sideRect.width || 1)
+        const max = Math.max(TREE_WIDTH_MIN, side.offsetWidth, pane.getBoundingClientRect().width / scale - TREE_WIDTH_MIN)
+        const widthAt = x => Math.min(max, Math.max(TREE_WIDTH_MIN, (x - sideRect.left) / scale))
+        let last = side.offsetWidth
+        const move = e => { last = widthAt(e.clientX); setWidth(last) }
+        // While dragging, keep the resize cursor everywhere and stop text being selected, as Harness's handles do.
+        const root = document.documentElement
+        const previous = { cursor: root.style.cursor, userSelect: root.style.userSelect }
+        root.style.cursor = 'col-resize'
+        root.style.userSelect = 'none'
+        const up = e => {
+          e.currentTarget.removeEventListener('pointermove', move)
+          e.currentTarget.removeEventListener('pointerup', up)
+          e.currentTarget.removeEventListener('pointercancel', up)
+          root.style.cursor = previous.cursor
+          root.style.userSelect = previous.userSelect
+          setDragging(false)
+          saveTreeWidth(last)
+        }
+        event.currentTarget.addEventListener('pointermove', move)
+        event.currentTarget.addEventListener('pointerup', up)
+        event.currentTarget.addEventListener('pointercancel', up)
+        setDragging(true)
+      }
+      return h('div', {
+        className: 'hs-files-resize', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': 'Resize the file tree',
+        'data-dragging': dragging ? '' : undefined, onPointerDown,
+        onDoubleClick: () => { setWidth(TREE_WIDTH_DEFAULT); saveTreeWidth(TREE_WIDTH_DEFAULT) },
+      })
+    }
+
+    // Full screen has room for the tree, so there it shows unless it was hidden in full screen (remembered apart).
+    const FULL_TREE_KEY = 'harness-studio.files-tree-fullscreen'
+    let fullTreeShown = (() => { try { return localStorage.getItem(FULL_TREE_KEY) !== 'hidden' } catch { return true } })()
+    function setFullTreeShown(value) {
+      fullTreeShown = value
+      try { localStorage.setItem(FULL_TREE_KEY, value ? 'shown' : 'hidden') } catch { /* storage unavailable: the choice lasts for this window */ }
+      for (const listener of treeListeners) listener()
+    }
+    /** Toggle the tree for the pane's current presentation. */
+    function toggleTree(sessionId, fullscreen, shown) {
+      if (fullscreen) { setFullTreeShown(!shown); return }
+      setTreeHiddenFor(sessionId, false)
+      setTreeShown(!shown)
+    }
+    /** Whether the Files tab shows its tree, for the tab's own reader of its tab information. */
+    function useTreeShown(sessionId, useTabInfo) {
+      const fullscreen = useTabInfo ? useTabInfo().sidebar.fullscreen === true : false
+      const read = () => (fullscreen ? fullTreeShown : treeShown && !treeHiddenFor.has(String(sessionId)))
+      const [value, setValue] = useState(read)
+      useEffect(() => {
+        const listener = () => setValue(read())
+        treeListeners.add(listener)
+        listener()
+        return () => { treeListeners.delete(listener) }
+      }, [sessionId, fullscreen])
+      return [value, fullscreen]
     }
     /** A list glyph balanced for its box: solid dots, lines a little shorter than the dots' column is wide. */
     function TreeIcon() {
@@ -457,14 +743,14 @@ window.__ModuleLoader__.load({
     }
 
     /** The Files pane's header title: the tree button, then the name. */
-    function FilesTitle() {
+    function FilesTitle({ sessionId, useTabInfo }) {
       useFilesStyles()
-      const shown = useTreeShown()
+      const [shown, fullscreen] = useTreeShown(sessionId, useTabInfo)
       return h(React.Fragment, null,
         h('button', {
           type: 'button', className: 'hs-files-tree-toggle' + (shown ? ' hs-on' : ''), 'aria-pressed': shown,
           'aria-label': shown ? 'Hide file tree' : 'Show file tree', title: shown ? 'Hide file tree' : 'Show file tree',
-          onPointerDown: e => e.stopPropagation(), onClick: e => { e.stopPropagation(); setTreeShown(!shown) },
+          onPointerDown: e => e.stopPropagation(), onClick: e => { e.stopPropagation(); toggleTree(sessionId, fullscreen, shown) },
         }, h(TreeIcon)),
         'Files')
     }
@@ -479,28 +765,104 @@ window.__ModuleLoader__.load({
       // The tree starts at the Session's working folder, as Harness's own Files pane does.
       const cwd = props.useSessions(sessions => sessions.byId[props.sessionId]?.cwd)
       const [filter, setFilter] = useState('')
-      const treeOn = useTreeShown()
-      const [tabs, setTabs] = useState([]) // [{ path, line }]
+      const [treeOn] = useTreeShown(props.sessionId, props.useTabInfo)
+      const [treeWidth, setTreeWidth] = useState(readTreeWidth)
+      // While the tree is on screen it lists its folders again every few seconds and when the window regains
+      // focus, so files the agent creates or deletes show up. A pane behind another tab (it stays mounted) or
+      // a hidden window does not.
+      const rootRef = useRef(null)
+      const [treeRefresh, setTreeRefresh] = useState(0)
+      const treeListed = treeOn && cwd !== undefined && filter.trim() === ''
+      useEffect(() => {
+        if (!treeListed) return undefined
+        const refresh = () => {
+          const root = rootRef.current
+          if (document.visibilityState === 'visible' && root && root.getClientRects().length > 0) setTreeRefresh(n => n + 1)
+        }
+        const timer = setInterval(refresh, TREE_REFRESH_MS)
+        window.addEventListener('focus', refresh)
+        return () => { clearInterval(timer); window.removeEventListener('focus', refresh) }
+      }, [treeListed])
+      const [tabs, setTabs] = useState([]) // [{ path, line, preview }]
       const [active, setActive] = useState(undefined)
-      const open = (path, line) => {
-        setTabs(prev => prev.some(t => t.path === path) ? prev.map(t => t.path === path ? { path, line } : t) : [...prev, { path, line }])
+      const FileEditor = useFileEditor()
+      const [mdViews, setMdViews] = useState({}) // path → 'rendered' | 'source', for each open Markdown tab
+      const viewOf = path => mdViews[path] ?? 'rendered'
+      const [dirty, setDirty] = useState({}) // path → whether its editor has unsaved changes
+      const dirtyRef = useRef(dirty)
+      dirtyRef.current = dirty
+      // Like Claude's Files view and VS Code: a single click opens a preview tab (shown in italics) that the next
+      // file opened replaces; editing it, double-clicking its tab, or double-clicking the file keeps it open. A tab
+      // with unsaved changes is never replaced.
+      const open = (path, line, keep = false) => {
+        setTabs(prev => {
+          if (prev.some(t => t.path === path)) return prev.map(t => (t.path === path ? { path, line, preview: t.preview && !keep } : t))
+          const opened = { path, line, preview: !keep }
+          const previewAt = keep ? -1 : prev.findIndex(t => t.preview && !dirtyRef.current[t.path])
+          return previewAt === -1 ? [...prev, opened] : prev.map((t, i) => (i === previewAt ? opened : t))
+        })
+        if (hasViews(path)) setMdViews(prev => (path in prev ? prev : { ...prev, [path]: readMarkdownView() }))
         setActive(path)
       }
+      // Files the conversation opens (see openFromConversation), relative paths taken from the session's folder.
+      const openRef = useRef(open)
+      openRef.current = open
+      useEffect(() => {
+        const take = (sessionId) => {
+          if (sessionId !== String(props.sessionId)) return
+          const request = pendingOpens.get(sessionId)
+          if (!request || (!request.path.startsWith('/') && cwd === undefined)) return
+          pendingOpens.delete(sessionId)
+          const path = request.path.startsWith('/') ? request.path : cwd.replace(/\/+$/, '') + '/' + request.path.replace(/^(\.\/)+/, '')
+          openRef.current(path, request.line)
+        }
+        openListeners.add(take)
+        take(String(props.sessionId))
+        return () => { openListeners.delete(take) }
+      }, [props.sessionId, cwd])
+      const keepOpen = path => setTabs(prev => (prev.some(t => t.path === path && t.preview) ? prev.map(t => (t.path === path ? { ...t, preview: false } : t)) : prev))
       const close = (path) => {
+        if (dirty[path] && !window.confirm(`Discard your unsaved changes to ${baseName(path)}?`)) return
+        setDirty(prev => { const next = { ...prev }; delete next[path]; return next })
+        setMdViews(prev => { const next = { ...prev }; delete next[path]; return next })
         const index = tabs.findIndex(t => t.path === path)
         const next = tabs.filter(t => t.path !== path)
         setTabs(next)
         if (active === path) setActive(next.length ? (next[Math.max(0, index - 1)] || next[0]).path : undefined)
       }
       const current = tabs.find(t => t.path === active)
+      const copyButton = path => h('button', { type: 'button', className: 'hs-icon-button', title: 'Copy path', 'aria-label': 'Copy path', style: { width: 22, height: 22, flex: 'none' },
+        onClick: () => navigator.clipboard.writeText(relativeTo(cwd, path)).catch(() => {}) }, h(Icon, { d: 'M5.5 5.5h7v7h-7zM3.5 10.5v-7h7' }))
+      // Read-only view: without the Editor plugin, and for files it refuses (binary, too large, outside the workspace).
+      // Harness's viewers, when this Harness offers them as a Factory.
+      const canEmbed = typeof props.renderFactorySlot === 'function'
+      const viewerOnly = path => canEmbed && VIEWER_ONLY.test(path)
+      const textViews = path => isMarkdown(path) || TABULAR.test(path)
+      const hasViews = path => textViews(path) || (canEmbed && VIEWER_RENDERED.test(path))
+      const embedded = (tab, inEditor) => h(EmbeddedPreview, {
+        key: tab.path, renderFactorySlot: props.renderFactorySlot, useTabInfo: props.useTabInfo, sessionId: props.sessionId, path: tab.path, line: tab.line, inEditor, displayPath: relativeTo(cwd, tab.path),
+      })
+      // The rendered view: Markdown from the editor's text (unsaved edits included), other files from disk.
+      const rendered = tab => (isMarkdown(tab.path) ? text => h(MarkdownDocument, { text })
+        : TABULAR.test(tab.path) ? text => h(TableDocument, { text, path: tab.path })
+          : () => embedded(tab, true))
+      const barActions = path => hasViews(path)
+        ? h(React.Fragment, null, h(MarkdownViewSwitch, { view: viewOf(path), onChange: value => setMdViews(prev => ({ ...prev, [path]: value })) }), copyButton(path))
+        : copyButton(path)
+      const viewer = tab => h(React.Fragment, null,
+        h('div', { className: 'hs-files-path' }, h('span', null, relativeTo(cwd, tab.path)), h('span', { style: { marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 } }, barActions(tab.path))),
+        hasViews(tab.path) && !textViews(tab.path) && viewOf(tab.path) === 'rendered'
+          ? embedded(tab, true)
+          : h(FileView, { key: tab.path, read, path: tab.path, line: tab.line, rendered: textViews(tab.path) && viewOf(tab.path) === 'rendered' }))
       const query = filter.trim()
       let side
       if (cwd === undefined) side = h('div', { className: 'hs-files-muted' }, 'This session has no folder')
       else if (query.startsWith('?')) side = h(ContentMatches, { cwd, query: query.slice(1), onOpen: open })
       else if (query !== '') side = h(NameMatches, { cwd, needle: query.toLowerCase(), activePath: active, onOpen: open })
-      else side = h(TreeLevel, { list, path: cwd, depth: 0, activePath: active, onOpen: path => open(path) })
-      return h('div', { className: 'hs-files', 'data-testid': 'studio-files' },
-        treeOn && h('div', { className: 'hs-files-side' },
+      else side = h(TreeLevel, { list, path: cwd, depth: 0, activePath: active, onOpen: open, refresh: treeRefresh })
+      return h('div', { ref: rootRef, className: 'hs-files', 'data-testid': 'studio-files' },
+        treeOn && h('div', { className: 'hs-files-side', style: { width: treeWidth } },
+          h(TreeResizer, { setWidth: setTreeWidth }),
           h('div', { className: 'hs-files-filter' },
             h('span', { className: 'hs-files-filter-icon' }, h(Icon, { d: ICON_SEARCH })),
             h('input', { value: filter, placeholder: 'Filter, or ? to search in files', 'aria-label': 'Filter files', spellCheck: false,
@@ -514,15 +876,27 @@ window.__ModuleLoader__.load({
               h('div', null, treeOn ? 'Pick a file in the tree, or type ? and a word to search inside files.' : 'Show the file tree with the button at the top left of this pane.'))
             : h(React.Fragment, null,
               h('div', { className: 'hs-files-tabs', role: 'tablist' }, tabs.map(tab => h('div', {
-                key: tab.path, role: 'tab', 'aria-selected': tab.path === active, className: 'hs-files-tab' + (tab.path === active ? ' hs-active' : ''), title: relativeTo(cwd, tab.path),
-                onClick: () => setActive(tab.path), onAuxClick: e => { if (e.button === 1) close(tab.path) },
+                key: tab.path, role: 'tab', 'aria-selected': tab.path === active, className: 'hs-files-tab' + (tab.path === active ? ' hs-active' : '') + (tab.preview ? ' hs-preview' : ''),
+                title: relativeTo(cwd, tab.path) + (tab.preview ? ' (preview: double-click to keep open)' : ''),
+                onClick: () => setActive(tab.path), onDoubleClick: () => keepOpen(tab.path), onAuxClick: e => { if (e.button === 1) close(tab.path) },
               }, h(FilesIcon, { path: tab.path }), baseName(tab.path),
+                dirty[tab.path] ? h('span', { className: 'hs-files-dot', title: 'Unsaved changes' }) : null,
                 h('button', { type: 'button', 'aria-label': 'Close ' + baseName(tab.path), onClick: e => { e.stopPropagation(); close(tab.path) } }, h(Icon, { d: 'M4.5 4.5l7 7M11.5 4.5l-7 7' }))))),
-              current ? h('div', { className: 'hs-files-path' },
-                h('span', null, relativeTo(cwd, current.path)),
-                h('button', { type: 'button', className: 'hs-icon-button', title: 'Copy path', 'aria-label': 'Copy path', style: { marginLeft: 'auto', width: 22, height: 22 },
-                  onClick: () => navigator.clipboard.writeText(relativeTo(cwd, current.path)).catch(() => {}) }, h(Icon, { d: 'M5.5 5.5h7v7h-7zM3.5 10.5v-7h7' }))) : null,
-              current ? h(FileView, { key: current.path, read, path: current.path, line: current.line }) : null)))
+              // With the Editor plugin every open file is editable in place: each tab keeps its own editor, hidden
+              // while another tab shows, so switching tabs never loses unsaved changes.
+              current && viewerOnly(current.path) ? embedded(current) : null,
+              FileEditor
+                ? tabs.filter(tab => !viewerOnly(tab.path)).map(tab => h('div', { key: tab.path, className: 'hs-files-editor', hidden: tab.path !== active },
+                  h(FileEditor, {
+                    file: tab.path, displayPath: relativeTo(cwd, tab.path), line: tab.line, actions: barActions(tab.path),
+                    ...(hasViews(tab.path) ? { preview: rendered(tab), showPreview: viewOf(tab.path) === 'rendered' } : {}),
+                    onDirty: value => {
+                      setDirty(prev => (prev[tab.path] === value ? prev : { ...prev, [tab.path]: value }))
+                      if (value) keepOpen(tab.path)
+                    },
+                    fallback: () => viewer(tab),
+                  })))
+                : current && !viewerOnly(current.path) ? viewer(current) : null)))
     }
 
     // ---- git data from the Host's local helper (git-helper.js) ------------------------------------
@@ -601,23 +975,45 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** POST JSON to a helper endpoint; resolves { ok, value } or { ok: false, message } like gitGet. */
+    async function gitPost(route, body) {
+      const link = await currentHelper()
+      if (link === undefined) return { ok: false, message: 'The Dev Preview helper is not reachable. If you just updated the plugin, restart Harness.' }
+      try {
+        const response = await fetch(link.base + route, { method: 'POST', cache: 'no-store', headers: helperHeaders(link, { 'content-type': 'application/json' }), body: JSON.stringify(body) })
+        if (response.status === 401 || response.status === 403) { forgetHelper(link); return { ok: false, message: 'Reconnecting to the Dev Preview helper…' } }
+        const value = await response.json()
+        return response.ok ? { ok: true, value } : { ok: false, message: (value && value.error) || ('HTTP ' + response.status) }
+      } catch (error) {
+        forgetHelper(link)
+        return { ok: false, message: String(error && error.message || error) }
+      }
+    }
+
     const STATUS_POLL_MS = 4000
 
-    /** Live working-tree status for a folder; refreshes while the window is visible. */
+    /**
+     * Live working-tree status for a folder; refreshes while the window is visible. A poll is skipped while
+     * the previous one is still running: starting another would abort it (which stops its git work in the
+     * helper), so a slow repository would never finish.
+     */
     function useGitStatus(cwd) {
       const [state, setState] = useState({ kind: 'loading' })
       const [tick, setTick] = useState(0)
+      const busy = useRef(false)
       useEffect(() => {
         if (cwd === undefined) return undefined
         const controller = new AbortController()
+        busy.current = true
         gitGet('/status', { cwd }, controller.signal).then(result => {
           if (controller.signal.aborted) return
+          busy.current = false
           setState(result.ok ? { kind: 'ready', status: result.value } : { kind: 'failed', message: result.message })
         })
-        return () => controller.abort()
+        return () => { controller.abort(); busy.current = false }
       }, [cwd, tick])
       useEffect(() => {
-        const refresh = () => { if (document.visibilityState === 'visible') setTick(t => t + 1) }
+        const refresh = () => { if (document.visibilityState === 'visible' && !busy.current) setTick(t => t + 1) }
         const timer = setInterval(refresh, STATUS_POLL_MS)
         window.addEventListener('focus', refresh)
         return () => { clearInterval(timer); window.removeEventListener('focus', refresh) }
@@ -757,14 +1153,7 @@ window.__ModuleLoader__.load({
       .hs-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; }
     `
     function useChangesStyles() {
-      useEffect(() => {
-        if (document.getElementById('hs-changes-css')) return undefined
-        const style = document.createElement('style')
-        style.id = 'hs-changes-css'
-        style.textContent = CHANGES_CSS
-        document.head.append(style)
-        return undefined // shared by every Changes pane; left in place for the window's lifetime
-      }, [])
+      useEffect(() => { installStyles('hs-changes-css', CHANGES_CSS) }, [])
     }
 
     /** Unified diff → rows: one line-number column (new side; old side for removals), hunk gaps. */
@@ -803,7 +1192,9 @@ window.__ModuleLoader__.load({
 
     function ChangedFile({ cwd, file, open, onToggle }) {
       const [diff, setDiff] = useState(undefined)
-      const revision = file.status + ':' + file.added + ':' + file.deleted
+      // A same-size edit keeps the status and counts, so the file's modification time and size (from the
+      // helper) are part of the key too: an open diff reloads whenever the file is written.
+      const revision = file.status + ':' + file.added + ':' + file.deleted + ':' + file.mtime + ':' + file.size
       useEffect(() => {
         if (!open) return undefined
         const controller = new AbortController()
@@ -826,6 +1217,483 @@ window.__ModuleLoader__.load({
         open ? (diff === undefined ? h('div', { className: 'hs-note' }, 'Loading…')
           : diff.error ? h('div', { className: 'hs-note' }, diff.error)
           : h(React.Fragment, null, h(DiffView, { text: diff.diff, path: file.path }), diff.truncated ? h('div', { className: 'hs-note' }, 'Diff truncated') : null)) : null)
+    }
+
+    // ---- the Git page: read-only history of each workspace (left sidebar, below Instructions) ------------
+    // An overview of every workspace's branch, upstream and uncommitted files; then one workspace's commits
+    // with a branch graph, search (message, author or changed code), each commit's files and diffs, and
+    // blame for a file at that commit. Everything comes from the local helper's read-only git requests.
+    const GIT_CSS = `
+      .hg-page { position: fixed; inset: 0; z-index: 40; box-sizing: border-box; display: flex; flex-direction: column; color: var(--dsw-alias-label-primary); font-size: 13px; background: var(--dsw-alias-bg-base); }
+      /* The top bar sits in the window's title-bar band, beside the macOS window buttons. */
+      .hg-top { flex: none; display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 20px; border-bottom: 0.5px solid var(--dsw-alias-border-l2); }
+      [data-platform="darwin"] .hg-top { height: var(--dsh-frame-top-clearance, 48px); padding-left: 84px; -webkit-app-region: drag; }
+      .hg-top > * { -webkit-app-region: no-drag; }
+      /* The top bar as a breadcrumb: back, Git, then the workspace as a borderless picker. */
+      .hg-top { gap: 4px; }
+      /* The top bar's back arrow (icon only) and the commit view's labelled "Commits" back link. */
+      .hg-back-icon { display: inline-grid; place-items: center; width: 28px; height: 28px; margin-right: 4px; border: none; border-radius: 7px; background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer; padding: 0; }
+      .hg-back { display: inline-flex; align-items: center; gap: 2px; height: 28px; border: none; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 13px; cursor: pointer; padding: 0 8px 0 4px; margin-left: -4px; border-radius: 7px; }
+      :is(.hg-back, .hg-back-icon):hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+      .hg-title { display: inline-flex; align-items: center; gap: 7px; margin: 0; padding: 0 4px; font-size: 13px; font-weight: 600; line-height: 28px; color: var(--dsw-alias-label-primary); }
+      .hg-title svg { color: var(--dsw-alias-label-secondary); }
+      .hg-crumb-sep { display: inline-grid; place-items: center; color: var(--dsw-alias-label-tertiary); }
+      .hg-ws { position: relative; box-sizing: border-box; display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 8px 0 9px; margin-left: 2px; border: 0.5px solid var(--dsw-alias-border-l3); border-radius: 7px; color: var(--dsw-alias-label-primary); cursor: pointer; }
+      .hg-ws:hover { background: var(--dsw-alias-interactive-bg-hover); }
+      .hg-ws > svg { flex: none; color: var(--dsw-alias-label-secondary); }
+      .hg-ws select { appearance: none; -webkit-appearance: none; border: none; background: transparent; color: inherit; font: inherit; font-size: 13px; font-weight: 500; padding: 0 18px 0 0; height: 28px; cursor: pointer; max-width: 320px; text-overflow: ellipsis; field-sizing: content; }
+      .hg-ws select:focus { outline: none; }
+      .hg-ws:has(select:focus-visible) { box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-button-info-fill) 35%, transparent); }
+      .hg-ws .hg-ws-chevron { position: absolute; right: 8px; pointer-events: none; color: var(--dsw-alias-label-tertiary); }
+      .hg-field { display: flex; align-items: center; gap: 8px; color: var(--dsw-alias-label-secondary); font-size: 12.5px; }
+      .hg-input, .hg-select { height: 28px; box-sizing: border-box; border-radius: 7px; border: 0.5px solid var(--dsw-alias-border-l3); background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 12.5px; padding: 0 9px; }
+      .hg-select { padding-right: 26px; cursor: pointer; }
+      .hg-input:focus, .hg-select:focus { outline: none; border-color: var(--dsw-alias-label-tertiary); }
+      .hg-body { flex: 1; min-height: 0; overflow: auto; }
+      .hg-col { box-sizing: border-box; width: 100%; max-width: 1200px; margin: 0 auto; padding: 0 32px; }
+      .hg-section { font-size: 12px; font-weight: 500; color: var(--dsw-alias-label-secondary); text-transform: uppercase; letter-spacing: 0.04em; margin: 24px 0 10px; }
+      .hg-dim { color: var(--dsw-alias-label-tertiary); }
+      .hg-mono { font-family: var(--dsw-font-markdown-code-font-family, ui-monospace, Menlo, monospace); font-size: 12px; }
+      .hg-empty { padding: 48px 16px; text-align: center; color: var(--dsw-alias-label-tertiary); }
+      .hg-error { color: var(--dsw-alias-state-error-primary); font-size: 12.5px; }
+      /* overview */
+      .hg-list { border: 0.5px solid var(--dsw-alias-border-l2); border-radius: 12px; overflow: hidden; margin-bottom: 32px; }
+      .hg-grid { display: grid; grid-template-columns: minmax(180px, 1.2fr) minmax(130px, 0.8fr) 130px minmax(200px, 1.6fr) 16px; gap: 16px; align-items: center; padding: 0 16px; }
+      .hg-grid-head { height: 32px; font-size: 11.5px; color: var(--dsw-alias-label-tertiary); background: var(--dsw-alias-bg-layer-1, transparent); border-bottom: 0.5px solid var(--dsw-alias-border-l2); }
+      .hg-row { min-height: 56px; border-top: 0.5px solid var(--dsw-alias-border-l2); cursor: pointer; }
+      .hg-grid-head + .hg-row { border-top: none; }
+      .hg-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
+      .hg-row:focus-visible { outline: 1px solid var(--dsw-alias-label-tertiary); outline-offset: -1px; }
+      .hg-row.hg-off { cursor: default; }
+      .hg-row.hg-off:hover { background: transparent; }
+      .hg-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .hg-name { font-weight: 500; }
+      .hg-path { display: flex; min-width: 0; font-size: 11.5px; color: var(--dsw-alias-label-tertiary); white-space: nowrap; margin-top: 2px; }
+      .hg-path-head { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+      .hg-path-tail { flex: none; }
+      .hg-pill { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 10px; font-size: 11.5px; font-weight: 500; }
+      .hg-pill.hg-dirty { color: var(--dsw-alias-state-warning-primary, #c27c0e); background: color-mix(in srgb, var(--dsw-alias-state-warning-primary, #c27c0e) 14%, transparent); }
+      .hg-pill.hg-clean { color: var(--dsw-alias-state-success-primary, #1f9d55); background: color-mix(in srgb, var(--dsw-alias-state-success-primary, #1f9d55) 14%, transparent); }
+      .hg-chev { color: var(--dsw-alias-label-tertiary); display: grid; }
+      /* history */
+      .hg-tools { display: flex; align-items: center; gap: 10px; padding: 14px 0 12px; flex-wrap: wrap; }
+      .hg-tools .hg-grow { flex: 1; }
+      .hg-search { position: relative; display: flex; align-items: center; }
+      .hg-search svg { position: absolute; left: 9px; color: var(--dsw-alias-label-tertiary); pointer-events: none; }
+      .hg-search .hg-input { width: 260px; padding-left: 30px; }
+      .hg-check { display: flex; align-items: center; gap: 6px; color: var(--dsw-alias-label-secondary); font-size: 12.5px; cursor: pointer; }
+      .hg-status { color: var(--dsw-alias-label-tertiary); font-size: 12.5px; white-space: nowrap; }
+      /* One bordered section around the commit list (no lines between commits, which would cut the branch graph). */
+      .hg-commits { border: 0.5px solid var(--dsw-alias-border-l2); border-radius: 12px; padding: 6px 14px; margin-bottom: 24px; }
+      .hg-commit { display: flex; align-items: center; gap: 12px; height: 34px; padding: 0 10px 0 14px; margin: 0 -10px 0 -14px; border-radius: 8px; cursor: pointer; white-space: nowrap; }
+      .hg-commit:hover { background: var(--dsw-alias-interactive-bg-hover); }
+      .hg-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+      .hg-ref { flex-shrink: 0; font-size: 11px; line-height: 18px; padding: 0 7px; border-radius: 9px; background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-secondary); max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+      .hg-ref.hg-head-ref { color: var(--dsw-alias-state-success-primary, #1f9d55); background: color-mix(in srgb, var(--dsw-alias-state-success-primary, #1f9d55) 14%, transparent); }
+      .hg-author { flex: none; width: 140px; overflow: hidden; text-overflow: ellipsis; color: var(--dsw-alias-label-secondary); }
+      .hg-when { flex: none; width: 76px; text-align: right; color: var(--dsw-alias-label-tertiary); }
+      .hg-hash { flex: none; width: 60px; text-align: right; color: var(--dsw-alias-label-tertiary); }
+      .hg-more { display: block; margin: 14px auto 0; height: 30px; border-radius: 8px; border: 0.5px solid var(--dsw-alias-border-l3); background: transparent; color: inherit; font: inherit; font-size: 12.5px; padding: 0 16px; cursor: pointer; }
+      .hg-more:hover { background: var(--dsw-alias-interactive-bg-hover); }
+      /* one commit */
+      .hg-crumb { display: flex; align-items: center; gap: 8px; padding: 12px 0 4px; }
+      .hg-card { border: 0.5px solid var(--dsw-alias-border-l2); border-radius: 12px; padding: 18px 20px; margin-top: 8px; display: flex; flex-direction: column; gap: 10px; }
+      .hg-card-subject { margin: 0; font-size: 16px; font-weight: 500; line-height: 22px; }
+      .hg-card-body { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: inherit; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); max-width: 820px; }
+      .hg-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; font-size: 12.5px; color: var(--dsw-alias-label-secondary); }
+      .hg-link { border: none; background: transparent; padding: 0; font: inherit; color: var(--dsw-alias-label-secondary); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+      .hg-link:hover { color: var(--dsw-alias-label-primary); }
+      .hg-files { border: 0.5px solid var(--dsw-alias-border-l2); border-radius: 12px; overflow: hidden; margin-bottom: 32px; }
+      .hg-files .hs-file-head { position: static; }
+      .hg-blame-btn { margin-left: 6px; height: 22px; border: 0.5px solid var(--dsw-alias-border-l3); background: transparent; color: var(--dsw-alias-label-secondary); border-radius: 6px; font: inherit; font-size: 11.5px; padding: 0 8px; cursor: pointer; flex-shrink: 0; }
+      .hg-blame-btn:hover { color: var(--dsw-alias-label-primary); }
+      .hg-blame-btn[aria-pressed="true"] { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); }
+      /* blame: each run of lines from one commit is one block, every other block shaded */
+      .hg-blame { font: 12px/20px var(--dsw-font-markdown-code-font-family, ui-monospace, Menlo, monospace); overflow-x: auto; }
+      .hg-blame-line { display: flex; min-width: max-content; }
+      .hg-blame-line.hg-alt { background: color-mix(in srgb, var(--dsw-alias-label-primary) 3%, transparent); }
+      .hg-blame-line.hg-start { border-top: 0.5px solid var(--dsw-alias-border-l2); }
+      .hg-blame-who { flex: none; display: flex; gap: 8px; width: 280px; box-sizing: border-box; padding: 0 12px; overflow: hidden; white-space: nowrap; font-family: var(--dsw-font-family, inherit); font-size: 11.5px; color: var(--dsw-alias-label-tertiary); border-right: 0.5px solid var(--dsw-alias-border-l2); }
+      .hg-blame-who button { border: none; background: transparent; padding: 0; font: 11.5px/20px var(--dsw-font-markdown-code-font-family, ui-monospace, monospace); color: var(--dsw-alias-label-secondary); cursor: pointer; }
+      .hg-blame-who button:hover { text-decoration: underline; }
+      .hg-blame-who .hg-who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+      .hg-blame-ln { flex: none; width: 44px; padding-right: 10px; text-align: right; color: var(--dsw-alias-label-tertiary); user-select: none; }
+      .hg-blame-code { white-space: pre; padding-right: 16px; }
+    `
+    const LANE = 12
+    const ROW = 32
+    const LANE_COLORS = ['#4f8cff', '#e5a33d', '#3fb68b', '#d0618f', '#9b7bea', '#3fb5c9', '#d9784a', '#8fae3f']
+    const MAX_LANES = 12
+
+    /** Relative time: "just now", "5 min ago", "3 h ago", "2 d ago", then the date. */
+    function relTime(ms) {
+      const s = Math.max(0, (Date.now() - ms) / 1000)
+      if (s < 60) return 'just now'
+      if (s < 3600) return Math.floor(s / 60) + ' min ago'
+      if (s < 86400) return Math.floor(s / 3600) + ' h ago'
+      if (s < 86400 * 30) return Math.floor(s / 86400) + ' d ago'
+      return new Date(ms).toLocaleDateString()
+    }
+
+    /**
+     * Lanes for a branch graph over commits in topological order: each row's column, the lanes coming in
+     * from above and going out below, and which lanes join this commit or leave it for its parents.
+     */
+    function graphRows(commits) {
+      const lanes = []
+      const rows = []
+      for (const c of commits) {
+        let col = lanes.indexOf(c.hash)
+        const expected = col !== -1
+        if (col === -1) { col = lanes.indexOf(null); if (col === -1) col = lanes.length }
+        const before = lanes.slice()
+        const joining = []
+        before.forEach((hash, i) => { if (hash === c.hash && i !== col) { joining.push(i); lanes[i] = null } })
+        lanes[col] = c.parents[0] ?? null
+        const parentCols = c.parents.length ? [col] : []
+        for (const parent of c.parents.slice(1)) {
+          let j = lanes.indexOf(parent)
+          if (j === -1) { j = lanes.indexOf(null); if (j === -1) j = lanes.length; lanes[j] = parent }
+          parentCols.push(j)
+        }
+        while (lanes.length && lanes[lanes.length - 1] === null) lanes.pop()
+        rows.push({ col, expected, before, joining, parentCols })
+      }
+      return rows
+    }
+
+    function GraphCell({ row, width }) {
+      const x = i => LANE / 2 + i * LANE
+      const color = i => LANE_COLORS[i % LANE_COLORS.length]
+      const mid = ROW / 2
+      const parts = []
+      row.before.forEach((hash, i) => {
+        if (hash === null || hash === undefined || i >= MAX_LANES) return
+        if (i === row.col || row.joining.includes(i)) return
+        parts.push(h('line', { key: 'p' + i, x1: x(i), y1: 0, x2: x(i), y2: ROW, stroke: color(i), strokeWidth: 1.5 }))
+      })
+      if (row.expected) parts.push(h('line', { key: 'in', x1: x(row.col), y1: 0, x2: x(row.col), y2: mid, stroke: color(row.col), strokeWidth: 1.5 }))
+      for (const i of row.joining) if (i < MAX_LANES) parts.push(h('path', { key: 'j' + i, d: `M${x(i)} 0 C${x(i)} ${mid / 2} ${x(row.col)} ${mid / 2} ${x(row.col)} ${mid}`, stroke: color(i), strokeWidth: 1.5, fill: 'none' }))
+      for (const j of row.parentCols) if (j < MAX_LANES) parts.push(j === row.col
+        ? h('line', { key: 'o' + j, x1: x(row.col), y1: mid, x2: x(j), y2: ROW, stroke: color(j), strokeWidth: 1.5 })
+        : h('path', { key: 'o' + j, d: `M${x(row.col)} ${mid} C${x(row.col)} ${mid + mid / 2} ${x(j)} ${mid + mid / 2} ${x(j)} ${ROW}`, stroke: color(j), strokeWidth: 1.5, fill: 'none' }))
+      parts.push(h('circle', { key: 'dot', cx: x(Math.min(row.col, MAX_LANES - 1)), cy: mid, r: 3.5, fill: color(row.col), stroke: 'var(--dsw-alias-bg-base)', strokeWidth: 1.5 }))
+      return h('svg', { width, height: ROW, style: { flex: 'none', display: 'block' }, 'aria-hidden': true }, parts)
+    }
+
+    function refLabels(refs) {
+      return refs.map((ref) => {
+        const head = ref.startsWith('HEAD -> ')
+        const text = head ? ref.slice(8) : ref.replace(/^tag: /, '⌗ ')
+        if (ref === 'HEAD') return null
+        return h('span', { key: ref, className: 'hg-ref' + (head ? ' hg-head-ref' : ''), title: ref }, text)
+      })
+    }
+
+    function useHelperValue(route, params, deps) {
+      const [state, setState] = useState({ kind: 'loading' })
+      useEffect(() => {
+        if (!params) return undefined
+        const controller = new AbortController()
+        setState({ kind: 'loading' })
+        gitGet(route, params, controller.signal).then(result => {
+          if (!controller.signal.aborted) setState(result.ok ? { kind: 'ready', value: result.value } : { kind: 'failed', message: result.message })
+        })
+        return () => controller.abort()
+      }, deps)
+      return state
+    }
+
+    const ICON_CHEVRON_RIGHT = 'M6 4l4 4-4 4'
+    const ICON_SEARCH_SMALL = 'M7 12A5 5 0 1 0 7 2a5 5 0 0 0 0 10zM14 14l-3.5-3.5'
+
+    /** A path shown short (home as ~) that keeps its last folder visible when it has to be cut. */
+    function ShortPath({ path }) {
+      const text = path.replace(/^(?:\/Users\/[^/]+|\/home\/[^/]+)/, '~')
+      const cut = text.lastIndexOf('/')
+      return h('div', { className: 'hg-path', title: path },
+        h('span', { className: 'hg-path-head' }, cut > 0 ? text.slice(0, cut) : text),
+        cut > 0 ? h('span', { className: 'hg-path-tail' }, text.slice(cut)) : null)
+    }
+
+    function OverviewRow({ workspace, label, onOpen }) {
+      const state = useHelperValue('/overview', { cwd: workspace.path }, [workspace.path])
+      const o = state.kind === 'ready' ? state.value : undefined
+      const repo = Boolean(o && o.repo)
+      let branch = h('span', { className: 'hg-dim' }, state.kind === 'failed' ? state.message : 'Loading…')
+      let status = null
+      let last = null
+      if (o && !o.repo) branch = h('span', { className: 'hg-dim' }, 'Not a git repository')
+      else if (o) {
+        branch = h('div', { className: 'hg-cell' },
+          h('div', { className: 'hg-cell' }, o.branch === '(detached)' ? 'detached HEAD' : o.branch),
+          h('div', { className: 'hg-dim hg-cell', style: { fontSize: 11.5, marginTop: 2 } },
+            o.upstream ? (o.ahead || o.behind ? [o.ahead ? '↑' + o.ahead + ' ahead' : '', o.behind ? '↓' + o.behind + ' behind' : ''].filter(Boolean).join(' · ') : 'Up to date') : 'No upstream'))
+        status = o.changed
+          ? h('span', { className: 'hg-pill hg-dirty' }, o.changed.toLocaleString() + ' uncommitted')
+          : h('span', { className: 'hg-pill hg-clean' }, 'Clean')
+        last = o.last
+          ? h('div', { className: 'hg-cell' }, h('div', { className: 'hg-cell' }, o.last.subject), h('div', { className: 'hg-dim', style: { fontSize: 11.5, marginTop: 2 } }, relTime(o.last.time)))
+          : h('span', { className: 'hg-dim' }, 'No commits yet')
+      }
+      const open = () => { if (repo) onOpen(workspace) }
+      return h('div', {
+        className: 'hg-grid hg-row' + (repo ? '' : ' hg-off'), role: repo ? 'button' : undefined, tabIndex: repo ? 0 : undefined,
+        onClick: open, onKeyDown: e => { if (e.key === 'Enter') open() }, 'data-testid': 'git-workspace',
+      },
+        h('div', { className: 'hg-cell' }, h('div', { className: 'hg-name hg-cell' }, label), h(ShortPath, { path: workspace.path })),
+        h('div', { className: 'hg-cell' }, branch),
+        h('div', null, status),
+        h('div', { className: 'hg-cell' }, last),
+        h('span', { className: 'hg-chev' }, repo ? h(Icon, { d: ICON_CHEVRON_RIGHT }) : null))
+    }
+
+    function BlameView({ cwd, hash, path, onPick }) {
+      const state = useHelperValue('/blame', { cwd, hash, path }, [cwd, hash, path])
+      if (state.kind !== 'ready') return h('div', { className: 'hs-note' }, state.kind === 'failed' ? state.message : 'Loading blame…')
+      const { lines, commits, truncated } = state.value
+      const lang = languageOf(path)
+      let block = 0
+      return h('div', { className: 'hg-blame' },
+        lines.map((line, i) => {
+          const first = i === 0 || lines[i - 1].hash !== line.hash
+          if (first && i > 0) block++
+          const who = commits[line.hash] || {}
+          return h('div', { key: i, className: 'hg-blame-line' + (block % 2 ? ' hg-alt' : '') + (first && i > 0 ? ' hg-start' : '') },
+            h('span', { className: 'hg-blame-who', title: first ? `${line.hash.slice(0, 10)} · ${who.author ?? ''}\n${who.summary ?? ''}` : undefined },
+              first ? h('button', { type: 'button', onClick: () => onPick(line.hash), title: 'Open this commit' }, line.hash.slice(0, 7)) : null,
+              first ? h('span', { className: 'hg-who' }, who.author ?? '') : null,
+              first && who.time ? h('span', null, relTime(who.time)) : null),
+            h('span', { className: 'hg-blame-ln' }, i + 1),
+            h('span', { className: 'hg-blame-code' }, highlight(line.text, lang).map(([cls, t], j) => cls ? h('span', { key: j, className: cls }, t) : t)))
+        }),
+        truncated ? h('div', { className: 'hs-note' }, 'Blame shows the first 20,000 lines') : null)
+    }
+
+    function CommitFile({ cwd, hash, file, onPick }) {
+      const [open, setOpen] = useState(false)
+      const [blame, setBlame] = useState(false)
+      const diff = useHelperValue('/commit-diff', open && !blame ? { cwd, hash, path: file.path } : undefined, [open, blame, cwd, hash, file.path])
+      const slash = file.path.lastIndexOf('/')
+      return h('div', null,
+        h('div', { className: 'hs-file-head', onClick: () => setOpen(v => !v), title: file.from ? `${file.from} → ${file.path}` : file.path, role: 'button', 'aria-expanded': open },
+          h('span', { className: 'hs-chevron' }, h(Icon, { d: open ? 'M4 6l4 4 4-4' : 'M6 4l4 4-4 4' })),
+          h(FileGlyph, { path: file.path }),
+          h('span', { className: 'hs-file-name' }, slash === -1 ? file.path : file.path.slice(slash + 1)),
+          h('span', { className: 'hs-file-dir' }, h('bdi', null, slash === -1 ? '' : file.path.slice(0, slash))),
+          file.status !== 'modified' ? h('span', { className: 'hs-file-tag' }, STATUS_LABEL[file.status] ?? file.status) : null,
+          file.added == null ? h('span', { className: 'hs-file-tag' }, 'binary') : h('span', { className: 'hs-plus' }, '+' + file.added),
+          file.deleted == null ? null : h('span', { className: 'hs-minus' }, '−' + file.deleted),
+          file.status !== 'deleted' ? h('button', { type: 'button', className: 'hg-blame-btn', 'aria-pressed': open && blame, title: 'Who last changed each line, as of this commit',
+            onClick: (e) => { e.stopPropagation(); if (open && blame) setBlame(false); else { setOpen(true); setBlame(true) } } }, 'Blame') : null),
+        !open ? null
+          : blame ? h(BlameView, { cwd, hash, path: file.path, onPick })
+          : diff.kind !== 'ready' ? h('div', { className: 'hs-note' }, diff.kind === 'failed' ? diff.message : 'Loading…')
+          : h(React.Fragment, null, h(DiffView, { text: diff.value.diff, path: file.path }), diff.value.truncated ? h('div', { className: 'hs-note' }, 'Diff truncated') : null))
+    }
+
+    function CommitDetail({ cwd, hash, onPick }) {
+      const state = useHelperValue('/commit', { cwd, hash }, [cwd, hash])
+      if (state.kind !== 'ready') return h('div', { className: 'hg-empty' }, state.kind === 'failed' ? state.message : 'Loading…')
+      const c = state.value
+      const totals = c.files.reduce((t, f) => ({ added: t.added + (f.added ?? 0), deleted: t.deleted + (f.deleted ?? 0) }), { added: 0, deleted: 0 })
+      const newline = c.message.indexOf('\n')
+      const subject = newline === -1 ? c.message : c.message.slice(0, newline)
+      const body = newline === -1 ? '' : c.message.slice(newline + 1).replace(/^\n+/, '')
+      return h('div', { 'data-testid': 'git-commit-detail' },
+        h('div', { className: 'hg-card' },
+          h('h2', { className: 'hg-card-subject' }, subject),
+          body ? h('pre', { className: 'hg-card-body' }, body) : null,
+          h('div', { className: 'hg-facts' },
+            h('span', { title: c.email }, c.author),
+            h('span', { title: new Date(c.time).toLocaleString() }, new Date(c.time).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) + ' · ' + relTime(c.time)),
+            h('span', { className: 'hg-mono', title: c.hash }, c.hash.slice(0, 10)),
+            c.parents.length ? h('span', null, c.parents.length > 1 ? 'Parents ' : 'Parent ',
+              c.parents.map((p, i) => h(React.Fragment, { key: p }, i ? ', ' : '', h('button', { type: 'button', className: 'hg-link hg-mono', onClick: () => onPick(p) }, p.slice(0, 7))))) : h('span', { className: 'hg-dim' }, 'First commit')),
+          c.refs.filter(r => r !== 'HEAD').length ? h('div', { style: { display: 'flex', gap: 6, flexWrap: 'wrap' } }, refLabels(c.refs)) : null),
+        h('div', { className: 'hg-section', style: { display: 'flex', gap: 10, alignItems: 'baseline' } },
+          h('span', null, c.files.length.toLocaleString() + (c.files.length === 1 ? ' file changed' : ' files changed')),
+          h('span', { className: 'hs-plus', style: { textTransform: 'none', letterSpacing: 0 } }, '+' + totals.added.toLocaleString()),
+          h('span', { className: 'hs-minus', style: { textTransform: 'none', letterSpacing: 0 } }, '−' + totals.deleted.toLocaleString())),
+        c.files.length === 0 ? h('div', { className: 'hg-empty' }, 'No file changes against the first parent')
+          : h('div', { className: 'hg-files' }, c.files.map(file => h(CommitFile, { key: c.hash + file.path, cwd, hash: c.hash, file, onPick }))),
+        c.truncated ? h('div', { className: 'hs-note' }, 'Showing the first 2,000 files') : null)
+    }
+
+    /**
+     * The workspace's local branches; choosing one switches to it. Refused (by the helper) while anything is
+     * uncommitted, and here while an agent is working in the workspace, since its files would change under it.
+     */
+    function BranchMenu({ workspace, useSessions, onSwitched, onError }) {
+      const cwd = workspace.path
+      const [tick, setTick] = useState(0)
+      const state = useHelperValue('/branches', { cwd }, [cwd, tick])
+      const [busy, setBusy] = useState(false)
+      const byId = useSessions ? useSessions(s => s.byId) : undefined
+      const working = (workspace.sessionIds ?? []).some(id => byId?.[id]?.running === true)
+      if (state.kind !== 'ready' || !state.value.repo) return null
+      const { current, branches } = state.value
+      const choose = async (name) => {
+        onError(undefined)
+        if (name === current) return
+        if (working) { onError('An agent is working in this workspace. Wait for it to finish or stop it, then switch, so its files do not change under it.'); return }
+        setBusy(true)
+        const result = await gitPost('/switch', { cwd, branch: name })
+        setBusy(false)
+        if (!result.ok) onError(result.message)
+        else onSwitched()
+        setTick(t => t + 1)
+      }
+      return h('label', { className: 'hg-field' }, 'Branch',
+        h('select', { className: 'hg-select', style: { minWidth: 150, maxWidth: 260 }, value: current ?? '', disabled: busy, 'aria-label': 'Branch', onChange: e => choose(e.target.value), 'data-testid': 'git-branch' },
+          current === null ? h('option', { value: '' }, 'detached HEAD') : null,
+          branches.map(b => h('option', { key: b.name, value: b.name, disabled: Boolean(b.elsewhere), title: b.elsewhere ? `Checked out in ${b.elsewhere}` : b.subject },
+            b.name + (b.track ? `  (${b.track})` : '') + (b.elsewhere ? '  · in another worktree' : '')))),
+        busy ? h('span', { className: 'hg-dim' }, 'Switching…') : null)
+    }
+
+    function History({ workspace, useSessions }) {
+      const cwd = workspace.path
+      const [all, setAll] = useState(false)
+      const [text, setText] = useState('')
+      const [by, setBy] = useState('message')
+      const [query, setQuery] = useState('')
+      const [pages, setPages] = useState({ commits: [], more: false, loading: true, error: undefined })
+      const [selected, setSelected] = useState(undefined)
+      const [switches, setSwitches] = useState(0)
+      const [switchError, setSwitchError] = useState(undefined)
+      const scroller = useRef(null)
+      const listScroll = useRef(0)
+      const overview = useHelperValue('/overview', { cwd }, [cwd, switches])
+      const load = useCallback((skip) => {
+        const controller = new AbortController()
+        setPages(p => ({ ...p, loading: true, error: undefined }))
+        const params = { cwd, skip: String(skip), ...(all ? { all: '1' } : {}), ...(query ? { q: query, by } : {}) }
+        gitGet('/log', params, controller.signal).then(result => {
+          if (controller.signal.aborted) return
+          if (!result.ok) { setPages(p => ({ ...p, loading: false, error: result.message })); return }
+          setPages(p => ({ commits: skip === 0 ? result.value.commits : [...p.commits, ...result.value.commits], more: result.value.more, loading: false }))
+        })
+        return controller
+      }, [cwd, all, query, by, switches])
+      useEffect(() => { const c = load(0); return () => c.abort() }, [load])
+      // Searching by code walks every commit's changes, so it runs on Enter rather than as you type.
+      useEffect(() => {
+        if (by === 'code') return undefined
+        const timer = setTimeout(() => setQuery(text.trim()), 300)
+        return () => clearTimeout(timer)
+      }, [text, by])
+      // One scrolling area serves the list and a commit; the list's position is restored on the way back.
+      const openCommit = (hash) => { if (!selected && scroller.current) listScroll.current = scroller.current.scrollTop; setSelected(hash); if (scroller.current) scroller.current.scrollTop = 0 }
+      const closeCommit = () => setSelected(undefined)
+      useEffect(() => { if (!selected && scroller.current) scroller.current.scrollTop = listScroll.current }, [selected])
+      const searching = query !== ''
+      const rows = useMemo(() => (searching ? [] : graphRows(pages.commits)), [pages.commits, searching])
+      const lanes = rows.reduce((n, r) => Math.max(n, r.before.length, r.col + 1, ...r.parentCols.map(j => j + 1)), 1)
+      const graphWidth = Math.min(lanes, MAX_LANES) * LANE + 4
+      const o = overview.kind === 'ready' ? overview.value : undefined
+      const status = o && o.repo
+        ? [o.upstream ? `${o.upstream}${o.ahead ? ' ↑' + o.ahead : ''}${o.behind ? ' ↓' + o.behind : ''}${!o.ahead && !o.behind ? ', up to date' : ''}` : 'No upstream',
+          o.changed ? `${o.changed.toLocaleString()} uncommitted` : 'clean'].join(' · ')
+        : o ? 'Not a git repository' : ''
+      return h('div', { className: 'hg-body', ref: scroller },
+        h('div', { className: 'hg-col' },
+          h('div', { className: 'hg-tools' },
+            h(BranchMenu, { workspace, useSessions, onError: setSwitchError, onSwitched: () => { setSelected(undefined); setSwitches(n => n + 1) } }),
+            h('span', { className: 'hg-status' }, status),
+            h('span', { className: 'hg-grow' }),
+            h('div', { className: 'hg-search' },
+              h('svg', { width: 14, height: 14, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round', 'aria-hidden': true }, h('path', { d: ICON_SEARCH_SMALL })),
+              h('input', { className: 'hg-input', placeholder: by === 'code' ? 'Text added or removed, then Enter' : by === 'author' ? 'Author name or email' : 'Search commit messages', value: text, 'aria-label': 'Search commits',
+                onChange: e => setText(e.target.value), onKeyDown: e => { if (e.key === 'Enter') setQuery(text.trim()); if (e.key === 'Escape') { setText(''); setQuery('') } } })),
+            h('select', { className: 'hg-select', value: by, 'aria-label': 'Search by', onChange: e => { setBy(e.target.value); setQuery('') } },
+              h('option', { value: 'message' }, 'Message'), h('option', { value: 'author' }, 'Author'), h('option', { value: 'code' }, 'Changed code')),
+            h('label', { className: 'hg-check' }, h('input', { type: 'checkbox', checked: all, onChange: e => setAll(e.target.checked) }), 'All branches')),
+          switchError ? h('div', { className: 'hg-error', role: 'alert', style: { marginBottom: 10 } }, switchError) : null,
+          selected ? h(React.Fragment, null,
+            h('div', { className: 'hg-crumb' }, h('button', { type: 'button', className: 'hg-back', onClick: closeCommit }, h(Icon, { d: 'M10 4L6 8l4 4' }), 'Commits')),
+            h(CommitDetail, { cwd, hash: selected, onPick: openCommit })) : null,
+          // The list stays mounted while a commit is open, so going back keeps its loaded pages.
+          h('div', { className: 'hg-commits', role: 'list', style: selected ? { display: 'none' } : undefined },
+            searching ? h('div', { className: 'hg-status', style: { padding: '10px 0 4px' } }, pages.loading ? 'Searching…' : `${pages.commits.length.toLocaleString()}${pages.more ? '+' : ''} matching ${pages.commits.length === 1 ? 'commit' : 'commits'}`) : null,
+            pages.error ? h('div', { className: 'hg-empty' }, pages.error)
+              : !pages.loading && pages.commits.length === 0 ? h('div', { className: 'hg-empty' }, searching ? 'No commits match' : 'No commits yet')
+              : pages.commits.map((c, i) => h('div', {
+                key: c.hash, role: 'listitem', className: 'hg-commit', onClick: () => openCommit(c.hash), title: `${c.short} · ${c.author} · ${new Date(c.time).toLocaleString()}`, 'data-testid': 'git-commit',
+              },
+                searching ? null : h(GraphCell, { row: rows[i], width: graphWidth }),
+                h('span', { className: 'hg-subject' }, c.subject),
+                refLabels(c.refs),
+                h('span', { className: 'hg-author' }, c.author),
+                h('span', { className: 'hg-when' }, relTime(c.time)),
+                h('span', { className: 'hg-hash hg-mono' }, c.short))),
+            pages.more ? h('button', { type: 'button', className: 'hg-more', disabled: pages.loading, onClick: () => load(pages.commits.length) }, pages.loading ? 'Loading…' : 'Load more') : null)))
+    }
+
+    const GIT_WORKSPACE_KEY = 'harness-studio.git-workspace'
+
+    /**
+     * The page shown before Git opened (another sidebar page, or null for the conversation), so Back returns
+     * to it. Followed from Harness's layout service while it is composed.
+     */
+    const gitReturn = { layout: undefined, previous: null, current: null }
+    function followPanels(layout) {
+      gitReturn.layout = layout
+      gitReturn.current = layout.panelInfo.getSnapshot().activePanelId
+      const unsubscribe = layout.panelInfo.subscribe(() => {
+        const next = layout.panelInfo.getSnapshot().activePanelId
+        if (next === gitReturn.current) return
+        if (next === 'git') gitReturn.previous = gitReturn.current
+        gitReturn.current = next
+      })
+      return () => { unsubscribe(); if (gitReturn.layout === layout) gitReturn.layout = undefined }
+    }
+    function leaveGit() {
+      const back = gitReturn.previous === 'git' ? null : gitReturn.previous
+      try { gitReturn.layout?.selectPanel(back) } catch { gitReturn.layout?.selectPanel(null) }
+    }
+
+    /** A workspace's name, with the folder it sits in when another workspace has the same name. */
+    const workspaceLabel = (w, all) => (all.filter(o => o.title === w.title).length > 1 ? `${w.title} (${w.path.split('/').slice(-2, -1)[0] || w.path})` : w.title)
+
+    function GitPage({ useWorkspaces, useSessions }) {
+      useChangesStyles()
+      useEffect(() => { installStyles('hs-git-css', GIT_CSS) }, [])
+      const items = useWorkspaces ? useWorkspaces(state => state.items) : undefined
+      const workspaces = (items ?? []).filter(w => w && w.path)
+      // '' is the overview of every workspace; the choice is remembered like the Instructions page's.
+      const [choice, setChoice] = useState(() => { try { return localStorage.getItem(GIT_WORKSPACE_KEY) ?? '' } catch { return '' } })
+      const choose = (value) => {
+        try { localStorage.setItem(GIT_WORKSPACE_KEY, value) } catch { /* not remembered */ }
+        setChoice(value)
+      }
+      const current = choice ? workspaces.find(w => w.path === choice) : undefined
+      // Always over the whole window, like a full-screen right panel; Back returns to what was open before.
+      return h('div', { className: 'hg-page', 'data-testid': 'git-page' },
+        h('div', { className: 'hg-top' },
+          h('button', { type: 'button', className: 'hg-back-icon', onClick: leaveGit, 'data-testid': 'git-back', title: 'Back to where you were', 'aria-label': 'Back' }, h(Icon, { d: 'M10 4L6 8l4 4' })),
+          h('h1', { className: 'hg-title' }, h(GitIcon, { size: 15 }), 'Git'),
+          h('span', { className: 'hg-crumb-sep', 'aria-hidden': true }, h(Icon, { d: 'M6.5 4l4 4-4 4' })),
+          h('label', { className: 'hg-ws', title: current ? current.path : 'All workspaces' },
+            h(Icon, { d: ICON_FOLDER }),
+            h('select', { value: current ? current.path : '', onChange: e => choose(e.target.value), 'aria-label': 'Workspace' },
+              h('option', { value: '' }, 'All workspaces'),
+              workspaces.map(w => h('option', { key: w.path, value: w.path, title: w.path }, workspaceLabel(w, workspaces)))),
+            h('span', { className: 'hg-ws-chevron', 'aria-hidden': true }, h('svg', { width: 10, height: 10, viewBox: '0 0 10 10', fill: 'none', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round', strokeLinejoin: 'round' }, h('path', { d: 'M2.5 4l2.5 2.5L7.5 4' }))))),
+        current ? h(History, { key: current.path, workspace: current, useSessions })
+          : h('div', { className: 'hg-body' }, h('div', { className: 'hg-col' },
+            h('div', { className: 'hg-section' }, 'Workspaces'),
+            workspaces.length === 0 ? h('div', { className: 'hg-empty' }, items === undefined ? 'Loading workspaces…' : 'No workspaces yet')
+              : h('div', { className: 'hg-list' },
+                h('div', { className: 'hg-grid hg-grid-head' }, h('span', null, 'Workspace'), h('span', null, 'Branch'), h('span', null, 'Changes'), h('span', null, 'Last commit'), h('span')),
+                workspaces.map(w => h(OverviewRow, { key: w.path, workspace: w, label: workspaceLabel(w, workspaces), onOpen: ws => choose(ws.path) }))),
+            h('div', { className: 'hg-dim', style: { fontSize: 12, marginTop: -20, marginBottom: 32 } }, 'Ahead and behind are as git last saw each upstream; nothing is fetched. Choosing a branch is the only change this page makes.'))))
+    }
+
+    function GitIcon({ size = 16, className }) {
+      return h('svg', { width: size, height: size, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.1, strokeLinecap: 'round', strokeLinejoin: 'round', className, 'aria-hidden': true },
+        h('circle', { cx: 4.5, cy: 3.5, r: 1.5 }), h('circle', { cx: 4.5, cy: 12.5, r: 1.5 }), h('circle', { cx: 11.5, cy: 5.5, r: 1.5 }),
+        h('path', { d: 'M4.5 5v6M11.5 7c0 3-7 2-7 4' }))
     }
 
     const smallDiff = file => file.added != null && (file.added + (file.deleted || 0)) <= AUTO_EXPAND_LINES
@@ -924,7 +1792,207 @@ window.__ModuleLoader__.load({
       return rows
     }
 
-    function DetailsPane({ sessionId, useSessions, sidebar }) {
+    // ---- background tasks: everything still working for this session, in one list ----------------------
+    // Four sources, each read where it lives: Harness's background jobs (commands the agent left running,
+    // workflows) through its jobs service; subagents from the session's subagent catalog; Watch's watches and
+    // the agent's terminal programs through those plugins' Remote methods. Each running row has a Stop.
+    const ICON_AGENT = 'M8 2l6 6-6 6-6-6zM5.5 8h5'
+    const ICON_TERMINAL = 'M3.5 4.5L7 8l-3.5 3.5M8.5 11.5h4'
+    const ICON_EYE = 'M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8zM8 10a2 2 0 1 0 0-4 2 2 0 0 0 0 4z'
+    const ICON_STOP = 'M4.5 4.5h7v7h-7z'
+
+    /** Harness services this card reads when they are composed: the jobs list and the session store. */
+    const optional = { jobs: undefined, sessions: undefined, remote: undefined }
+    const optionalListeners = new Set()
+    const setOptional = (key, value) => { optional[key] = value; for (const listener of optionalListeners) listener() }
+    function useOptional(key) {
+      const [, bump] = useState(0)
+      useEffect(() => { const listener = () => bump(n => n + 1); optionalListeners.add(listener); return () => optionalListeners.delete(listener) }, [])
+      return optional[key]
+    }
+
+    async function pluginCall(endpoint, request) {
+      if (!connection?.rpc) throw new Error('Harness did not provide its connection')
+      const result = await connection.rpc.call('/api', endpoint, { args: { request } })
+      if (!result?.ok) throw new Error(result?.error?.message ?? 'The plugin did not answer')
+      return result.value
+    }
+
+    /** A plugin's list for this session, read now and every few seconds while the pane is open. */
+    function usePolled(endpoint, sessionId, everyMs) {
+      const [state, setState] = useState({ items: [], error: undefined })
+      const [tick, setTick] = useState(0)
+      useEffect(() => {
+        if (!sessionId) return undefined
+        let live = true
+        const read = () => pluginCall(endpoint, { action: 'list', sessionId })
+          .then(items => { if (live) setState({ items: Array.isArray(items) ? items : [], error: undefined }) })
+          .catch(error => { if (live) setState(prev => ({ items: prev.items, error: error.message })) })
+        read()
+        const timer = setInterval(read, everyMs)
+        return () => { live = false; clearInterval(timer) }
+      }, [endpoint, sessionId, everyMs, tick])
+      return [state, () => setTick(n => n + 1)]
+    }
+
+    function useJobRows(sessionId) {
+      const jobs = useOptional('jobs')
+      const [, bump] = useState(0)
+      useEffect(() => {
+        if (!jobs || !sessionId) return undefined
+        const stopRows = jobs.watchRows(sessionId)
+        const unsubscribe = jobs.state.subscribe(() => bump(n => n + 1))
+        return () => { unsubscribe(); stopRows() }
+      }, [jobs, sessionId])
+      return jobs ? (jobs.state.getSnapshot().rows[sessionId] ?? []) : []
+    }
+
+    /** Elapsed time the way Claude Code's list shows it: 15s, 1m 09s, 22m, 1h 5m. */
+    function elapsed(ms) {
+      const seconds = Math.max(0, Math.floor(ms / 1000))
+      if (seconds < 60) return seconds + 's'
+      const minutes = Math.floor(seconds / 60)
+      if (minutes < 10) return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s`
+      if (minutes < 60) return minutes + 'm'
+      return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+    }
+
+    function useNow(everyMs) {
+      const [now, setNow] = useState(Date.now())
+      useEffect(() => { const timer = setInterval(() => setNow(Date.now()), everyMs); return () => clearInterval(timer) }, [everyMs])
+      return now
+    }
+
+    const taskStyles = {
+      label: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+      time: { color: 'var(--dsw-alias-label-tertiary)', fontVariantNumeric: 'tabular-nums', flexShrink: 0 },
+      // Every row is one 20px line; the stop slot is kept on finished rows too, so the times line up.
+      row: { display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, height: 20 },
+      stop: { flexShrink: 0, display: 'grid', placeItems: 'center', width: 18, height: 18, border: 'none', borderRadius: 4, background: 'transparent', color: 'var(--dsw-alias-label-secondary)', cursor: 'pointer', padding: 0 },
+      toggle: { display: 'flex', alignItems: 'center', gap: 10, height: 20, border: 'none', background: 'transparent', color: 'var(--dsw-alias-label-tertiary)', font: 'inherit', padding: 0, cursor: 'pointer', textAlign: 'left' },
+    }
+
+    function TaskRow({ task, now }) {
+      const [stopping, setStopping] = useState(false)
+      const [error, setError] = useState(undefined)
+      const time = task.running ? elapsed(now - task.startedAt) : task.finishedAt ? elapsed(task.finishedAt - task.startedAt) : ''
+      const stop = async () => {
+        setStopping(true)
+        setError(undefined)
+        try { await task.stop() } catch (e) { setError(e.message); setStopping(false) }
+      }
+      return h('div', { style: taskStyles.row, title: error ? `${task.label}\n${error}` : task.title ?? task.label, 'data-testid': 'studio-task' },
+        h('span', { style: detailStyles.icon }, h(Icon, { d: task.icon })),
+        h('span', { style: { ...taskStyles.label, ...(task.running ? null : { color: 'var(--dsw-alias-label-secondary)' }) } }, task.label),
+        // The note and the time read as one phrase: "watch removed, 1m 18s".
+        task.note || time ? h('span', { style: taskStyles.time }, [task.note, time].filter(Boolean).join(', ')) : null,
+        task.running && task.stop ? h('button', {
+          type: 'button', style: { ...taskStyles.stop, ...(stopping ? { opacity: 0.4 } : null) }, disabled: stopping,
+          title: error ?? `Stop ${task.kindLabel}`, 'aria-label': `Stop ${task.label}`, onClick: stop,
+        }, h(Icon, { d: ICON_STOP })) : h('span', { style: { width: 18, flexShrink: 0 } }))
+    }
+
+    /**
+     * Terminal programs and watches leave their plugin's list once stopped or removed. What this card saw
+     * running is kept here per session (until the app restarts), so it stays under finished.
+     */
+    const ended = new Map() // sessionId → Map(key → finished task)
+    const lastSeen = new Map() // sessionId → Map(key → task as last seen)
+
+    function BackgroundTasks({ sessionId, useSessions, useSessionStatus }) {
+      const now = useNow(1000)
+      const remote = useOptional('remote')
+      const sessions = useOptional('sessions')
+      const jobRows = useJobRows(sessionId)
+      const jobs = useOptional('jobs')
+      const [terminalState, refreshTerminals] = usePolled(TERMINAL_ENDPOINT, sessionId, 3000)
+      const [watchState, refreshWatches] = usePolled(WATCH_ENDPOINT, sessionId, 5000)
+      const catalog = useSessions(state => state.projectionsBySession?.[sessionId]?.values?.subagentCatalog)
+      const byId = useSessions(state => state.byId)
+      const statuses = useSessionStatus ? useSessionStatus(value => value) : undefined
+      const [showFinished, setShowFinished] = useState(false)
+      const [allFinished, setAllFinished] = useState(false)
+      // The catalog is a projection the header's subagent list also reads; ask for it in case nothing has.
+      useEffect(() => { if (sessionId) sessions?.refreshProjections?.(sessionId)?.catch?.(() => {}) }, [sessions, sessionId])
+
+      const tasks = []
+      for (const job of jobRows) {
+        const running = job.status === 'running' || job.status === 'stopping'
+        tasks.push({
+          key: 'job:' + job.id, icon: ICON_TERMINAL, label: job.label, kindLabel: 'background command', running,
+          startedAt: job.startedAt, finishedAt: job.finishedAt, note: job.status === 'stopping' ? 'stopping' : job.progress,
+          title: job.detail ? `${job.label}\n${job.detail}` : job.label,
+          stop: job.status === 'running' && jobs ? async () => { const r = await jobs.kill(sessionId, job.id); if (!r.ok) throw new Error(r.error?.message ?? 'Could not stop it') } : undefined,
+        })
+      }
+      for (const entry of Array.isArray(catalog) ? catalog : []) {
+        const summary = byId?.[entry.id]
+        const running = (statuses?.get?.(entry.id)?.running ?? summary?.running) === true
+        const timing = summary?.projectionValues?.subagentTiming
+        const startedAt = timing?.active?.since ?? entry.createdAt
+        tasks.push({
+          key: 'agent:' + entry.id, icon: ICON_AGENT, label: entry.label || summary?.title || 'Subagent', kindLabel: 'subagent', running,
+          startedAt, finishedAt: running ? undefined : (timing ? entry.createdAt + timing.settledMs : undefined),
+          stop: remote?.subagents?.interruptByParent ? async () => {
+            const r = await remote.subagents.interruptByParent(entry.id, sessionId, 'continuable')
+            if (r && r.ok === false) throw new Error(r.error?.message ?? 'Could not stop it')
+          } : undefined,
+        })
+      }
+      for (const terminal of terminalState.items) {
+        tasks.push({
+          key: 'terminal:' + terminal.id, icon: ICON_TERMINAL, label: terminal.command, kindLabel: 'terminal program', running: terminal.running,
+          startedAt: terminal.startedAt, finishedAt: terminal.finishedAt, title: `Agent terminal ${terminal.id}: ${terminal.command}`,
+          stop: async () => { await pluginCall(TERMINAL_ENDPOINT, { action: 'stop', sessionId, id: terminal.id }); refreshTerminals() },
+        })
+      }
+      for (const watch of watchState.items) {
+        const running = !watch.expired && !(watch.wakes >= watch.maxWakes)
+        tasks.push({
+          key: 'watch:' + watch.id, icon: ICON_EYE, label: watch.label, kindLabel: 'watch', running,
+          startedAt: Date.parse(watch.createdAt) || watch.createdAt, title: `Watch: ${watch.label}\n${watch.what}`,
+          stop: async () => { await pluginCall(WATCH_ENDPOINT, { action: 'remove', sessionId, id: watch.id }); refreshWatches() },
+        })
+      }
+      // Plugin items that were listed before and are gone now ended in between.
+      const [, bumpEnded] = useState(0)
+      const pluginTasks = tasks.filter(t => t.key.startsWith('terminal:') || t.key.startsWith('watch:'))
+      const pluginKeys = pluginTasks.map(t => t.key).join('|')
+      useEffect(() => {
+        if (!sessionId) return
+        const before = lastSeen.get(sessionId) ?? new Map()
+        const now = new Map(pluginTasks.map(t => [t.key, t]))
+        let changed = false
+        if (!ended.has(sessionId)) ended.set(sessionId, new Map())
+        for (const [key, task] of before) {
+          if (now.has(key) || ended.get(sessionId).has(key)) continue
+          ended.get(sessionId).set(key, { ...task, running: false, stop: undefined, finishedAt: task.finishedAt ?? Date.now(), note: task.running ? (key.startsWith('watch:') ? 'watch removed' : 'program stopped') : task.note })
+          changed = true
+        }
+        lastSeen.set(sessionId, now)
+        if (changed) bumpEnded(n => n + 1)
+      }, [sessionId, pluginKeys, terminalState.items, watchState.items])
+      for (const task of ended.get(sessionId)?.values() ?? []) if (!tasks.some(t => t.key === task.key)) tasks.push(task)
+
+      const running = tasks.filter(t => t.running).sort((a, b) => a.startedAt - b.startedAt)
+      const finished = tasks.filter(t => !t.running).sort((a, b) => (b.finishedAt ?? b.startedAt) - (a.finishedAt ?? a.startedAt))
+
+      // The newest finished tasks first, ten at a time, so a long session keeps the card short.
+      const FINISHED_SHOWN = 10
+      const shownFinished = allFinished ? finished : finished.slice(0, FINISHED_SHOWN)
+      return h('div', { style: { ...detailStyles.card, gap: 6 }, 'data-testid': 'studio-background-tasks' },
+        h('div', { style: { ...detailStyles.title, marginBottom: 2 } }, 'Background tasks'),
+        running.length === 0 ? h('div', { style: { ...detailStyles.dim, height: 20, lineHeight: '20px' } }, 'Nothing running in the background') : null,
+        running.map(task => h(TaskRow, { key: task.key, task, now })),
+        finished.length ? h('button', { type: 'button', style: taskStyles.toggle, 'aria-expanded': showFinished, onClick: () => setShowFinished(v => !v) },
+          h('span', { style: detailStyles.icon }, h(Icon, { d: showFinished ? 'M4 6l4 4 4-4' : 'M6 4l4 4-4 4' })),
+          `${finished.length.toLocaleString()} finished`) : null,
+        showFinished ? shownFinished.map(task => h(TaskRow, { key: task.key, task, now })) : null,
+        showFinished && finished.length > FINISHED_SHOWN ? h('button', { type: 'button', style: { ...taskStyles.toggle, paddingLeft: 26 }, onClick: () => setAllFinished(v => !v) },
+          allFinished ? 'Show fewer' : `Show all ${finished.length.toLocaleString()}`) : null)
+    }
+
+    function DetailsPane({ sessionId, useSessions, useSessionStatus, sidebar }) {
       const usage = useComposerStats()
       const cwd = useSessions(sessions => sessions.byId[sessionId]?.cwd)
       const [state] = useGitStatus(cwd)
@@ -953,17 +2021,21 @@ window.__ModuleLoader__.load({
             status && status.repo ? h('button', { type: 'button', style: detailStyles.link, onClick: () => sidebar.openTab(CHANGES_KIND) }, 'Review') : null)),
         usage.length ? h('div', { style: detailStyles.card, 'data-testid': 'studio-usage' },
           h('div', { style: detailStyles.title }, 'Usage'),
-          // Two readings per row, each value right beside its label.
-          h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', columnGap: 16, rowGap: 6 } },
+          // Readings in fixed-width columns packed from the left, each value right beside its label: two per row
+          // in the side pane, more as the pane widens, never spread across a full-window pane.
+          h('div', { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, 176px)', columnGap: 16, rowGap: 6 } },
             usage.map(([label, value], i) => h('div', { key: i, style: { display: 'flex', alignItems: 'baseline', gap: 6, minWidth: 0 } },
               label ? h('span', { style: { color: 'var(--dsw-alias-label-tertiary)', whiteSpace: 'nowrap' } }, label + ':') : null,
-              h('span', { style: { fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, value))))) : null)
+              h('span', { style: { fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, value))))) : null,
+        h(BackgroundTasks, { sessionId, useSessions, useSessionStatus }))
     }
 
     const CHANGES_TAB_ID = '@harness-studio/changes'
     const CHANGES_KIND = 'studio-changes'
     const DETAILS_TAB_ID = '@harness-studio/details'
     const DETAILS_KIND = 'studio-details'
+    const TERMINAL_ENDPOINT = 'harnessStudioTerminal/call'
+    const WATCH_ENDPOINT = 'harnessStudioWatch/call'
 
     // ---- one watcher for the right sidebar's DOM ----------------------------------------------------
     // Several features follow the sidebar's tabs, panes and page frames. A single observer on the page
@@ -1032,7 +2104,11 @@ window.__ModuleLoader__.load({
     // the browser is showing. Tabs only carry a dock id in the page, so mark each with its kind, and
     // make the strip's + open a new browser tab instead of the start page.
     function markTabKinds(sidebar) {
-      const kinds = new Map(sidebar.openTabs.getSnapshot().map(tab => [String(tab.tabId), tab.kind]))
+      // Tab ids are unique only within a Session, and the page shows the on-screen Session's panes.
+      const onScreen = sidebar.mounted && sidebar.mounted.getSnapshot()
+      const kinds = new Map(sidebar.openTabs.getSnapshot()
+        .filter(tab => onScreen === undefined || tab.sessionId === onScreen)
+        .map(tab => [String(tab.tabId), tab.kind]))
       for (const element of document.querySelectorAll('[data-dockkit-tab]')) {
         const kind = kinds.get(element.getAttribute('data-dockkit-tab'))
         if (kind !== undefined && element.getAttribute('data-studio-kind') !== kind) element.setAttribute('data-studio-kind', kind)
@@ -1048,8 +2124,12 @@ window.__ModuleLoader__.load({
         if (add === null || !add.closest('[class*="_tabStrip_"]')?.querySelector('[aria-selected="true"][data-studio-kind="browser"]')) return
         event.preventDefault()
         event.stopPropagation()
-        // No address: a blank tab, without the "Enter an address" warning an empty one raises.
-        sidebar.openTab('browser', { params: {}, revealIfOpened: false })
+        // In the pane whose + was clicked; without a pane Harness picks its active one, which with two
+        // stacked panes is often the other. No address: a blank tab, without the "Enter an address"
+        // warning an empty one raises.
+        const holder = add.closest('[data-dockkit-pane]')
+        const paneId = holder instanceof HTMLElement ? holder.dataset.dockkitPane : undefined
+        sidebar.openTab('browser', { params: {}, revealIfOpened: false, ...(paneId ? { paneId } : {}) })
       }
       document.addEventListener('click', onClick, true)
       return () => { unsubscribe(); unwatch(); document.removeEventListener('click', onClick, true) }
@@ -1174,6 +2254,9 @@ window.__ModuleLoader__.load({
     // Browser pane menus. Kept topped up as Harness re-renders.
     const CLOSE_ATTR = 'data-studio-pane-close'
     const EXPAND_ATTR = 'data-studio-pane-expand'
+    const LAYOUT_ATTR = 'data-studio-pane-layout'
+    /** Two panes side by side with a small arrow: the button that opens the pane layout menu. */
+    const GLYPH_LAYOUT = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor"/><path d="M8 2.5v11" stroke="currentColor"/></svg>'
     const CHROME_ATTR = 'data-studio-strip-chrome'
     const SOLO_ATTR = 'data-hs-solo'
     // The added group copies Harness's class names to look the same, so "Harness's own" must exclude it.
@@ -1216,7 +2299,7 @@ window.__ModuleLoader__.load({
       for (const strip of document.querySelectorAll('[class*="_tabCell_"] [class*="_tabStrip_"]')) {
         // A floating pane has Harness's own dock-back and close controls; expanding it means nothing.
         if (strip.closest('[data-dockkit-host="float"]')) {
-          strip.querySelectorAll('[' + EXPAND_ATTR + '], [' + CLOSE_ATTR + ']').forEach(button => button.remove())
+          strip.querySelectorAll('[' + EXPAND_ATTR + '], [' + CLOSE_ATTR + '], [' + LAYOUT_ATTR + ']').forEach(button => button.remove())
           continue
         }
         const chrome = stripChromeOf(strip)
@@ -1226,6 +2309,14 @@ window.__ModuleLoader__.load({
         else {
           const label = inFullscreen(added) ? 'Exit fullscreen' : 'Fullscreen'
           if (added.getAttribute('aria-label') !== label) { added.setAttribute('aria-label', label); added.title = label }
+        }
+        // The layout menu (Move, Fill, Open in new window) has a button of its own, just before expand.
+        if (!chrome.querySelector('[' + LAYOUT_ATTR + ']')) {
+          const expand = chrome.querySelector('[' + EXPAND_ATTR + '], ' + NATIVE_FULLSCREEN)
+          const layout = makeButton(LAYOUT_ATTR, 'Pane layout', GLYPH_LAYOUT)
+          layout.setAttribute('aria-haspopup', 'menu')
+          if (expand) expand.before(layout)
+          else chrome.prepend(layout)
         }
         if (!strip.querySelector('[' + CLOSE_ATTR + ']')) {
           chrome.append(makeButton(CLOSE_ATTR, 'Close pane', '<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>'))
@@ -1275,13 +2366,11 @@ window.__ModuleLoader__.load({
       }
     }
 
-    // ---- the expand button's menu: Move, Fill and arrange, Open in new window --------------------------
-    // Like Claude Code desktop (and the macOS green button), resting the pointer on a pane's expand
-    // button opens a menu; clicking the button still expands. Move places the pane on a side of the
-    // other one, Fill shows it alone in the sidebar, Arrange shows both again, and Open in new window
-    // lifts it into a window of its own over the app (Harness's floating panel).
-    const MENU_OPEN_DELAY_MS = 300
-    const MENU_CLOSE_DELAY_MS = 250
+    // ---- the pane layout menu: Move, Fill and arrange, Open in new window ------------------------------
+    // A pane's layout button (beside expand) opens a menu on click; clicking it again, pressing elsewhere or
+    // Escape closes it. Move places the pane on a side of the other one, Fill shows it alone in the sidebar,
+    // Arrange shows both again, and Open in new window lifts it into a window of its own over the app
+    // (Harness's floating panel). The expand button only expands.
     const frameGlyph = inner => '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor"/>' + inner + '</svg>'
     const block = (x, y, w, hgt, opacity = 1) => '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + hgt + '" rx="1" fill="currentColor" opacity="' + opacity + '"/>'
     const PANE_MENU_GLYPHS = {
@@ -1376,16 +2465,12 @@ window.__ModuleLoader__.load({
     function watchPaneMenu(sidebar) {
       let menu = null
       let anchor = null
-      let openTimer
-      let closeTimer
       const close = () => {
-        clearTimeout(openTimer)
-        clearTimeout(closeTimer)
         menu?.remove()
         menu = null
+        anchor?.setAttribute('aria-expanded', 'false')
         anchor = null
       }
-      const scheduleClose = () => { clearTimeout(closeTimer); closeTimer = setTimeout(close, MENU_CLOSE_DELAY_MS) }
       const open = (button) => {
         close()
         const sessionId = sidebar.mounted && sidebar.mounted.getSnapshot()
@@ -1393,40 +2478,36 @@ window.__ModuleLoader__.load({
         const cell = button.closest('[data-dockkit-column]')
         if (!sessionId || !grid || !cell || !button.isConnected) return
         anchor = button
+        button.setAttribute('aria-expanded', 'true')
         menu = buildPaneMenu(sidebar, sessionId, grid, cell, close)
         const rect = button.getBoundingClientRect()
         menu.style.top = rect.bottom + 6 + 'px'
         menu.style.right = Math.max(8, window.innerWidth - rect.right) + 'px'
-        menu.addEventListener('pointerenter', () => clearTimeout(closeTimer))
-        menu.addEventListener('pointerleave', scheduleClose)
         document.body.append(menu)
       }
-      const expandButton = target => target instanceof Element ? target.closest('[' + EXPAND_ATTR + '], ' + NATIVE_FULLSCREEN) : null
-      const onOver = (event) => {
-        const button = expandButton(event.target)
+      const layoutButton = target => target instanceof Element ? target.closest('[' + LAYOUT_ATTR + ']') : null
+      const onClick = (event) => {
+        const button = layoutButton(event.target)
         if (button === null) return
-        if (button === anchor) { clearTimeout(closeTimer); return }
-        clearTimeout(openTimer)
-        openTimer = setTimeout(() => open(button), MENU_OPEN_DELAY_MS)
+        event.preventDefault()
+        event.stopPropagation()
+        if (anchor === button) close()
+        else open(button)
       }
-      const onOut = (event) => {
-        const button = expandButton(event.target)
-        if (button === null || (event.relatedTarget instanceof Node && button.contains(event.relatedTarget))) return
-        clearTimeout(openTimer)
-        if (menu) scheduleClose()
+      // Pressing anywhere but the menu or its button closes it.
+      const onDown = (event) => {
+        if (!menu || !(event.target instanceof Node)) return
+        if (menu.contains(event.target) || layoutButton(event.target) === anchor) return
+        close()
       }
-      // Pressing anywhere but the menu closes it; a press on the expand button then expands as usual.
-      const onDown = (event) => { if (menu && !(event.target instanceof Node && menu.contains(event.target))) close() }
       const onKey = (event) => { if (menu && event.key === 'Escape') close() }
-      document.addEventListener('pointerover', onOver, true)
-      document.addEventListener('pointerout', onOut, true)
+      document.addEventListener('click', onClick, true)
       window.addEventListener('pointerdown', onDown, true)
       window.addEventListener('keydown', onKey, true)
       window.addEventListener('blur', close)
       return () => {
         close()
-        document.removeEventListener('pointerover', onOver, true)
-        document.removeEventListener('pointerout', onOut, true)
+        document.removeEventListener('click', onClick, true)
         window.removeEventListener('pointerdown', onDown, true)
         window.removeEventListener('keydown', onKey, true)
         window.removeEventListener('blur', close)
@@ -1455,7 +2536,7 @@ window.__ModuleLoader__.load({
         unwatchExpand()
         unwatchMenu()
         document.removeEventListener('click', onClick, true)
-        document.querySelectorAll('[' + CLOSE_ATTR + '], [' + EXPAND_ATTR + '], [' + CHROME_ATTR + ']').forEach(element => element.remove())
+        document.querySelectorAll('[' + CLOSE_ATTR + '], [' + EXPAND_ATTR + '], [' + LAYOUT_ATTR + '], [' + CHROME_ATTR + ']').forEach(element => element.remove())
       }
     }
 
@@ -1679,6 +2760,21 @@ window.__ModuleLoader__.load({
       }, [viewport])
       const flash = (text) => { setNote(text); later(() => setNote(undefined), 2500) }
       useEffect(() => { armed.current = false; setPicking(false) }, [frame])
+      // A new document in the same frame did not get the user's Pick: disarm, so the page that replaced the one
+      // the user was picking on cannot send a selection of its own. In-page navigations (hash, history) keep
+      // the same document and its pick mode.
+      useEffect(() => {
+        if (!frame) return undefined
+        const disarm = () => { armed.current = false; setPicking(false) }
+        if (frame.tagName === 'WEBVIEW') {
+          const onStart = event => { if (event.isMainFrame !== false && event.isInPlace !== true) disarm() }
+          frame.addEventListener('did-start-navigation', onStart)
+          frame.addEventListener('did-navigate', disarm)
+          return () => { frame.removeEventListener('did-start-navigation', onStart); frame.removeEventListener('did-navigate', disarm) }
+        }
+        frame.addEventListener('load', disarm)
+        return () => frame.removeEventListener('load', disarm)
+      }, [frame])
       useCompanionMessages(frame, (message) => {
         // The page can end pick mode, never start it.
         if ((message.type === 'pick:state' && message.picking !== true) || message.type === 'pick:cancelled') { armed.current = false; setPicking(false); return }
@@ -2133,7 +3229,7 @@ window.__ModuleLoader__.load({
      * The placed panel's resize edge: Harness's own handle only knows the panel on the right, so a panel
      * on the left, top or bottom gets this one, drawn over the edge it shares with the conversation.
      */
-    function watchPlaceHandle(getSessionId) {
+    function watchPlaceHandle(getSessionId, mayWrite = () => true) {
       const handle = document.createElement('div')
       handle.setAttribute('data-hs-place-handle', '')
       let drag = null
@@ -2153,7 +3249,7 @@ window.__ModuleLoader__.load({
           : { left: (c.left - f.left) + 'px', top: ((side === 'bottom' ? c.top : c.bottom) - f.top - 4) + 'px', width: c.width + 'px', height: '8px', cursor: 'row-resize' })
       }
       const onDown = (event) => {
-        if (event.button !== 0 || event.target !== handle) return
+        if (event.button !== 0 || event.target !== handle || !mayWrite()) return
         event.preventDefault()
         event.stopPropagation()
         const frame = document.querySelector(APP_FRAME)
@@ -2196,6 +3292,8 @@ window.__ModuleLoader__.load({
       window.addEventListener('blur', onUp)
       return {
         position,
+        /** Take the handle away while another header writes the layout (it adds its own). */
+        hide: () => { if (!drag) handle.remove() },
         dispose: () => {
           onUp()
           handle.remove()
@@ -2268,6 +3366,41 @@ window.__ModuleLoader__.load({
         }
         s.actions.setExpanded(sessionId, false)
       }
+    }
+
+    // Files have one home, the Files tab. A file preview or Editor tab that still opens (restored from an earlier
+    // layout, or opened by naming its type) is closed, with its pane when it was alone there, and its file opened
+    // in the Files tab instead. Only the on-screen Session is changed; another one is moved when it comes on screen.
+    const PREVIEW_KIND = 'text'
+    const EDITOR_KIND = 'harness-studio-editor'
+    function fileTabAddress(sessionId, tab) {
+      if (tab.kind === PREVIEW_KIND) return tab.contentId
+      const match = /[?&]path=([^&#]+)/.exec(tab.contentId)
+      if (!match) return undefined
+      try { return sessionFileAddress(String(sessionId), decodeURIComponent(match[1]).replace(/^\//, '/')) } catch { return undefined }
+    }
+    function moveFileTabsToFiles(sidebar) {
+      const sessionId = sidebar.mounted && sidebar.mounted.getSnapshot()
+      if (sessionId === undefined) return
+      const moving = sidebar.openTabs.getSnapshot().filter(tab => tab.sessionId === sessionId && (tab.kind === PREVIEW_KIND || tab.kind === EDITOR_KIND))
+      for (const tab of moving) {
+        const s = surfaceOf(sidebar, sessionId)
+        if (!s) return
+        const address = fileTabAddress(sessionId, tab)
+        const pane = dockPanesOf(s.layout).find(candidate => candidate.tabs.includes(tab.tabId))
+        if (pane && pane.tabs.length === 1) closePaneOf(sidebar, sessionId, pane.id)
+        else closeTabIn(sidebar, sessionId, s.actions, tab.tabId)
+        if (address) openFromConversation(sidebar, { sessionId, address, params: undefined, openTab: (kind, options) => sidebar.openTab(kind, options) })
+      }
+    }
+    function watchFileTabs(sidebar) {
+      let timer
+      // Deferred: the check closes and opens tabs, which must not happen inside the store's own notification.
+      const schedule = () => { clearTimeout(timer); timer = setTimeout(() => moveFileTabsToFiles(sidebar), 0) }
+      const unsubscribeTabs = sidebar.openTabs.subscribe(schedule)
+      const unsubscribeMounted = sidebar.mounted.subscribe(schedule)
+      schedule()
+      return () => { clearTimeout(timer); unsubscribeTabs(); unsubscribeMounted() }
     }
 
     /**
@@ -2387,6 +3520,18 @@ window.__ModuleLoader__.load({
       if (element.getAttribute(name) !== text) element.setAttribute(name, text)
     }
 
+    /** The Session whose panel the right sidebar shows, or undefined when Harness does not say. */
+    const mountedSession = sidebar => (sidebar.mounted && typeof sidebar.mounted.getSnapshot === 'function' ? sidebar.mounted.getSnapshot() : undefined)
+    /**
+     * The one stack watcher allowed to write the window grid, the pane grid and their drag handles. Every
+     * mounted Session's header runs a watcher; if each wrote its own Session's sizes they would fight (the
+     * layout flickering between Sessions) and a drag would get one shield per header. Only a watcher of the
+     * Session the sidebar shows may claim it, and the first such claim holds while that stays true (a new
+     * Session's header can briefly show the toolbar twice). Without `sidebar.mounted` every watcher writes,
+     * as before.
+     */
+    let stackWriter
+
     /** Mirror the split's sizes onto the stacked rows, and turn the divider into a vertical resize. */
     function watchStack(sidebar, getSessionId) {
       const style = document.createElement('style')
@@ -2394,10 +3539,21 @@ window.__ModuleLoader__.load({
       style.textContent = STACK_CSS + PLACE_CSS
       document.head.append(style)
       let drag = null
-      const placeHandle = watchPlaceHandle(getSessionId)
+      const self = { sessionId: getSessionId }
+      const mayWrite = () => {
+        if (!sidebar.mounted || typeof sidebar.mounted.getSnapshot !== 'function') return true
+        const mounted = mountedSession(sidebar)
+        if (mounted !== undefined && getSessionId() !== mounted) { if (stackWriter === self) stackWriter = undefined; return false }
+        // No Session mounted yet: one header still keeps the window grid right (whichever claims it first).
+        if (stackWriter === undefined || (mounted !== undefined && stackWriter.sessionId() !== mounted)) stackWriter = self
+        return stackWriter === self
+      }
+      const placeHandle = watchPlaceHandle(getSessionId, mayWrite)
       const sync = () => {
         // While dragging, the pointer owns the sizes; the store catches up on release.
         if (drag) return
+        // Another Session's header writes the layout: leave it alone, and take this one's handle away.
+        if (!mayWrite()) { placeHandle.hide(); return }
         const sessionId = getSessionId()
         if (sessionId) separateMixedPane(sidebar, sessionId)
         syncFrame(sessionId)
@@ -2427,6 +3583,8 @@ window.__ModuleLoader__.load({
         const divider = event.target instanceof Element ? event.target.closest('[data-dockkit-divider]') : null
         const grid = divider && divider.closest('[class*="_tabLayout_"]')
         if (!divider || !grid || !grid.querySelector(':scope > ' + COL1)) return
+        // One header drags: the one that writes the layout.
+        if (!mayWrite()) return
         const side = grid.hasAttribute('data-hs-side')
         const swapped = grid.hasAttribute('data-hs-swap')
         // Harness's own drag resizes side-by-side panes in its own order; stacked or swapped panes
@@ -2491,10 +3649,14 @@ window.__ModuleLoader__.load({
         panelObserver.disconnect()
         window.removeEventListener('resize', sync)
         placeHandle.dispose()
-        const frame = document.querySelector(APP_FRAME)
-        if (frame) for (const name of ['data-hs-place', 'data-hs-chat-hidden']) frame.removeAttribute(name)
-        const grid = visibleLayout()
-        if (grid) for (const name of ['data-hs-side', 'data-hs-swap', 'data-hs-fill']) grid.removeAttribute(name)
+        // Only the writer undoes the layout; another header going away leaves it to the writer.
+        if (mayWrite()) {
+          const frame = document.querySelector(APP_FRAME)
+          if (frame) for (const name of ['data-hs-place', 'data-hs-chat-hidden']) frame.removeAttribute(name)
+          const grid = visibleLayout()
+          if (grid) for (const name of ['data-hs-side', 'data-hs-swap', 'data-hs-fill']) grid.removeAttribute(name)
+        }
+        if (stackWriter === self) stackWriter = undefined
         window.removeEventListener('pointerdown', onDown, true)
         window.removeEventListener('pointermove', onMove, true)
         window.removeEventListener('pointerup', onUp, true)
@@ -2637,6 +3799,103 @@ window.__ModuleLoader__.load({
       webview.addEventListener('did-navigate', () => { log.length = 0 })
     }
 
+    // ---- DevTools (desktop patch 18): network traffic, response bodies, errors with stack traces ----------
+    const devtoolsApi = () => (typeof window.dshDesktop?.browserDevtools === 'function' ? window.dshDesktop.browserDevtools : undefined)
+
+    /**
+     * Whether a page is your own development page: on this computer or your local network. DevTools is used
+     * only on these. Public sites stay untouched because pages can detect DevTools (anti-bot checks look for
+     * it, which could undo a Google sign-in in the pane), and because a signed-in site's responses can hold
+     * account data that would then reach the model. Websites belong in your own Chrome (the extension).
+     */
+    function isLocalPage(url) {
+      let parsed
+      try { parsed = new URL(url) } catch { return false }
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+      const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+      if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.test') || host.endsWith('.local')) return true
+      // Dev servers that listen on every interface print http://0.0.0.0:<port>, which reaches this computer.
+      if (host === '0.0.0.0') return true
+      if (host === '::1' || /^f[cd][0-9a-f]{2}:/.test(host)) return true
+      const ip = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host)
+      if (!ip) return false
+      const [a, b] = [Number(ip[1]), Number(ip[2])]
+      return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+    }
+    const LOCAL_ONLY_MESSAGE = 'Network details and error stacks are read only on pages on this computer or your local network (localhost, 127.0.0.1, 0.0.0.0, .localhost, .test, .local and private addresses). For other websites, use the user\'s Chrome through the chrome_* tools when they are available.'
+
+    async function devtools(webview, method, params) {
+      const api = devtoolsApi()
+      if (api === undefined) throw new Error('Network details need the Harness Studio desktop app with DevTools support (0.3.0 or later).')
+      // Checked before every command, so a page that navigated away from a local address is not read either.
+      if (!isLocalPage(webview.getURL())) throw new Error(LOCAL_ONLY_MESSAGE)
+      return api(webview.getWebContentsId(), method, params)
+    }
+    /**
+     * Attach DevTools to a page early, so its network traffic and errors are recorded from now on.
+     * Resolves to whether recording is on; it never rejects.
+     */
+    async function startRecording(webview) {
+      if (devtoolsApi() === undefined) return false
+      try {
+        await devtools(webview, 'Harness.events', { since: Number.MAX_SAFE_INTEGER })
+        return true
+      } catch { return false /* the page is not ready yet, or closed */ }
+    }
+    /** Per page, the last event before its record starts: events up to it belong to a load that was redone. */
+    const recordStart = new WeakMap()
+    const CONSOLE_KINDS = ['console', 'exception', 'log']
+    const NETWORK_KINDS = ['request', 'response', 'failed']
+    /**
+     * The page's recorded events of some kinds, from where its record starts, and how many older ones the
+     * desktop dropped to stay within its per-page limit (`dropped` per kind group, when it reports that).
+     * The desktop is asked for those kinds only, so busy network traffic cannot crowd out console messages;
+     * a desktop without that filter returns every kind, and the rest are filtered out here.
+     */
+    async function recordedEvents(webview, kinds) {
+      const since = recordStart.get(webview) ?? 0
+      let reply = await devtools(webview, 'Harness.events', { since, kinds })
+      // DevTools detaches when the page leaves a local address and numbers events from 0 again when it
+      // reattaches. A mark above the newest number belongs to the old attachment: read the new record whole.
+      if (since > 0 && typeof reply?.latest === 'number' && reply.latest < since) {
+        recordStart.delete(webview)
+        reply = await devtools(webview, 'Harness.events', { since: 0, kinds })
+      }
+      const events = (Array.isArray(reply?.events) ? reply.events : []).filter(event => kinds.includes(event.kind))
+      const dropped = reply?.dropped !== null && typeof reply?.dropped === 'object' ? reply.dropped : undefined
+      return { events, dropped }
+    }
+    /** A dropped count from a reply, or 0 when the desktop does not report one. */
+    const droppedCount = (dropped, group) => (dropped && Number.isInteger(dropped[group]) && dropped[group] > 0 ? dropped[group] : 0)
+    /**
+     * Whether the page's own document request was recorded, i.e. recording began before it loaded. When it was
+     * not, the record restarts here, so the reload that follows is not listed beside the half-recorded load.
+     */
+    async function recordedDocument(webview) {
+      try {
+        const { events, latest } = await devtools(webview, 'Harness.events', { since: 0 })
+        if (events.some(event => event.kind === 'request' && event.data.type === 'Document')) return true
+        recordStart.set(webview, latest)
+        return false
+      } catch { return true /* nothing to gain from a reload */ }
+    }
+    /**
+     * Requests seen in a page, newest last: the request joined with its response or failure; with how many
+     * older network events the desktop dropped.
+     */
+    async function networkRows(webview) {
+      const { events, dropped } = await recordedEvents(webview, NETWORK_KINDS)
+      const rows = new Map()
+      for (const event of events) {
+        const row = rows.get(event.data.id) ?? { id: event.data.id, time: event.time }
+        if (event.kind === 'request') Object.assign(row, { method: event.data.method, url: event.data.url, type: event.data.type })
+        if (event.kind === 'response') Object.assign(row, { status: event.data.status, mimeType: event.data.mimeType, url: row.url ?? event.data.url, method: row.method ?? event.data.method })
+        if (event.kind === 'failed') Object.assign(row, { failed: event.data.canceled ? 'canceled' : (event.data.blockedReason || event.data.error), url: row.url ?? event.data.url, method: row.method ?? event.data.method })
+        rows.set(event.data.id, row)
+      }
+      return { rows: [...rows.values()], dropped: droppedCount(dropped, 'network') }
+    }
+
     /** Wait until the webview has stopped loading (or `ms` passes, or the command is cancelled). */
     async function settled(webview, ms = 20000, signal) {
       await sleep(250, signal)
@@ -2673,7 +3932,7 @@ window.__ModuleLoader__.load({
       if (!pane) throw new Error('This session has no Browser pane open. Open a page with browser_open first.')
       const frame = frameOf(pane.viewport)
       if (frame && frame.tagName !== 'WEBVIEW') throw new Error('Browser control works in the Harness desktop app only.')
-      if (frame) watchConsole(frame)
+      if (frame) { watchConsole(frame); await startRecording(frame) }
       return { pane, webview: frame }
     }
 
@@ -2700,7 +3959,7 @@ window.__ModuleLoader__.load({
       return { x: Math.round(point.x * scale), y: Math.round(point.y * scale) }
     }
 
-    const BROWSER_OPS = new Set(['open', 'back', 'forward', 'reload', 'read', 'click', 'type', 'console'])
+    const BROWSER_OPS = new Set(['open', 'back', 'forward', 'reload', 'read', 'click', 'type', 'console', 'network', 'response', 'leave'])
 
     async function runBrowserCommand(sidebar, sessionId, command, signal) {
       const op = command.op
@@ -2723,11 +3982,26 @@ window.__ModuleLoader__.load({
         for (let i = 0; i < 100 && !(frame = frameOf(pane.viewport)); i++) { checkAborted(signal); await sleep(100, signal) }
         if (!frame) throw new Error('The Browser pane did not open the page')
         watchConsole(frame)
+        const recording = startRecording(frame)
         await settled(frame, 20000, signal)
+        // The pane creates its page by navigating, so DevTools attaches only once loading has begun. Load the
+        // page once more when its first requests were missed, so browser_network shows the whole load.
+        // An attach tried while the page was still being created can fail; try again once it has loaded. A page
+        // still loading after the wait is not reloaded: that would throw its load away and start it again.
+        if (!frame.isLoading() && (await recording || await startRecording(frame)) && !(await recordedDocument(frame))) {
+          frame.reload()
+          await settled(frame, 20000, signal)
+        }
         return where(frame)
       }
       const { webview } = await browserWebview(sidebar, sessionId, { signal })
       if (!webview) throw new Error('The Browser pane has no page open. Use browser_open first.')
+      if (op === 'leave') {
+        // The Host found the page on a site the user has not approved: show nothing from it any more.
+        webview.stop()
+        await webview.loadURL('about:blank').catch(() => {})
+        return where(webview)
+      }
       if (op === 'back' || op === 'forward' || op === 'reload') {
         if (op === 'back') { if (!webview.canGoBack()) throw new Error('There is no earlier page'); webview.goBack() }
         else if (op === 'forward') { if (!webview.canGoForward()) throw new Error('There is no later page'); webview.goForward() }
@@ -2767,6 +4041,47 @@ window.__ModuleLoader__.load({
         }
         await settled(webview, 20000, signal)
         return where(webview)
+      }
+      if (op === 'network') {
+        let { rows, dropped } = await networkRows(webview)
+        if (args.failed_only === true) rows = rows.filter(r => r.failed || (typeof r.status === 'number' && r.status >= 400))
+        if (typeof args.contains === 'string' && args.contains) rows = rows.filter(r => String(r.url ?? '').includes(args.contains))
+        const limit = Number.isInteger(args.limit) ? Math.min(Math.max(args.limit, 1), 200) : 40
+        // `dropped`: older network events the desktop no longer holds, so the agent is told the list is partial.
+        return { total: rows.length, requests: rows.slice(-limit), dropped }
+      }
+      if (op === 'response') {
+        if (typeof args.id !== 'string' || !args.id) throw new Error('id must be a request id from browser_network')
+        const { body, base64Encoded } = await devtools(webview, 'Network.getResponseBody', { requestId: args.id })
+        let textBody = body
+        if (base64Encoded) {
+          const bytes = Uint8Array.from(atob(body), c => c.charCodeAt(0))
+          const decoded = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+          if (decoded.includes('\uFFFD') || bytes.includes(0)) return { binary: true, size: bytes.length }
+          textBody = decoded
+        }
+        return { body: textBody.length > 20000 ? `${textBody.slice(0, 20000)}\n[… ${textBody.length - 20000} more characters]` : textBody, size: textBody.length }
+      }
+      if (devtoolsApi() !== undefined) {
+        try {
+          const { events, dropped } = await recordedEvents(webview, CONSOLE_KINDS)
+          const messages = events.slice(-50).map(e => {
+            const stack = e.kind === 'exception' && Array.isArray(e.data.stack) && e.data.stack.length ? e.data.stack : undefined
+            // An exception's text is its description, which already ends in the stack; keep the first line when
+            // the frames are listed separately.
+            const text = stack ? String(e.data.text ?? '').split('\n')[0] : e.data.text
+            // A script inline in the page has no file name: name the page instead.
+            const file = e.data.url ? String(e.data.url).split('/').pop() || String(e.data.url) : undefined
+            return {
+              level: e.kind === 'exception' ? 'uncaught error' : e.data.level,
+              text,
+              source: file !== undefined ? `${file}${e.data.line !== undefined ? `:${Number(e.data.line) + 1}` : ''}` : undefined,
+              stack,
+            }
+          })
+          // `earlier`: recorded messages past the newest 50; `dropped`: older ones the desktop no longer holds.
+          return { messages, devtools: true, earlier: Math.max(0, events.length - 50), dropped: droppedCount(dropped, 'console') }
+        } catch { /* fall back to the pane's own console events */ }
       }
       return { messages: (consoleLogs.get(webview) ?? []).slice(-50) }
     }
@@ -2830,7 +4145,23 @@ window.__ModuleLoader__.load({
     // The extension's picker sends the element and a cropped screenshot to the local bridge server; the
     // header of the session on screen collects it and treats it like a Browser pane pick: the agent gets
     // the record, and the message box gets the reference and the picture — only once the agent has it.
-    const CHROME_BRIDGE = 'http://127.0.0.1:47630'
+    // Polls are signed both ways with the bridge's per-launch link key, which the Connectors plugin reads over
+    // the bridge's stdio pipe and shares inside this window (window.__harnessStudio.chromeBridgeLink). A
+    // program squatting the port never has the key, so it can neither be accepted nor forge a pick.
+    let chromeLink // Promise of { base, port, key } or undefined
+    async function currentChromeLink() {
+      if (chromeLink) return chromeLink
+      const ask = window.__harnessStudio?.chromeBridgeLink
+      if (typeof ask !== 'function') return undefined
+      const link = ask().then(
+        value => (Number.isInteger(value?.port) && /^[0-9a-f]{64}$/.test(value?.key ?? '')
+          ? { base: 'http://127.0.0.1:' + value.port, port: value.port, key: new TextEncoder().encode(value.key) }
+          : undefined),
+        () => undefined)
+      chromeLink = link
+      if (!(await link)) chromeLink = undefined
+      return link
+    }
     const PNG_PREFIX = 'data:image/png;base64,'
     const MAX_CHROME_IMAGE_CHARS = 8 * 1024 * 1024 // about 6 MB of PNG
 
@@ -2861,9 +4192,21 @@ window.__ModuleLoader__.load({
           while (!signal.aborted) {
             try {
               if (!onScreen()) { await sleep(1000, signal); continue }
-              const response = await fetch(CHROME_BRIDGE + '/selections/next', { cache: 'no-store', signal })
+              const link = await currentChromeLink()
+              if (!link) { await sleep(5000, signal); continue } // no bridge connected: nothing to collect
+              const nonce = toHex(crypto.getRandomValues(new Uint8Array(16)))
+              const response = await fetch(link.base + '/selections/next?nonce=' + nonce, {
+                cache: 'no-store', signal, headers: { 'x-hs-bridge-auth': await hmacHex(link.key, 'poll:' + link.port + ':' + nonce) },
+              })
+              const text = await response.text()
+              // Only an answer signed with the link key over this poll's nonce came from the bridge.
+              if (response.headers.get('x-hs-bridge-sig') !== await hmacHex(link.key, 'pick:' + nonce + ':' + text)) {
+                chromeLink = undefined // the bridge restarted with a new key, or something else holds the port
+                await sleep(5000, signal)
+                continue
+              }
               if (response.status !== 200) { await sleep(response.status === 204 ? 250 : 5000, signal); continue }
-              const body = await response.json()
+              const body = JSON.parse(text)
               const { inputActions: input, sendSelection: send, onNote: note } = latest.current
               const selection = normalizeSelection(body && body.selection)
               if (selection === undefined) { note('Chrome sent an element Harness could not read'); continue }
@@ -2935,12 +4278,14 @@ window.__ModuleLoader__.load({
         const timer = setInterval(refresh, 300)
         return () => { unsubscribe(); clearInterval(timer) }
       }, [sidebar, sessionId])
-      // The stack's sizes and divider follow whichever Session this header belongs to.
+      // The stack's sizes and divider follow this header's Session, but only while the sidebar shows that
+      // Session: the other mounted headers leave the layout alone (see stackWriter).
       const sessionRef = useRef(sessionId)
       sessionRef.current = sessionId
       useEffect(() => watchStack(sidebar, () => sessionRef.current), [sidebar])
 
       const open = (kind) => {
+        if (kind === FILES_KIND) setTreeHiddenFor(sessionId, false)
         togglePane(sidebar, sessionId, kind)
         // A timer, not an animation frame: frames pause while the window is in the background.
         setTimeout(() => setShown(read()), 60)
@@ -2967,12 +4312,22 @@ window.__ModuleLoader__.load({
         ctx.effect(() => () => { if (connection === ctx.connection) { connection = undefined; helperLink = undefined } }, 'helper link')
 
         ctx.effect(() => watchBrowserTabs(ctx.sidebarRight), 'browser tab strip')
+        if (typeof ctx.sidebarRight.registerResourceHandler === 'function') ctx.effect(() => watchFileTabs(ctx.sidebarRight), 'file previews move to the Files tab')
         ctx.effect(() => watchPaneClose(ctx.sidebarRight), 'pane close button')
         ctx.effect(() => { window.addEventListener('keydown', blockSplitShortcut, true); return () => window.removeEventListener('keydown', blockSplitShortcut, true) }, 'no split shortcut')
         ctx.effect(() => { window.addEventListener('keydown', enterSavesSettings); return () => window.removeEventListener('keydown', enterSavesSettings) }, 'Enter saves plugin settings')
         ctx.effect(() => { window.addEventListener('click', confirmSettingsSaves, true); return () => window.removeEventListener('click', confirmSettingsSaves, true) }, 'confirm plugin settings saves')
         ctx.effect(hideSplitButton, 'no split button')
         ctx.effect(clickOnlySwitcher, 'subagents switcher opens on click')
+        ctx.effect(() => ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'git', inject: () => ({}) }, GitPage)), 'Git page')
+        ctx.inject(['layout'], (scope) => { scope.effect(() => followPanels(scope.layout), 'Git page: where Back returns') })
+        ctx.effect(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+          name: 'sidebar.panellist', id: 'git', order: 12, label: () => 'Git',
+        }, GitIcon)), 'Git entry in the left sidebar, below Instructions')
+        // Optional Harness services the Background tasks card reads; the card works with whichever are composed.
+        ctx.inject(['remote.subagents'], (scope) => { setOptional('remote', scope.remote); scope.effect(() => () => setOptional('remote', undefined), 'background tasks: subagent stop') })
+        ctx.inject(['jobs'], (scope) => { setOptional('jobs', scope.jobs); scope.effect(() => () => setOptional('jobs', undefined), 'background tasks: jobs') })
+        ctx.inject(['sessions'], (scope) => { setOptional('sessions', scope.sessions); scope.effect(() => () => setOptional('sessions', undefined), 'background tasks: sessions') })
 
         ctx.effect(() => ctx.sidebarRightTabs.register({ id: CHANGES_TAB_ID, kind: CHANGES_KIND, priority: 'extension', title: () => 'Changes', keepMounted: false }), 'changes pane type')
         ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({ name: 'sidebar.right.pane.tab', key: CHANGES_TAB_ID, inject: () => ({}) }, ChangesPane)), 'changes pane body')
@@ -2980,6 +4335,9 @@ window.__ModuleLoader__.load({
         ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
           { name: 'sidebar.right.pane.tab', key: DETAILS_TAB_ID, inject: () => ({ sidebar: ctx.sidebarRight }) }, DetailsPane)), 'details pane body')
 
+        if (typeof ctx.sidebarRight.registerResourceHandler === 'function') {
+          ctx.effect(() => ctx.sidebarRight.registerResourceHandler(request => openFromConversation(ctx.sidebarRight, request)), 'files from the conversation open in the Files tab')
+        }
         ctx.effect(() => ctx.sidebarRightTabs.register({
           id: FILES_TAB_ID, kind: FILES_KIND, priority: 'extension', title: () => 'Files', keepMounted: true,
         }), 'files pane type')

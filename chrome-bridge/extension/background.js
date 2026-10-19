@@ -502,16 +502,35 @@ function readPage() {
   // Element numbers live here, in the isolated world, and never in the page's DOM: a page that could read
   // them could move a number onto another element between a read and the agent's click or typing.
   const refs = globalThis.__hsRefs = new Map() // number → WeakRef(element)
-  // Fields whose value must not reach the model: passwords, one-time codes and card details.
+  // Fields whose value must not reach the model: passwords, one-time codes, card details, and API keys,
+  // tokens, session ids and other credentials.
   const SECRET_AUTOCOMPLETE = /(^|\s)(one-time-code|cc-number|cc-csc|cc-exp|cc-exp-month|cc-exp-year|new-password|current-password)(\s|$)/
-  const SECRET_WORDS = new Set(['password', 'passwd', 'passcode', 'pwd', 'otp', 'totp', 'pin', 'cvv', 'cvc', 'csc', 'cvn', 'ssn', 'secret'])
+  const SECRET_WORDS = new Set(['password', 'passwd', 'passcode', 'pwd', 'otp', 'totp', 'pin', 'cvv', 'cvc', 'csc', 'cvn', 'ssn', 'secret',
+    'token', 'auth', 'authorization', 'bearer', 'credential', 'credentials', 'session', 'cookie', 'private', 'key', 'apikey', 'jwt'])
   const SECRET_PHRASE = /password|passcode|-one-?time-|-card-?(number|num|no)-|-cc-?(num|number|csc|cvv|exp)|-security-?code-/
+  // Matched against the words run together, so separators and case do not matter: "api_key", "apiKey" and "APIKEY" all read apikey.
+  const SECRET_COMPOUND = /apikey|accesstoken|refreshtoken|authtoken|idtoken|clientsecret|secretkey|privatekey|sessionid|sessiontoken|sessionkey/
   const secretName = (el) => {
-    // name and id split into words: "cardNumber", "card_number" and "card-number" all read card, number.
-    const words = ((el.getAttribute('name') || '') + ' ' + (el.id || '')).replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
-    return words.some(w => SECRET_WORDS.has(w)) || SECRET_PHRASE.test('-' + words.join('-') + '-')
+    // name, id, aria-label and label text split into words: "cardNumber", "card_number" and "card-number" all read card, number.
+    const label = (el.labels && el.labels[0] && el.labels[0].innerText) || ''
+    const words = [el.getAttribute('name'), el.id, el.getAttribute('aria-label'), label].join(' ').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+    return words.some(w => SECRET_WORDS.has(w)) || SECRET_PHRASE.test('-' + words.join('-') + '-') || SECRET_COMPOUND.test(words.join(''))
   }
   const secret = el => el.type === 'password' || SECRET_AUTOCOMPLETE.test((el.getAttribute('autocomplete') || '').toLowerCase()) || secretName(el)
+  // A value shaped like a credential is masked whatever its field is called: provider prefixes (OpenAI and
+  // Anthropic sk-, GitHub, GitLab, AWS, Slack), a JWT, or one long run of letters, digits, - and _ that
+  // mixes letters with digits and is varied enough to be random (a slug or a long word is not).
+  const SECRET_SHAPES = [/\bsk-[A-Za-z0-9_-]{16,}/, /\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}/, /\bgithub_pat_[A-Za-z0-9_]{20,}/, /\bglpat-[A-Za-z0-9_-]{20,}/,
+    /\b(AKIA|ASIA)[A-Z0-9]{16}\b/, /\bxox[abprs]-[A-Za-z0-9-]{10,}/, /\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/]
+  const randomRun = (run) => {
+    if (!/[A-Za-z]/.test(run) || !/[0-9]/.test(run)) return false
+    const counts = {}
+    for (const c of run) counts[c] = (counts[c] || 0) + 1
+    let bits = 0
+    for (const n of Object.values(counts)) bits -= (n / run.length) * Math.log2(n / run.length)
+    return bits >= 3.5
+  }
+  const secretShaped = value => SECRET_SHAPES.some(re => re.test(value)) || (value.match(/[A-Za-z0-9_-]{24,}/g) || []).some(randomRun)
   const visible = el => { const r = el.getBoundingClientRect(); if (r.width < 1 || r.height < 1) return false; const c = getComputedStyle(el); return c.visibility !== 'hidden' && c.display !== 'none' && c.opacity !== '0' }
   const clean = t => (t || '').replace(/\s+/g, ' ').trim()
   const nameOf = el => clean(el.getAttribute('aria-label') || (el.labels && el.labels[0] && el.labels[0].innerText) || el.innerText || el.getAttribute('placeholder') || el.getAttribute('title') || el.getAttribute('alt') || (el.tagName === 'INPUT' && /button|submit|reset/.test(el.type) ? el.value : '')).slice(0, 100)
@@ -539,7 +558,7 @@ function readPage() {
     const ref = elements.length + 1
     refs.set(ref, new WeakRef(el))
     const item = { ref, kind: kindOf(el), name: nameOf(el) }
-    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') item.value = secret(el) ? (el.value ? '••••' : '') : String(el.value).slice(0, 100)
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') item.value = secret(el) || secretShaped(String(el.value)) ? (el.value ? '••••' : '') : String(el.value).slice(0, 100)
     if (el.tagName === 'INPUT' && (el.type === 'checkbox' || el.type === 'radio')) item.value = el.checked ? 'checked' : 'unchecked'
     if (el.getAttribute('aria-checked') !== null) item.value = el.getAttribute('aria-checked') === 'true' ? 'checked' : 'unchecked'
     if (el.getAttribute('aria-selected') === 'true') item.value = 'selected'

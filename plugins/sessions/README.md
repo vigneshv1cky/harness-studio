@@ -11,6 +11,10 @@ Design and rationale: [docs/SESSIONS_DESIGN.md](../../docs/SESSIONS_DESIGN.md).
 
 Compatible with Harness `>=0.2.1-alpha.3 <0.3.0` (developer preview; later versions may break plugins). No build step: plain JavaScript, a Host half and a Client half.
 
+## Your own session in a new worktree
+
+On the **New Session** screen, a **New worktree** switch sits after the mode picker when the chosen workspace is in a git repository with at least one commit. Turn it on and send your first message: before the message goes out, a new worktree and branch (`harness/<first five words of the message>`, numbered when taken) are made from the workspace's current commit under `<harness home>/harness-studio/worktrees/`, and the session's working folder becomes the matching folder in the worktree, so the agent works there from its first step. The switch then reads *Worktree · harness/…*. The session stays under its workspace in the sidebar. If the worktree cannot be made, nothing is sent and the reason is shown. Only a session with no messages yet can move; the worktree and branch are yours to keep or remove with git.
+
 ## The approval card
 
 ![The approval card](../../docs/screenshots/sessions-card.png)
@@ -35,7 +39,7 @@ dsh plugin --profile web add /path/to/harness-studio/plugins/sessions
 
 | Tool | What it does |
 |---|---|
-| `start_session` | Starts a session: `title`, `prompt` (the brief), optional `background`, `folder` (default: this session's working directory), `worktree` and `branch_name`, and `initiation` — `user_asked` (you asked for separate or parallel work; it starts now) or `proposal` (the agent's idea; you are asked first) |
+| `start_session` | Starts a session: `title`, `prompt` (the brief), optional `background`, `folder` (default: this session's working directory; see Folders below), `worktree` and `branch_name`, and `initiation` — `user_asked` (you asked for separate or parallel work; it starts now) or `proposal` (the agent's idea; you are asked first) |
 | `message_session` | Sends a follow-up to a session this session started; it runs as that session's next turn |
 | `stop_session` | Ends the work of a session this session started: its running turn (through Harness's own cancellation, dropping its queued messages) and its running background jobs |
 | `list_sessions` | The sessions this session started: running, idle or archived, folder or worktree, last report |
@@ -44,6 +48,12 @@ dsh plugin --profile web add /path/to/harness-studio/plugins/sessions
 A short system-prompt entry tells the agent when to split work off (independent pieces, not quick ones), to use `proposal` for its own ideas, to use a worktree when two writers could touch the same files, never to poll, and to check a report's claims before calling work done.
 
 Only top-level sessions may start sessions (not subagents or teammates), at most 2 levels deep and at most 6 running at once per session.
+
+**Folders.** The agent chooses the folder and the initiation, so neither is trusted on its own:
+
+- A folder that is the session's own working folder or inside it starts as asked.
+- Any other folder always gets a card first, whatever the initiation: Harness's question form names the folder in full and asks **Start in that folder** or **Do not start**. For a proposal this card replaces the approval card.
+- Your home folder itself, the filesystem root and the Harness home are refused outright (unless the session already works in exactly that folder), since a session there could reach everything below it.
 
 ### The brief and the report
 
@@ -73,7 +83,7 @@ Only top-level sessions may start sessions (not subagents or teammates), at most
 - Your main checkout is never written: not its files, index, current branch, or exclude file. (Git records the worktree in its own administrative folder, as it does for every worktree.)
 - If the folder or branch name is taken, the next free name is used (`<name>-2`, `<name>-3`, …); nothing is overwritten.
 - The plugin never runs git with a force flag, and never resets, checks out, cleans, prunes or force-deletes a branch. A test checks the source for those.
-- A worktree is removed only by `remove_session_worktree` after you confirm on a card, and only when it is clean: no uncommitted or untracked files, and no commits that are neither pushed nor merged into your current branch. Otherwise it refuses and says why. Git's own `worktree remove` (without force) refuses unclean worktrees too. The branch is always kept.
+- A worktree is removed only by `remove_session_worktree` after you confirm on a card, and only when it is clean: no uncommitted or untracked files, no ignored files outside folders a build or install recreates, and no commits that are neither pushed nor merged into your current branch. Otherwise it refuses and says why, listing up to 10 files. Git's own `worktree remove` (without force) refuses modified and untracked files but deletes ignored ones (a `.env`, a local database), which is why those are checked here; ignored `node_modules`, `dist`, `build`, `.next`, `out`, `target`, `__pycache__`, `.venv`, `venv`, `.cache`, `coverage`, `.turbo` and `.parcel-cache` folders are deleted with the worktree. The branch is always kept.
 - The one automatic removal is the rollback of a start that failed a moment after its worktree was created. It uses the same refusing commands, so if anything was written to that worktree it stays.
 - The started session's sidebar row stays in your project's group: its stored folder is the repository, and its working directory (tools, shell, the agent's context) is the worktree. Dev Preview's Changes and Files panes still show the repository's main checkout for such a session (follow-up in that plugin).
 
@@ -108,11 +118,11 @@ Optional `config` on the plugin's entry in `cordis.yml`; a wrong value stops the
 npm test
 ```
 
-Plain `node --test`, no dependencies. 39 tests in four files:
+Plain `node --test`, no dependencies. 43 tests in four files:
 
 - `test/process.test.mjs`: disposal mid-spawn kills the process and its grandchild; timeout and abort kill the whole group; a process does not outlive the Node process that started it.
-- `test/worktree.test.mjs`: against a throwaway repository — the dedicated folder, the untouched main checkout, name suffixes, refusals for uncommitted, untracked and unpushed work, rollback, and the source scan for forcing or destructive git commands.
-- `test/host.test.mjs`: the Host half against stand-ins for Harness's services — starting, the card, reports and the wake budget, orphaned parents, archive clean-up (with and without stopping work, and a refused archive), `stop_session` with background jobs, restart reconciliation, disposal, worktree start and failed-start rollback.
+- `test/worktree.test.mjs`: against a throwaway repository — the dedicated folder, the untouched main checkout, name suffixes, refusals for uncommitted, untracked, ignored and unpushed work (regenerable folders allowed), rollback, and the source scan for forcing or destructive git commands.
+- `test/host.test.mjs`: the Host half against stand-ins for Harness's services — starting, the card, the folder card and refused folders, reports and the wake budget, orphaned parents, archive clean-up (with and without stopping work, and a refused archive), `stop_session` with background jobs, restart reconciliation, disposal, worktree start and failed-start rollback.
 - `test/logic.test.mjs`: the pure rules.
 
 The real Harness services are not exercised by these tests. They were checked once in the development desktop app on 2026-10-16: a start you asked for, both answers on the proposal card, a worktree session (its shell in the worktree on the new branch, the main checkout untouched), reports waking an idle parent, archiving a parent while its child was working (the child's turn stopped and its report was recorded, not delivered), and `stop_session` killing a child's background job.

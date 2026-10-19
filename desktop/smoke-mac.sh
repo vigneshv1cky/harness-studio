@@ -6,7 +6,8 @@
 # declaration, the first-use workspace in Documents/Harness Studio, that an existing
 # Documents/deepseek-harness/default-workspace is kept instead, and converts a Word document to PDF. Through the
 # main process (desktop/smoke-main.mjs) it checks the welcome window size set by the patches and that Check for Updates… opens
-# the releases page instead of an update dialog. Saves screenshots and report.json in the output directory:
+# the releases page instead of an update dialog, and that the run leaves the Harness home's AGENTS.md alone and
+# writes no AGENTS.local.md. Saves screenshots and report.json in the output directory:
 #
 #   desktop/smoke-mac.sh dist/Harness-Studio-<version>-mac-arm64.dmg dist/smoke-mac
 set -eu
@@ -37,10 +38,32 @@ stop() {
 status=0
 home="$work/home"
 mkdir -p "$home"
+# The personal instructions file in the Harness home: its checksum, or "absent".
+agents() { [ -f "$1/.harness-studio/AGENTS.md" ] && shasum -a 256 "$1/.harness-studio/AGENTS.md" | cut -c1-64 || echo absent; }
+# A fresh home gets Compact's default reply style as its AGENTS.md at the first start, which may land during the run.
+default_agents=$(shasum -a 256 "$root/plugins/compact/default-agents.md" | cut -c1-64)
 pid=$(start "$home" 9336 "$out/app.log")
 ELECTRON_RUN_AS_NODE=1 "$app" "$root/desktop/smoke-main.mjs" 9436 "$out" || status=1
+agents_before=$(agents "$home")
 ELECTRON_RUN_AS_NODE=1 "$app" "$root/desktop/smoke-probe.mjs" 9336 "$out" || status=1
 stop "$pid"
+# All ten bundled plugins: inside the app, and enabled in the first-run profile (Hooks and Terminal are host-only,
+# so the probe's client list cannot show them).
+plugins_expected='@harness-studio/compact @harness-studio/connectors @harness-studio/devpreview @harness-studio/editor @harness-studio/hooks @harness-studio/remember @harness-studio/sessions @harness-studio/terminal @harness-studio/undo @harness-studio/watch'
+plugins_profile=$(grep -o '"@harness-studio/[a-z-]*"' "$home/.harness-studio/profiles/desktop/package.json" 2> /dev/null | tr -d '"' | sort | tr '\n' ' ' | sed 's/ $//')
+plugins_packaged=$(ELECTRON_RUN_AS_NODE=1 "$app" -e "console.log(require('fs').readdirSync(process.argv[1]).sort().map(name => '@harness-studio/' + name).join(' '))" "$work/Harness Studio.app/Contents/Resources/app.asar/dsh/node_modules/@harness-studio" 2> /dev/null)
+if [ "$plugins_profile" = "$plugins_expected" ] && [ "$plugins_packaged" = "$plugins_expected" ]; then
+  echo "smoke-mac: ten plugins packaged and enabled: $plugins_expected"
+else
+  echo "smoke-mac: plugins packaged \"$plugins_packaged\", enabled \"$plugins_profile\"" >&2; status=1
+fi
+# Remember writes only notes the user approves, so a smoke run leaves the instruction files alone.
+agents_after=$(agents "$home")
+if { [ "$agents_after" = "$agents_before" ] || { [ "$agents_before" = absent ] && [ "$agents_after" = "$default_agents" ]; }; } && [ -z "$(find "$home/Documents" -name AGENTS.local.md)" ]; then
+  echo "smoke-mac: AGENTS.md untouched or the shipped default ($agents_after) and no AGENTS.local.md written"
+else
+  echo "smoke-mac: an instruction file changed during the smoke run" >&2; status=1
+fi
 [ -d "$home/Documents/Harness Studio/default-workspace" ] && echo "smoke-mac: default workspace in Documents/Harness Studio" \
   || { echo "smoke-mac: no default workspace in Documents/Harness Studio" >&2; status=1; }
 

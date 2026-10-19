@@ -90,6 +90,12 @@
     return node instanceof Element && node.hasAttribute('data-hs-devpreview')
   }
 
+  // In pick mode the page must not react to the press that picks: menus and popovers (Radix and others) open
+  // on pointerdown, drag handles start on it, and older widgets use mousedown. Touches are only stopped, not
+  // cancelled, so a tap still ends in the click that picks.
+  var SWALLOWED = ['pointerdown', 'pointerup', 'mousedown', 'mouseup']
+  var TOUCHES = ['touchstart', 'touchend']
+
   function setPicking(on) {
     if (picking === on) return
     picking = on
@@ -97,15 +103,15 @@
       ensureOverlay()
       document.addEventListener('mousemove', onMove, true)
       document.addEventListener('click', onClick, true)
-      document.addEventListener('mousedown', swallow, true)
-      document.addEventListener('mouseup', swallow, true)
+      SWALLOWED.forEach(function (type) { document.addEventListener(type, swallow, true) })
+      TOUCHES.forEach(function (type) { document.addEventListener(type, stopTouch, { capture: true, passive: true }) })
       document.addEventListener('keydown', onKey, true)
       document.documentElement.style.cursor = 'crosshair'
     } else {
       document.removeEventListener('mousemove', onMove, true)
       document.removeEventListener('click', onClick, true)
-      document.removeEventListener('mousedown', swallow, true)
-      document.removeEventListener('mouseup', swallow, true)
+      SWALLOWED.forEach(function (type) { document.removeEventListener(type, swallow, true) })
+      TOUCHES.forEach(function (type) { document.removeEventListener(type, stopTouch, { capture: true, passive: true }) })
       document.removeEventListener('keydown', onKey, true)
       document.documentElement.style.cursor = ''
       hovered = undefined
@@ -116,6 +122,10 @@
 
   function swallow(event) {
     event.preventDefault()
+    event.stopPropagation()
+  }
+
+  function stopTouch(event) {
     event.stopPropagation()
   }
 

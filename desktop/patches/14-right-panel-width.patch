@@ -1,0 +1,12 @@
+diff --git a/packages/client/ui-layout/src/client/columns.ts b/packages/client/ui-layout/src/client/columns.ts
+--- a/packages/client/ui-layout/src/client/columns.ts
++++ b/packages/client/ui-layout/src/client/columns.ts
+@@ -26,7 +26,7 @@
+ /** Maximum normal right panel width as a fraction of the frame. */
+ export const RIGHTBAR_MAX_RATIO = 0.7
+ /** First-open right panel preference as a fraction of the frame. */
+-export const RIGHTBAR_DEFAULT_RATIO = 0.45
++export const RIGHTBAR_DEFAULT_RATIO = 0.35
+ 
+ /**
+  * Clamp a panel width into its contract range.

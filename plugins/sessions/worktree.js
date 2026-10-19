@@ -12,8 +12,8 @@
  *     here forces, resets, checks out, cleans, prunes or force-deletes a branch; test/worktree.test.mjs
  *     checks the source for those.
  *   - Removing a worktree on request (`remove`) additionally refuses when it has uncommitted or untracked
- *     files, or commits that are neither on a remote nor merged into the main checkout's HEAD, and keeps
- *     the branch.
+ *     files, ignored files outside regenerable folders (git deletes ignored files with the worktree), or
+ *     commits that are neither on a remote nor merged into the main checkout's HEAD, and keeps the branch.
  *
  * Every git process runs through the plugin's process runner (process.js): timeout, process-group kill.
  */
@@ -23,6 +23,12 @@ import path from 'node:path'
 
 const MAX_NAME_ATTEMPTS = 50
 const exists = p => access(p).then(() => true, () => false)
+
+/** Ignored folders a build or install recreates; removing a worktree may delete these without asking. */
+export const REGENERABLE = new Set(['node_modules', 'dist', 'build', '.next', 'out', 'target', '__pycache__', '.venv', 'venv', '.cache', 'coverage', '.turbo', '.parcel-cache'])
+
+/** Whether an ignored path from `git status` lies in (or is) a regenerable folder. */
+export const regenerable = file => file.replace(/^"|"$/g, '').split('/').some(part => REGENERABLE.has(part))
 
 /**
  * @param {{ run: (file: string, args: string[], options?: object) => Promise<string> }} runner
@@ -86,8 +92,17 @@ export function createWorktrees(runner, root) {
    */
   async function removalBlocker(target, signal) {
     if (!(await exists(target.path))) return `${target.path} no longer exists`
-    const status = await git(target.path, ['status', '--porcelain', '--untracked-files=all'], signal)
-    if (status !== '') return `it has uncommitted or untracked files:\n${status.split('\n').slice(0, 10).join('\n')}`
+    // Ignored files are listed too, since `git worktree remove` deletes them (a .env, a local database).
+    // "matching" shows an ignored folder as one line instead of every file in it, so node_modules stays short.
+    const status = await git(target.path, ['status', '--porcelain', '--ignored=matching', '--untracked-files=all'], signal)
+    const lines = status === '' ? [] : status.split('\n')
+    const changed = lines.filter(line => !line.startsWith('!! '))
+    if (changed.length > 0) return `it has uncommitted or untracked files:\n${changed.slice(0, 10).join('\n')}`
+    const ignored = lines.filter(line => line.startsWith('!! ') && !regenerable(line.slice(3)))
+    if (ignored.length > 0) {
+      const more = ignored.length > 10 ? `\n… and ${ignored.length - 10} more` : ''
+      return `it has ignored files that removing it would delete:\n${ignored.slice(0, 10).map(line => line.slice(3)).join('\n')}${more}`
+    }
     const unpushed = Number(await git(target.repoRoot, ['rev-list', '--count', target.branch, '--not', '--remotes'], signal))
     if (unpushed > 0 && !(await succeeds(target.repoRoot, ['merge-base', '--is-ancestor', target.branch, 'HEAD'], signal))) {
       return `branch ${target.branch} has ${unpushed} commit(s) that are not pushed and not merged into the current branch of ${target.repoRoot}`

@@ -72,7 +72,7 @@ async function harness(t, { answer, home: givenHome, listed } = {}) {
     },
     workingDirectory: { ensure: async a => a.cwd, set: async (a, p) => { a.cwd = p } },
   }
-  apply(ctx, {})
+  const plugin = apply(ctx, {})
   const emit = async (name, ...args) => { for (const fn of listeners.get(name) ?? []) await fn(...args) }
   const parent = new FakeAgent('parent-1', home)
   parent.session.title = 'Main'
@@ -88,7 +88,7 @@ async function harness(t, { answer, home: givenHome, listed } = {}) {
   }
   const dispose = async () => { for (const d of disposers.reverse()) await d() }
   t.after(dispose)
-  return { home, ctx, agents, archived, presets, jobs, questionsAsked, parent, call, emit, turn, dispose }
+  return { home, ctx, agents, archived, presets, jobs, questionsAsked, parent, call, emit, turn, dispose, actions: plugin.actions }
 }
 
 const recordFile = home => path.join(home, 'harness-studio', 'sessions.json')
@@ -136,6 +136,38 @@ test('proposal: the worktree switch in the card\'s Options is honoured', async t
   const result = await h.call('start_session', { title: 'Switched on', prompt: 'p', folder: repo, initiation: 'proposal' })
   assert.match(result, /branch harness\/switched-on/)
   assert.equal(execFileSync('git', ['-C', childOf(h, result).cwd, 'branch', '--show-current'], { encoding: 'utf8' }).trim(), 'harness/switched-on')
+})
+
+test('a folder outside the parent\'s folder needs the user\'s yes on a card naming it, even for user_asked', async t => {
+  let choice = 'Do not start'
+  const h = await harness(t, { answer: () => ({ answers: [{ id: 'harness-studio/start-session-folder', selected: [choice] }] }) })
+  const other = await realpath(await mkdtemp(path.join(os.tmpdir(), 'hs-sessions-other-')))
+  t.after(() => rm(other, { recursive: true, force: true }))
+  const declined = await h.call('start_session', { title: 'Elsewhere', prompt: 'p', folder: other, initiation: 'user_asked' })
+  assert.match(declined, /^Nothing was started/)
+  assert.equal(h.agents.size, 1, 'only the parent exists')
+  const question = h.questionsAsked[0].questions[0]
+  assert.equal(question.id, 'harness-studio/start-session-folder')
+  assert.ok(question.question.includes(other), 'the question names the folder in full')
+  choice = 'Start in that folder'
+  const started = await h.call('start_session', { title: 'Elsewhere', prompt: 'p', folder: other, initiation: 'proposal' })
+  assert.match(started, /Started session "Elsewhere".*approved it on the card/)
+  assert.equal(h.questionsAsked.length, 2, 'one card per start, also for a proposal')
+  // A folder inside the parent's own folder starts without a card.
+  await h.call('start_session', { title: 'Inside', prompt: 'p', folder: path.join(h.home, 'harness-studio'), initiation: 'user_asked' })
+  assert.equal(h.questionsAsked.length, 2)
+})
+
+test('the home folder, the filesystem root and the Harness home are refused outright', async t => {
+  const h = await harness(t, { answer: () => assert.fail('no card for a refused folder') })
+  const other = await realpath(await mkdtemp(path.join(os.tmpdir(), 'hs-sessions-other-')))
+  t.after(() => rm(other, { recursive: true, force: true }))
+  await assert.rejects(h.call('start_session', { title: 't', prompt: 'p', folder: os.homedir(), initiation: 'user_asked' }), /never started in/)
+  await assert.rejects(h.call('start_session', { title: 't', prompt: 'p', folder: '/', initiation: 'proposal' }), /never started in/)
+  const elsewhere = new FakeAgent('parent-2', other)
+  h.agents.set(elsewhere.id, elsewhere)
+  await assert.rejects(h.call('start_session', { title: 't', prompt: 'p', folder: h.home, initiation: 'user_asked' }, elsewhere), /never started in/)
+  assert.equal(h.agents.size, 2, 'nothing was created')
 })
 
 test('a subagent cannot start sessions', async t => {
@@ -314,4 +346,31 @@ test('an archive that was refused stops nothing', async t => {
   await h.emit('workspace/session-activity', { sessionId: h.parent.id }, async () => [{ kind: 'turn', items: [] }])
   await sleep(1700)
   assert.deepEqual(child.cancelled, [])
+})
+
+test('a fresh New Session can move into a new worktree before its first message; others cannot', async t => {
+  const h = await harness(t)
+  const repo = path.join(h.home, 'project')
+  execFileSync('git', ['init', '-q', '-b', 'main', repo])
+  await writeFile(path.join(repo, 'a.txt'), 'a\n')
+  execFileSync('git', ['-C', repo, 'add', '.'])
+  execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-qm', 'first'])
+  const fresh = new FakeAgent('fresh-1', repo)
+  fresh.session.messageProjections = []
+  h.agents.set(fresh.id, fresh)
+  assert.deepEqual(await h.actions.worktreeOption({ sessionId: fresh.id }), { available: true, repo: 'project' })
+  const made = await h.actions.startInWorktree({ sessionId: fresh.id, title: 'Fix the login page so remembered emails work again' })
+  assert.equal(made.branch, 'harness/fix-the-login-page-so', 'named after the first five words')
+  assert.equal(fresh.cwd, made.path, 'the session now works in the worktree')
+  assert.match(execFileSync('git', ['-C', repo, 'worktree', 'list']).toString(), /fix-the-login-page/)
+  const started = new FakeAgent('started-1', repo)
+  started.session.messageProjections = [{}]
+  h.agents.set(started.id, started)
+  await assert.rejects(h.actions.startInWorktree({ sessionId: started.id, title: 'x' }), /already started/)
+  assert.equal(started.cwd, repo)
+  const plain = new FakeAgent('plain-1', h.home)
+  plain.session.messageProjections = []
+  h.agents.set(plain.id, plain)
+  assert.equal((await h.actions.worktreeOption({ sessionId: plain.id })).available, false)
+  execFileSync('git', ['-C', repo, 'worktree', 'remove', '--force', made.path])
 })

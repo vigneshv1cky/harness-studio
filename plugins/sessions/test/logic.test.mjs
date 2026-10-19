@@ -4,7 +4,25 @@ import test from 'node:test'
 import {
   DEFAULT_CONFIG, REPORT_FENCE, briefText, cleanMessageArgs, cleanStartArgs, contentText, deliveryMode,
   describeEnding, reportText, resolveConfig, slugify, userMessage, shortFolder, cardDetail, readCardChoice, startOutcome,
+  folderScope, isWithin,
 } from '../logic.js'
+
+test('a folder is inside, outside or refused relative to the parent\'s working folder', () => {
+  const base = { parentFolder: '/Users/v/app', userHome: '/Users/v', harnessHome: '/Users/v/.dsh' }
+  assert.equal(folderScope({ ...base, folder: '/Users/v/app' }), 'inside')
+  assert.equal(folderScope({ ...base, folder: '/Users/v/app/pkg/web' }), 'inside')
+  assert.equal(folderScope({ ...base, folder: '/Users/v/app-other' }), 'outside', 'a shared prefix is not inside')
+  assert.equal(folderScope({ ...base, folder: '/Users/v/other' }), 'outside')
+  assert.equal(folderScope({ ...base, folder: '/Users/v' }), 'refused')
+  assert.equal(folderScope({ ...base, folder: '/' }), 'refused')
+  assert.equal(folderScope({ ...base, folder: '/Users/v/.dsh' }), 'refused')
+  // Refused even below a broad parent folder; the parent's own folder is never refused.
+  assert.equal(folderScope({ ...base, parentFolder: '/', folder: '/Users/v' }), 'refused')
+  assert.equal(folderScope({ ...base, parentFolder: '/Users/v', folder: '/Users/v/.dsh' }), 'refused')
+  assert.equal(folderScope({ ...base, parentFolder: '/Users/v', folder: '/Users/v' }), 'inside')
+  assert.equal(isWithin('/a', '/a/..b'), true, 'a name starting with two dots is still below')
+  assert.equal(isWithin('/a/b', '/a'), false)
+})
 
 test('config defaults, accepts in-range values and rejects anything else at load', () => {
   assert.deepEqual(resolveConfig(undefined), DEFAULT_CONFIG)
@@ -97,4 +115,8 @@ test('a start_session result is read back for the one-line record', () => {
   assert.deepEqual(startOutcome('The user chose to do this here. Nothing was started.'), { outcome: 'kept' })
   assert.deepEqual(startOutcome('Nothing was started. The user answered: no'), { outcome: 'kept' })
   assert.deepEqual(startOutcome('boom'), { outcome: 'other' })
+})
+
+test('nothing inside the Harness home folder may host a session, even below a broad parent folder', () => {
+  assert.equal(folderScope({ folder: '/Users/me/.harness-studio/sessions', parentFolder: '/Users/me', userHome: '/Users/me', harnessHome: '/Users/me/.harness-studio' }), 'refused')
 })

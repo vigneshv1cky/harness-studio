@@ -1,0 +1,66 @@
+diff --git a/apps/desktop/src/web-document.ts b/apps/desktop/src/web-document.ts
+index a74ea7c7..02e9bf47 100644
+--- a/apps/desktop/src/web-document.ts
++++ b/apps/desktop/src/web-document.ts
+@@ -7,7 +7,16 @@ const MIME: Readonly<Record<string, string>> = {
+   '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json',
+   '.woff2': 'font/woff2', '.png': 'image/png', '.ico': 'image/x-icon',
+ }
+-const BOOT = '<script>globalThis.__DSH_BOOT_READY__ = Promise.withResolvers()</script>'
++/**
++ * Browser-storage key prefix for styles a plugin wants on screen before the first paint, such as a colour theme it
++ * otherwise applies only once it loads. The boot script adds each stored style, marked with
++ * `data-dsh-boot-style="<rest of the key>"`, ahead of the shell; its owner removes the element once it has applied
++ * the same styling itself. Stored values are CSS text only; the boot script never executes stored code.
++ */
++export const BOOT_STYLE_PREFIX = 'dsh.boot-style:'
++/** Head script that adds the stored boot styles; storage failures leave the page as served. */
++export const BOOT_STYLES_SCRIPT = `try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);if(k&&k.startsWith(${JSON.stringify(BOOT_STYLE_PREFIX)})){const s=document.createElement('style');s.dataset.dshBootStyle=k.slice(${BOOT_STYLE_PREFIX.length});s.textContent=localStorage.getItem(k)??'';document.head.append(s)}}}catch{}`
++const BOOT = '<script>globalThis.__DSH_BOOT_READY__ = Promise.withResolvers()</script>' + `<script>${BOOT_STYLES_SCRIPT}</script>`
+ 
+ /**
+  * Read an application-owned static asset; the index waits for asynchronous Host injections.
+diff --git a/apps/desktop/tests/web-document.spec.ts b/apps/desktop/tests/web-document.spec.ts
+index 0fd9b591..2a61249e 100644
+--- a/apps/desktop/tests/web-document.spec.ts
++++ b/apps/desktop/tests/web-document.spec.ts
+@@ -2,7 +2,8 @@ import { afterEach, expect, it, vi } from 'vitest'
+ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+ import { tmpdir } from 'node:os'
+ import { join } from 'node:path'
+-import { authenticateWebHost, forwardWebRequest, serveWebDocument } from '../src/web-document.ts'
++import { runInNewContext } from 'node:vm'
++import { BOOT_STYLES_SCRIPT, authenticateWebHost, forwardWebRequest, serveWebDocument } from '../src/web-document.ts'
+ 
+ const roots: string[] = []
+ afterEach(async () => {
+@@ -27,6 +28,29 @@ it('serves the Web entry and assets without starting or contacting a Host', asyn
+   expect((await serveWebDocument(new Request('dsh-app://app/missing.js'), root)).status).toBe(404)
+ })
+ 
++it('adds stored boot styles to the head before the entry script, and nothing when storage fails', async () => {
++  const root = await mkdtemp(join(tmpdir(), 'desktop-web-'))
++  roots.push(root)
++  await writeFile(join(root, 'index.html'), '<html><head></head><body><script src="assets/entry.js"></script></body></html>')
++  const html = await (await serveWebDocument(new Request('dsh-app://app/'), root)).text()
++  expect(html.indexOf(BOOT_STYLES_SCRIPT)).toBeGreaterThan(0)
++  expect(html.indexOf(BOOT_STYLES_SCRIPT)).toBeLessThan(html.indexOf('assets/entry.js'))
++  const run = (stored: Record<string, string>, throwing = false) => {
++    const head: { dataset: Record<string, string>; textContent: string }[] = []
++    const keys = Object.keys(stored)
++    const localStorage = {
++      get length() { if (throwing) throw new Error('storage is unavailable'); return keys.length },
++      key: (index: number) => keys[index] ?? null,
++      getItem: (key: string) => stored[key] ?? null,
++    }
++    const document = { head: { append: (element: (typeof head)[number]) => head.push(element) }, createElement: () => ({ dataset: {}, textContent: '' }) }
++    runInNewContext(BOOT_STYLES_SCRIPT, { localStorage, document })
++    return head
++  }
++  expect(run({ 'dsh.boot-style:theme': 'body{color:red}', unrelated: 'x' })).toEqual([{ dataset: { dshBootStyle: 'theme' }, textContent: 'body{color:red}' }])
++  expect(run({ 'dsh.boot-style:theme': 'body{}' }, true)).toEqual([])
++})
++
+ it('requires the Host authentication exchange and retains only its cookie value', async () => {
+   const fetch = vi.fn().mockResolvedValueOnce(new Response(null, { status: 303, headers: { 'set-cookie': 'session=owned; HttpOnly; SameSite=Strict' } }))
+     .mockResolvedValueOnce(new Response('unauthorized', { status: 401 }))

@@ -1,0 +1,83 @@
+diff --git a/packages/core/agent-loop/src/agent.ts b/packages/core/agent-loop/src/agent.ts
+index adf2e33d..af7a4f4b 100644
+--- a/packages/core/agent-loop/src/agent.ts
++++ b/packages/core/agent-loop/src/agent.ts
+@@ -94,6 +94,18 @@ function abortedCancelCause(signal: AbortSignal): AgentCancelCause | undefined {
+   }
+ }
+ 
++/**
++ * Whether a value is one of the closed {@link AgentCancelCause} variants.
++ * @param value - the cause a caller handed to `cancel()`.
++ * @returns true for a cause `abortedCancelCause` can record.
++ */
++function isAgentCancelCause(value: unknown): value is AgentCancelCause {
++  if (typeof value !== 'object' || value === null) return false
++  const { kind } = value as { kind?: unknown }
++  if (kind === 'hook') return typeof (value as { reason?: unknown }).reason === 'string'
++  return kind === 'user' || kind === 'parent' || kind === 'disposed'
++}
++
+ /** Drives one session through turn and step boundaries. */
+ export class ReactLoopAgent implements Agent {
+   readonly inbox: ReactLoopInbox
+@@ -173,6 +185,12 @@ export class ReactLoopAgent implements Agent {
+   }
+ 
+   cancel(cause: AgentCancelCause, options: CancelOptions = {}): void {
++    // Untyped callers (JavaScript plugins) can pass anything; a cause outside the
++    // union would abort the turn and then fail `abortedCancelCause`, leaving
++    // `turn/end` without a reason that every reader dereferences.
++    if (!isAgentCancelCause(cause)) {
++      throw new TypeError(`agent "${this.id}": cancel() needs an AgentCancelCause such as { kind: 'user' }`)
++    }
+     if (!options.keepInbox) {
+       this.inbox.clear()
+       if (this.phase.kind !== 'idle') this.phase.wakeRequested = false
+diff --git a/packages/core/agent-loop/tests/cancel.spec.ts b/packages/core/agent-loop/tests/cancel.spec.ts
+index add36283..42cda8e0 100644
+--- a/packages/core/agent-loop/tests/cancel.spec.ts
++++ b/packages/core/agent-loop/tests/cancel.spec.ts
+@@ -144,6 +144,42 @@ describe('Agent.cancel()', () => {
+     expect(endings).toEqual([{ kind: 'aborted', reason: { kind: 'user' } }, { kind: 'completed' }])
+   })
+ 
++  // A JavaScript plugin once passed a sentence as the cause: the turn aborted,
++  // `turn/end` was logged with `reason: null`, and the chat failed reading `kind`.
++  it.each<[string, unknown]>([
++    ['a sentence', 'You stopped computer use'],
++    ['null', null],
++    ['an unknown kind', { kind: 'computer-use' }],
++    ['a hook cause without its reason', { kind: 'hook' }],
++  ])('rejects %s as the cause and leaves the running turn to record its own ending', async (_label, cause) => {
++    const adapter = new MockAdapter([textResponse('finished')])
++    const ctx = await harness(adapter)
++    try {
++      const agent = await ctx.agentLoop.create(SessionId('cancel-malformed-cause'), { provider: 'mock', model: 'mock' })
++      const errors: unknown[] = []
++      ctx.on('agent/request', ({ turn }, next) => {
++        if (turn === 1) {
++          try {
++            agent.cancel(cause as AgentCancelCause)
++          } catch (error: unknown) {
++            errors.push(error)
++          }
++        }
++        return next()
++      })
++
++      send(agent, 'keep running')
++      await agent.whenIdle()
++
++      expect(errors).toEqual([expect.any(TypeError)])
++      expect(agent.session.snapshotEvents()
++        .flatMap(event => event.type === 'turn/end' ? [event.data.reason] : []))
++        .toEqual([{ kind: 'completed' }])
++    } finally {
++      await ctx.fiber.dispose()
++    }
++  })
++
+   it('cancel() on an idle agent with nothing queued is a no-op; the next prompt runs (F2 leak guard)', async () => {
+     const adapter = new MockAdapter([textResponse('reply')])
+     const ctx = await harness(adapter)

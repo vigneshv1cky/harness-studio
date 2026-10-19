@@ -1,0 +1,349 @@
+diff --git a/packages/bundle/headless/cordis.patch.yml b/packages/bundle/headless/cordis.patch.yml
+index cf224539..3bf0058f 100644
+--- a/packages/bundle/headless/cordis.patch.yml
++++ b/packages/bundle/headless/cordis.patch.yml
+@@ -28,6 +28,7 @@
+         task: !!js ctx.headlessStartup.task
+         sessionId: !!js ctx.headlessStartup.sessionId
+         json: !!js ctx.headlessStartup.json
++        chat: !!js ctx.headlessStartup.chat
+ 
+ - id: hmr
+   disabled: true
+diff --git a/packages/bundle/headless/src/index.ts b/packages/bundle/headless/src/index.ts
+index 93006eb8..4c552d05 100644
+--- a/packages/bundle/headless/src/index.ts
++++ b/packages/bundle/headless/src/index.ts
+@@ -47,12 +47,15 @@ export interface Config {
+   sessionId?: string
+   /** Whether stdout carries the machine-readable event stream instead of final text. */
+   json?: boolean
++  /** Harness Studio: run a chat over the interactive terminal instead of one task. */
++  chat?: boolean
+ }
+ 
+ export const Config: z<Config> = z.object({
+   task: z.string(),
+   sessionId: z.string(),
+   json: z.boolean(),
++  chat: z.boolean(),
+ })
+ 
+ /** Outcome of one owned run interval. */
+@@ -408,6 +411,75 @@ async function run(ctx: Context, config: Config, io: HeadlessIo): Promise<void>
+  * @param ctx - plugin context carrying core services and the launcher-provided exit request.
+  * @param config - validated task and run options.
+  */
++/**
++ * Harness Studio: a chat in the terminal. Each line typed is one turn in the same Session, answered on stdout with
++ * reasoning on stderr, as a one-task run prints. Ctrl-C stops the reply in progress, or quits at the prompt; Ctrl-D
++ * or `/exit` quits. The Session id is printed at the end so `--session-id` can continue it.
++ * @param ctx - the runner's context.
++ * @param config - the runner config; `sessionId` continues an existing Session.
++ * @param io - the process streams and exit.
++ */
++async function chat(ctx: Context, config: Config, io: HeadlessIo): Promise<void> {
++  await ctx.get('loader')?.await()
++  const agents = ctx.get('agents')
++  const defaultModel = ctx.get('agentDefaultModel')
++  const sessions = ctx.get('sessions')
++  if (agents === undefined || defaultModel === undefined || sessions === undefined) return
++  const selection = defaultModel.currentSelection()
++  const agentOptions = { provider: selection.provider, model: selection.model }
++  const setup = (agentCtx: Context): void => {
++    installModelSelection(agentCtx, { current: selection, assembled: undefined })
++  }
++  const sessionId = brandString<SessionId>(config.sessionId ?? `session-${randomUUID()}`)
++  const fs = ctx.get('fs')
++  const cwd = fs === undefined ? process.cwd() : fs.processPath(await fs.resolve('.'))
++  const agent = config.sessionId === undefined
++    ? (await agents.create({ sessionId, meta: { cwd }, agentOptions, setup })).agent
++    : await resolveAgent(ctx, agents, sessionId, agentOptions, setup, cwd)
++  await agent.whenIdle()
++  const subagents = ctx.get('subagents')
++  const input = internals.openChat()
++  let replying = false
++  input.onInterrupt(() => {
++    if (replying) agent.cancel({ kind: 'user' })
++    else input.close()
++  })
++  io.stderr.write(`Chat with ${selection.model} in ${cwd}. Enter sends; Ctrl-C stops a reply; Ctrl-D or /exit quits.\n`)
++  input.prompt()
++  for await (const line of input) {
++    const text = line.trim()
++    if (text === '/exit' || text === '/quit') break
++    if (text === '') {
++      input.prompt()
++      continue
++    }
++    const firstSeq = agent.session.seq
++    const stopReasoning = streamReasoning(ctx, agent, io.stderr)
++    replying = true
++    try {
++      agent.followup(createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'user' } }))
++      while (true) {
++        await agent.whenIdle()
++        const idleSeq = agent.session.seq
++        if (!await subagents?.waitForChildren(agent) && agent.status === 'idle' && agent.session.seq === idleSeq) break
++      }
++    } finally {
++      replying = false
++      stopReasoning()
++    }
++    await sessions.flush(agent.session)
++    const outcome = summarize(agent.session, firstSeq)
++    if (outcome.text !== '') io.stdout.write(`${outcome.text}\n\n`)
++    if (outcome.reason?.kind === 'error') io.stderr.write(`dsh: ${outcome.reason.error.code}: ${outcome.reason.error.message}\n`)
++    else if (outcome.reason?.kind === 'aborted') io.stderr.write('dsh: stopped\n')
++    input.prompt()
++  }
++  input.close()
++  await sessions.flush(agent.session)
++  io.stderr.write(`\nSession ${sessionId}; continue it with --session-id ${sessionId}\n`)
++  io.exit(0)
++}
++
+ export function apply(ctx: Context, config: Config): void {
+   // Read through the global service store, not the property proxy: appExit is
+   // an optional host value, never an injected dependency.
+@@ -416,5 +488,5 @@ export function apply(ctx: Context, config: Config): void {
+     throw new Error('headless-runner: the launcher must provide ctx.appExit before the tree mounts')
+   }
+   const io: HeadlessIo = { stdout: internals.stdout, stderr: internals.stderr, exit }
+-  void run(ctx, config, io).catch((error: unknown) => { fail(io, error, config.json === true) })
++  void (config.chat === true ? chat(ctx, config, io) : run(ctx, config, io)).catch((error: unknown) => { fail(io, error, config.json === true) })
+ }
+diff --git a/packages/bundle/headless/src/runner-internals.ts b/packages/bundle/headless/src/runner-internals.ts
+index 1411995c..00154434 100644
+--- a/packages/bundle/headless/src/runner-internals.ts
++++ b/packages/bundle/headless/src/runner-internals.ts
+@@ -5,11 +5,24 @@
+  * @module @deepseek-ai/dsh-headless/runner-internals
+  */
+ 
++import { createInterface } from 'node:readline'
++
++/** Lines typed at an interactive terminal, for the chat mode. */
++export interface ChatInput extends AsyncIterable<string> {
++  /** Show the prompt for the next line. */
++  prompt(): void
++  /** Run `listener` on Ctrl-C instead of ending the process. */
++  onInterrupt(listener: () => void): void
++  /** Stop reading; the iteration then ends. */
++  close(): void
++}
++
+ /** The process streams the runner reads and writes; tests substitute captures. */
+ export const internals: {
+   stdout: { write(chunk: string): unknown }
+   stderr: { write(chunk: string): unknown }
+   readStdin: () => Promise<string>
++  openChat: () => ChatInput
+ } = {
+   stdout: process.stdout,
+   stderr: process.stderr,
+@@ -18,4 +31,14 @@ export const internals: {
+     for await (const chunk of process.stdin as AsyncIterable<Buffer>) chunks.push(chunk)
+     return Buffer.concat(chunks).toString('utf8')
+   },
++  openChat: () => {
++    // The prompt and echo go to stderr, so stdout carries only the answers.
++    const lines = createInterface({ input: process.stdin, output: process.stderr, prompt: '> ', terminal: true })
++    return {
++      [Symbol.asyncIterator]: () => lines[Symbol.asyncIterator](),
++      prompt: () => { lines.prompt() },
++      onInterrupt: (listener) => { lines.on('SIGINT', listener) },
++      close: () => { lines.close() },
++    }
++  },
+ }
+diff --git a/packages/bundle/headless/src/startup.ts b/packages/bundle/headless/src/startup.ts
+index 02886388..931e4e90 100644
+--- a/packages/bundle/headless/src/startup.ts
++++ b/packages/bundle/headless/src/startup.ts
+@@ -29,6 +29,8 @@ export interface HeadlessStartupValues {
+   sessionId: string | undefined
+   /** Whether stdout carries the machine-readable event stream instead of final text. */
+   json: boolean
++  /** Harness Studio: whether the invocation opens a chat, given no task at an interactive terminal. */
++  chat: boolean
+ }
+ 
+ /**
+@@ -49,6 +51,7 @@ Examples:
+   echo "run the tests" | dsh --profile headless   read the task from stdin
+   dsh --profile headless --json "run the tests"   emit machine-readable run events
+   dsh --profile headless --session-id session-… "continue"   resume an existing Session
++  dsh --profile headless                          chat in the terminal (no task, interactive terminal)
+ `)
+ }
+ 
+@@ -101,10 +104,12 @@ export function apply(ctx: Context): void {
+       program.error('error: a task is required, for example: dsh --profile headless "run the tests"')
+     }
+     const task = program.args.length === 0 ? undefined : joined
+-    if (task === undefined && internals.stdinIsTty()) {
++    const options = program.opts<{ json?: boolean; sessionId?: string }>()
++    // No task at an interactive terminal opens a chat; the event stream has no chat form.
++    const chat = task === undefined && internals.stdinIsTty()
++    if (chat && options.json === true) {
+       program.error('error: a task is required, for example: dsh --profile headless "run the tests"')
+     }
+-    const options = program.opts<{ json?: boolean; sessionId?: string }>()
+     // A SessionId is opaque, so whitespace is part of the identity: validate
+     // emptiness on the trimmed value but hand the runner the exact string.
+     const sessionId = options.sessionId
+@@ -115,6 +120,7 @@ export function apply(ctx: Context): void {
+       task,
+       sessionId,
+       json: options.json === true,
++      chat,
+     } satisfies HeadlessStartupValues)
+   })
+   parseCmdline(ctx, program)
+diff --git a/packages/bundle/headless/tests/headless.spec.ts b/packages/bundle/headless/tests/headless.spec.ts
+index 468c1e67..395cb58f 100644
+--- a/packages/bundle/headless/tests/headless.spec.ts
++++ b/packages/bundle/headless/tests/headless.spec.ts
+@@ -47,6 +47,8 @@ interface BenchOptions {
+   readStdin?: () => Promise<string>
+   sessionId?: string
+   json?: boolean
++  /** Run the chat mode over these typed lines instead of one task. */
++  chatLines?: string[]
+   observe?: () => Promise<ObservationStub>
+   /** Leave the query service unmounted to exercise the fail-loud path. */
+   omitSessionQuery?: boolean
+@@ -212,6 +214,15 @@ async function bench(script: Script, options: BenchOptions = {}): Promise<{
+       internals.stdout = { write: (chunk: string) => { out += chunk; return true } }
+       internals.stderr = { write: (chunk: string) => { err += chunk; return true } }
+       if (options.readStdin !== undefined) internals.readStdin = options.readStdin
++      if (options.chatLines !== undefined) {
++        const lines = options.chatLines
++        internals.openChat = () => ({
++          async* [Symbol.asyncIterator]() { yield* lines },
++          prompt: () => { order.push('prompt') },
++          onInterrupt: () => {},
++          close: () => {},
++        })
++      }
+       const exited = new Promise<number>((resolve) => {
+         ctx.provide('appExit', (code: number) => { order.push('exit'); resolve(code) })
+       })
+@@ -225,6 +236,7 @@ async function bench(script: Script, options: BenchOptions = {}): Promise<{
+         ...options.useStdin === true ? {} : { task: options.task ?? 'do the thing' },
+         ...options.sessionId === undefined ? {} : { sessionId: options.sessionId },
+         ...options.json === undefined ? {} : { json: options.json },
++        ...options.chatLines === undefined ? {} : { chat: true },
+       })
+       return { code: await exited, out, err, order }
+     },
+@@ -232,6 +244,25 @@ async function bench(script: Script, options: BenchOptions = {}): Promise<{
+ }
+ 
+ describe('headless runner', () => {
++  it('chats over typed lines in one Session, one answer per line, and ends at /exit', async () => {
++    let turn = 0
++    const test = await bench({
++      async afterPrompt(session, message) {
++        await Promise.resolve()
++        const text = message.content.map(block => block.type === 'text' ? block.text : '').join('')
++        appendTurn(session, turn++, message, `answer: ${text}`, true)
++      },
++    }, { chatLines: ['first question', '   ', 'second question', '/exit', 'never sent'] })
++    const result = await test.run()
++    expect(result.code).toBe(0)
++    expect(result.out).toBe('answer: first question\n\nanswer: second question\n\n')
++    expect(result.err).toMatch(/^Chat with test-model in .+\. Enter sends; Ctrl-C stops a reply; Ctrl-D or \/exit quits\.\n/)
++    expect(result.err).toMatch(/\nSession session-[0-9a-f-]+; continue it with --session-id session-[0-9a-f-]+\n$/)
++    expect(result.order).toEqual(['prompt', 'flush', 'prompt', 'prompt', 'flush', 'prompt', 'flush', 'exit'])
++    expect(turn).toBe(2)
++    await test.ctx.fiber.dispose()
++  })
++
+   it('waits for parent awakened between idle and child observation', async () => {
+     const cleanup = Promise.withResolvers<undefined>()
+     const cleaning = Promise.withResolvers<undefined>()
+diff --git a/packages/bundle/headless/tests/startup.spec.ts b/packages/bundle/headless/tests/startup.spec.ts
+index 36965a74..ffd7d6f8 100644
+--- a/packages/bundle/headless/tests/startup.spec.ts
++++ b/packages/bundle/headless/tests/startup.spec.ts
+@@ -75,6 +75,7 @@ export const apply = ctx => globalThis.__headlessStartupApply(ctx)
+     '    task: !!js ctx.headlessStartup.task',
+     '    sessionId: !!js ctx.headlessStartup.sessionId',
+     '    json: !!js ctx.headlessStartup.json',
++    '    chat: !!js ctx.headlessStartup.chat',
+     '- id: headless-startup',
+     `  name: ${pathToFileURL(join(dir, 'startup.mjs')).href}`,
+     '',
+@@ -116,30 +117,37 @@ export const apply = ctx => globalThis.__headlessStartupApply(ctx)
+ describe('headless command-line provider', () => {
+   it('joins the task positional into the runner config', async () => {
+     const { task, observed } = await bootStartup(['run', 'the', 'tests'])
+-    expect(task).toEqual({ task: 'run the tests', sessionId: undefined, json: false })
++    expect(task).toEqual({ task: 'run the tests', sessionId: undefined, json: false, chat: false })
+     expect(observed.runnerConfig).toMatchObject({ task: 'run the tests', json: false })
+     expect(observed.exits).toEqual([])
+   })
+ 
+   it('publishes the machine-readable output mode and the exact Session identity', async () => {
+     const { task, observed } = await bootStartup(['--json', '--session-id', 'session-exact', 'do', 'it'])
+-    expect(task).toEqual({ task: 'do it', sessionId: 'session-exact', json: true })
++    expect(task).toEqual({ task: 'do it', sessionId: 'session-exact', json: true, chat: false })
+     expect(observed.runnerConfig).toMatchObject({ task: 'do it', sessionId: 'session-exact', json: true })
+   })
+ 
+   it('keeps the stdin marker as the task so the runner reads the pipe', async () => {
+     const { task } = await bootStartup(['-'], { stdinIsTty: false })
+-    expect(task).toEqual({ task: '-', sessionId: undefined, json: false })
++    expect(task).toEqual({ task: '-', sessionId: undefined, json: false, chat: false })
+   })
+ 
+   it('defers an absent task to stdin when stdin is not a terminal', async () => {
+     const { task, observed } = await bootStartup([], { stdinIsTty: false })
+-    expect(task).toEqual({ task: undefined, sessionId: undefined, json: false })
++    expect(task).toEqual({ task: undefined, sessionId: undefined, json: false, chat: false })
+     expect(observed.runnerConfig).toMatchObject({ json: false })
+   })
+ 
+-  it.each([{ args: [] as string[] }, { args: ['   '] }])('rejects an interactive invocation with no task ($args)', async ({ args }) => {
+-    const { task, observed } = await bootStartup(args, { stdinIsTty: true })
++  it('opens a chat for an interactive invocation with no task', async () => {
++    const { task, observed } = await bootStartup([], { stdinIsTty: true })
++    expect(task).toEqual({ task: undefined, sessionId: undefined, json: false, chat: true })
++    expect(observed.runnerConfig).toMatchObject({ chat: true })
++    expect(observed.exits).toEqual([])
++  })
++
++  it('rejects an interactive invocation with a blank task', async () => {
++    const { task, observed } = await bootStartup(['   '], { stdinIsTty: true })
+     expect(observed.out).toContain('a task is required')
+     expect(task).toBeUndefined()
+     expect(observed.runnerConfig).toBeUndefined()
+@@ -155,7 +163,7 @@ describe('headless command-line provider', () => {
+ 
+   it('keeps the caller-provided exact Session identity verbatim', async () => {
+     const { task } = await bootStartup(['--session-id', ' session-x ', 'do', 'it'])
+-    expect(task).toEqual({ task: 'do it', sessionId: ' session-x ', json: false })
++    expect(task).toEqual({ task: 'do it', sessionId: ' session-x ', json: false, chat: false })
+   })
+ 
+   it('rejects a lone stdin marker mixed with other task words', async () => {
+@@ -196,7 +204,7 @@ describe('headless command-line provider', () => {
+   })
+ 
+   it('does not install the JSON error override for a --json option value', async () => {
+-    const { observed } = await bootStartup(['--session-id', '--json'], { stdinIsTty: true })
++    const { observed } = await bootStartup(['--session-id', '--json', '   '], { stdinIsTty: true })
+     expect(observed.out).toContain('a task is required')
+     expect(observed.out).not.toContain('"type":"error"')
+     expect(observed.exits).toEqual([1])
+@@ -204,7 +212,7 @@ describe('headless command-line provider', () => {
+ 
+   it('does not install the JSON error override for a --json positional after --', async () => {
+     const { task, observed } = await bootStartup(['--', '--json'], { stdinIsTty: false })
+-    expect(task).toEqual({ task: '--json', sessionId: undefined, json: false })
++    expect(task).toEqual({ task: '--json', sessionId: undefined, json: false, chat: false })
+     expect(observed.out).not.toContain('"type":"error"')
+   })
+ 

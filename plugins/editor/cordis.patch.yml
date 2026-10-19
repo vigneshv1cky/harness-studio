@@ -1,0 +1,3 @@
+- insert:
+    - id: editor
+      name: '@harness-studio/editor'

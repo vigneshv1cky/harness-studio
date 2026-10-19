@@ -26,6 +26,14 @@ window.__ModuleLoader__.load({
    Harness hides its composer while a card holds the seat (display: none on the composer's wrapper); for this
    card only, show it again and put the card first. */
 [data-composer-seat] > div:has(> .hs-ss-frame) > div[style*="display: none"]:has(> [class*="composerStack"]) { display: block !important; }
+/* Right after the mode picker, drawn like it: 13px medium text on a borderless 28px button. On, the branch icon
+   and a soft tint use the accent colour. */
+[class*="_heroOptions"]:has(.hs-wt-toggle) { margin-left: 0 !important; }
+.hs-wt-toggle { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: none; border-radius: 8px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap; }
+.hs-wt-toggle:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.hs-wt-toggle[aria-pressed="true"] { color: var(--dsw-alias-label-primary); background: color-mix(in srgb, var(--dsw-alias-button-info-fill) 12%, transparent); }
+.hs-wt-toggle[aria-pressed="true"] svg { color: var(--dsw-alias-button-info-fill); }
+.hs-wt-toggle:disabled { cursor: default; }
 .hs-ss-frame { order: -1; display: flex; justify-content: center; width: 100%; box-sizing: border-box; padding: 4px calc(var(--dsh-composer-side-clearance, 0px) + 16px) 8px; }
 .hs-ss-card { box-sizing: border-box; width: 100%; max-width: min(680px, var(--dsh-chat-content-width, 680px)); overflow: hidden; border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 12px; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font-size: 13px; line-height: 18px; outline: none; }
@@ -191,9 +199,114 @@ window.__ModuleLoader__.load({
       }
     }
 
+    // ---- New worktree on the New Session screen ---------------------------------------------------------
+    // A switch beside the workspace and mode pickers. While it is on, sending the first message first asks the
+    // Host half to make a new git worktree and branch from the workspace and move this fresh session into it,
+    // then lets the message go. Shown only when the workspace is in a git repository with commits.
+    const SESSIONS_ENDPOINT = 'harnessStudioSessions/call'
+    let connection
+    async function sessionsCall(request) {
+      if (!connection?.rpc) throw new Error('Harness did not provide its connection. Reload Harness Studio.')
+      const result = await connection.rpc.call('/api', SESSIONS_ENDPOINT, { args: { request } })
+      if (!result?.ok) throw new Error(result?.error?.message ?? 'Harness Studio could not reach its sessions service.')
+      return result.value
+    }
+    /** sessionId → { on, state: 'idle' | 'creating' | 'ready' | 'failed', branch, error } */
+    const worktreeChoices = new Map()
+    const choiceListeners = new Set()
+    const setChoice = (sessionId, patch) => {
+      worktreeChoices.set(sessionId, { ...(worktreeChoices.get(sessionId) ?? { on: false, state: 'idle' }), ...patch })
+      for (const listener of choiceListeners) listener()
+    }
+    /** The New Session screen on view: its session, while its switch is mounted. */
+    let heroSession
+
+    const BRANCH_ICON = h('svg', { width: 14, height: 14, viewBox: '0 0 16 16', fill: 'none', stroke: 'currentColor', strokeWidth: 1.3, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
+      h('circle', { cx: 4.5, cy: 3.5, r: 1.5 }), h('circle', { cx: 4.5, cy: 12.5, r: 1.5 }), h('circle', { cx: 11.5, cy: 5.5, r: 1.5 }), h('path', { d: 'M4.5 5v6M11.5 7c0 3-7 2-7 4' }))
+
+    function WorktreeOption({ sessionId }) {
+      const [, rerender] = useState(0)
+      const [option, setOption] = useState(null)
+      useEffect(() => {
+        const listener = () => rerender(n => n + 1)
+        choiceListeners.add(listener)
+        return () => { choiceListeners.delete(listener) }
+      }, [])
+      useEffect(() => {
+        heroSession = sessionId
+        let live = true
+        sessionsCall({ action: 'worktreeOption', sessionId }).then(r => { if (live) setOption(r) }, () => { if (live) setOption({ available: false }) })
+        return () => { live = false; if (heroSession === sessionId) heroSession = undefined }
+      }, [sessionId])
+      if (!option?.available) return null
+      const choice = worktreeChoices.get(sessionId) ?? { on: false, state: 'idle' }
+      const label = choice.state === 'creating' ? 'Creating worktree…' : choice.state === 'ready' ? `Worktree · ${choice.branch}` : 'New worktree'
+      return h('button', {
+        type: 'button', className: 'hs-wt-toggle', 'aria-pressed': choice.on, 'data-hs-worktree': choice.state,
+        disabled: choice.state === 'creating' || choice.state === 'ready',
+        title: choice.state === 'failed' ? choice.error
+          : choice.on ? 'This session will start in a new git worktree and branch of ' + option.repo + ', made when you send the first message.'
+            : 'Start this session in a new git worktree and branch of ' + option.repo + ', so its changes stay apart from yours.',
+        onClick: () => setChoice(sessionId, { on: !choice.on, state: 'idle', error: undefined }),
+      }, BRANCH_ICON, h('span', null, label))
+    }
+
+    /** Before the first message of a New Session with its switch on: make the worktree, then send. */
+    function watchFirstSend() {
+      let passing = false
+      const pending = (target) => {
+        if (passing || !heroSession || !(target instanceof Element)) return undefined
+        const choice = worktreeChoices.get(heroSession)
+        if (!choice?.on || choice.state === 'ready') return undefined
+        return choice
+      }
+      const prepare = async (input, send) => {
+        const sessionId = heroSession
+        const choice = worktreeChoices.get(sessionId)
+        if (choice.state === 'creating') return
+        setChoice(sessionId, { state: 'creating' })
+        try {
+          const made = await sessionsCall({ action: 'startInWorktree', sessionId, title: (input?.innerText ?? '').trim().slice(0, 60) })
+          setChoice(sessionId, { state: 'ready', branch: made.branch })
+          passing = true
+          try { send() } finally { passing = false }
+        } catch (error) {
+          setChoice(sessionId, { state: 'failed', on: false, error: String(error?.message ?? error) })
+          window.alert(`The worktree could not be made, so nothing was sent:\n${error?.message ?? error}`)
+        }
+      }
+      const sendButtonOf = input => input?.closest('[class*="_card"], [class*="_composer"]')?.querySelector('button[class*="_primary"]')
+      const onKeyDown = (event) => {
+        if (event.key !== 'Enter' || event.shiftKey || event.isComposing || document.querySelector('[data-trigger-menu]')) return
+        const input = event.target instanceof Element ? event.target.closest('[data-composer-input]') : null
+        if (!input || !pending(input) || !input.innerText.trim()) return
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        void prepare(input, () => sendButtonOf(input)?.click())
+      }
+      const onClick = (event) => {
+        const button = event.target instanceof Element ? event.target.closest('button[class*="_primary"]') : null
+        if (!button || !pending(button)) return
+        const input = button.closest('[class*="_card"], [class*="_composer"]')?.querySelector('[data-composer-input]')
+        if (!input || !input.innerText.trim()) return
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        void prepare(input, () => button.click())
+      }
+      document.addEventListener('keydown', onKeyDown, true)
+      document.addEventListener('click', onClick, true)
+      return () => { document.removeEventListener('keydown', onKeyDown, true); document.removeEventListener('click', onClick, true) }
+    }
+
     return {
-      inject: ['slots'],
+      inject: ['slots', 'connection'],
       apply(ctx) {
+        connection = ctx.connection
+        ctx.effect(() => () => { connection = undefined }, 'sessions connection')
+        ctx.effect(() => ctx.slots.inject('conversation.hero.options', () => ctx.slots.register({
+          name: 'conversation.hero.options', id: 'harness-studio-worktree', inject: () => ({}),
+        }, WorktreeOption)), 'New worktree switch on the New Session screen')
+        ctx.effect(watchFirstSend, 'make the worktree before the first message')
         ctx.effect(() => {
           const style = document.createElement('style')
           style.id = STYLE_ID

@@ -28,6 +28,14 @@ const CLIENT_INFO = { name: 'harness-studio-connectors', title: 'Harness Studio 
 const REQUEST_TIMEOUT_MS = 30000
 const STDERR_TAIL_CHARS = 4000
 const RETRY_DELAYS_MS = [1000, 3000, 10000, 30000]
+/**
+ * The most a server can make Harness hold for one message: a JSON body (bytes), or one SSE event's data,
+ * one SSE line or one stdio line (characters). A line carries a whole message in both transports, so it
+ * shares the cap. Past it, the request fails (a body, a POST's event stream) or the connection does
+ * (a stdio line, the legacy event stream).
+ */
+const MAX_MESSAGE_SIZE = 16 * 1024 * 1024
+const MAX_ERROR_BODY = 64 * 1024
 
 /** The server (or its authorization server) wants a bearer token we do not have or that was refused. */
 export class AuthRequiredError extends Error {
@@ -47,38 +55,112 @@ class HttpStatusError extends Error {
   }
 }
 
+/** A server sent more than MAX_MESSAGE_SIZE for one message or line. */
+class TooLargeError extends Error {
+  constructor() {
+    super(`The server sent a message larger than ${MAX_MESSAGE_SIZE / 1024 / 1024} MB; Harness stopped reading it.`)
+    this.name = 'TooLargeError'
+  }
+}
+
 /**
- * Parse an SSE byte stream into events.
+ * Split text that arrives in chunks into lines (LF or CRLF). Only each new chunk is searched for a line
+ * end, so a long line is not rescanned as it grows. A line longer than `maxChars` throws TooLargeError.
+ * @param {number} maxChars @param {(line: string) => void} onLine
+ * @returns {(text: string) => void} feeds one chunk.
+ */
+function lineSplitter(maxChars, onLine) {
+  let pieces = []
+  let size = 0
+  return (text) => {
+    let start = 0
+    let newline
+    while ((newline = text.indexOf('\n', start)) !== -1) {
+      if (size + newline - start > maxChars) throw new TooLargeError()
+      pieces.push(text.slice(start, newline))
+      const line = pieces.length === 1 ? pieces[0] : pieces.join('')
+      pieces = []
+      size = 0
+      start = newline + 1
+      onLine(line.endsWith('\r') ? line.slice(0, -1) : line)
+    }
+    if (start < text.length) {
+      size += text.length - start
+      if (size > maxChars) throw new TooLargeError()
+      pieces.push(text.slice(start))
+    }
+  }
+}
+
+/**
+ * Parse an SSE byte stream into events. A line, or one event's data, past MAX_MESSAGE_SIZE rejects
+ * with TooLargeError.
  * @param {ReadableStream<Uint8Array>} body
  * @param {(event: { event: string, data: string }) => void} onEvent
  * @returns {Promise<void>} resolves when the stream ends.
  */
 async function readSse(body, onEvent) {
   const decoder = new TextDecoder()
-  let buffer = ''
   let event = 'message'
   let data = []
+  let dataSize = 0
   const dispatch = () => {
     if (data.length > 0) onEvent({ event, data: data.join('\n') })
     event = 'message'
     data = []
+    dataSize = 0
   }
-  for await (const chunk of body) {
-    buffer += decoder.decode(chunk, { stream: true })
-    let newline
-    while ((newline = buffer.search(/\r?\n/)) !== -1) {
-      const line = buffer.slice(0, newline)
-      buffer = buffer.slice(newline + (buffer[newline] === '\r' ? 2 : 1))
-      if (line === '') { dispatch(); continue }
-      if (line.startsWith(':')) continue
-      const colon = line.indexOf(':')
-      const field = colon === -1 ? line : line.slice(0, colon)
-      const value = colon === -1 ? '' : line.slice(colon + 1).replace(/^ /, '')
-      if (field === 'event') event = value
-      else if (field === 'data') data.push(value)
+  const feed = lineSplitter(MAX_MESSAGE_SIZE, (line) => {
+    if (line === '') { dispatch(); return }
+    if (line.startsWith(':')) return
+    const colon = line.indexOf(':')
+    const field = colon === -1 ? line : line.slice(0, colon)
+    const value = colon === -1 ? '' : line.slice(colon + 1).replace(/^ /, '')
+    if (field === 'event') event = value
+    else if (field === 'data') {
+      dataSize += value.length + 1
+      if (dataSize > MAX_MESSAGE_SIZE) throw new TooLargeError()
+      data.push(value)
     }
-  }
+  })
+  for await (const chunk of body) feed(decoder.decode(chunk, { stream: true }))
   dispatch()
+}
+
+/**
+ * A response body as text, refused past `maxBytes`: first by its Content-Length, then as it arrives
+ * (leaving the loop early cancels the rest of the body).
+ * @param {Response} response @param {number} [maxBytes]
+ */
+async function boundedText(response, maxBytes = MAX_MESSAGE_SIZE) {
+  if (Number(response.headers.get('content-length')) > maxBytes) {
+    await response.body?.cancel().catch(() => {})
+    throw new TooLargeError()
+  }
+  if (!response.body) return ''
+  const decoder = new TextDecoder()
+  const parts = []
+  let size = 0
+  for await (const chunk of response.body) {
+    size += chunk.byteLength
+    if (size > maxBytes) throw new TooLargeError()
+    parts.push(decoder.decode(chunk, { stream: true }))
+  }
+  parts.push(decoder.decode())
+  return parts.join('')
+}
+
+/** The start of an error response's body, for the error message; the rest of a large one is not read. */
+async function errorBody(response) {
+  const decoder = new TextDecoder()
+  let text = ''
+  try {
+    for await (const chunk of response.body ?? []) {
+      text += decoder.decode(chunk, { stream: true })
+      if (text.length >= MAX_ERROR_BODY) break
+    }
+  } catch { /* the message is optional */ }
+  return text
 }
 
 /** Parse a JSON-RPC payload that may be one message or a batch. */
@@ -195,22 +277,26 @@ export class StdioTransport {
       ...launch.options,
     })
     if (process.platform !== 'win32' && this.child.pid) trackGroup(this.child)
-    let buffer = ''
+    let closed = false
+    const close = (error) => { if (!closed) { closed = true; onClose(error) } }
+    let overflowed = false
+    const feed = lineSplitter(MAX_MESSAGE_SIZE, (raw) => {
+      const line = raw.trim()
+      if (line === '') return
+      try { for (const message of messagesOf(line)) onMessage(message) } catch { /* a non-JSON line is server log noise on stdout; ignore it */ }
+    })
     this.child.stdout.setEncoding('utf8')
     this.child.stdout.on('data', (chunk) => {
-      buffer += chunk
-      let newline
-      while ((newline = buffer.indexOf('\n')) !== -1) {
-        const line = buffer.slice(0, newline).trim()
-        buffer = buffer.slice(newline + 1)
-        if (line === '') continue
-        try { for (const message of messagesOf(line)) onMessage(message) } catch { /* a non-JSON line is server log noise on stdout; ignore it */ }
+      if (overflowed) return
+      try { feed(chunk) } catch (error) {
+        // A line past the cap is not buffered without end: the server is stopped and the connection fails.
+        overflowed = true
+        close(error)
+        this.close()
       }
     })
     this.child.stderr.setEncoding('utf8')
     this.child.stderr.on('data', (chunk) => { this.stderr = (this.stderr + chunk).slice(-STDERR_TAIL_CHARS) })
-    let closed = false
-    const close = (error) => { if (!closed) { closed = true; onClose(error) } }
     this.child.on('error', error => close(new Error(error.code === 'ENOENT' ? `Command not found: ${command}` : error.message)))
     const child = this.child
     this.child.on('exit', (code, signal) => {
@@ -246,7 +332,7 @@ export class StdioTransport {
 
 /** Streamable HTTP transport. */
 class StreamableHttpTransport {
-  /** @param {{ url: string, headers?: Record<string,string> }} spec @param {() => Promise<Record<string,string>>} authHeaders */
+  /** @param {{ url: string, headers?: Record<string,string> }} spec @param {(options?: { refresh?: boolean }) => Promise<Record<string,string> | null>} authHeaders */
   constructor(spec, authHeaders) {
     this.spec = spec
     this.authHeaders = authHeaders
@@ -261,8 +347,9 @@ class StreamableHttpTransport {
     return Promise.resolve()
   }
 
-  async headers(extra) {
-    const headers = { ...this.spec.headers, ...await this.authHeaders(), ...extra }
+  /** @param {Record<string,string>} [extra] @param {Record<string,string>} [auth] - auth headers already in hand. */
+  async headers(extra, auth) {
+    const headers = { ...this.spec.headers, ...(auth ?? await this.authHeaders()), ...extra }
     if (this.sessionId) headers['mcp-session-id'] = this.sessionId
     if (this.protocolVersion) headers['mcp-protocol-version'] = this.protocolVersion
     return headers
@@ -292,7 +379,7 @@ class StreamableHttpTransport {
         this.onClose(new Error('The server ended the session'))
         throw new Error('The server ended the session')
       }
-      if (!response.ok) throw new HttpStatusError(response.status, await response.text().catch(() => ''))
+      if (!response.ok) throw new HttpStatusError(response.status, await errorBody(response))
       const sessionId = response.headers.get('mcp-session-id')
       if (sessionId) this.sessionId = sessionId
       if (response.status === 202 || response.body === null) return
@@ -301,11 +388,15 @@ class StreamableHttpTransport {
         // Read in the background: the caller's response arrives through onMessage.
         streaming = true
         readSse(response.body, ({ data }) => { try { for (const m of messagesOf(data)) this.onMessage(m) } catch { /* skip a malformed event */ } })
-          .catch(() => { /* a dropped stream fails the pending request through its timeout */ })
+          .catch((error) => {
+            // A stream past the size cap fails its request now, with the reason; a dropped stream fails it
+            // through its timeout.
+            if (error instanceof TooLargeError && 'id' in message) this.onMessage({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: error.message } })
+          })
           .finally(() => this.controllers.delete(controller))
         return
       }
-      const text = await response.text()
+      const text = await boundedText(response)
       if (text.trim()) for (const m of messagesOf(text)) this.onMessage(m)
     } finally {
       if (!streaming) this.controllers.delete(controller)
@@ -327,8 +418,13 @@ class StreamableHttpTransport {
     for (const controller of this.controllers) controller.abort()
     this.controllers.clear()
     if (this.sessionId) {
-      // Tell the server the session is over; failures do not matter.
-      this.headers().then(headers => fetch(this.spec.url, { method: 'DELETE', headers })).catch(() => {})
+      // Tell the server the session is over; failures do not matter. This never refreshes a token: the
+      // connection may belong to a connector being edited, removed or shut down, and a refresh here would
+      // spend the refresh token its replacement needs. With an expired token the request is skipped.
+      Promise.resolve(this.authHeaders({ refresh: false }))
+        .then(auth => (auth ? this.headers(undefined, auth) : null))
+        .then(headers => headers && fetch(this.spec.url, { method: 'DELETE', headers }))
+        .catch(() => {})
     }
   }
 }
@@ -347,7 +443,7 @@ class LegacySseTransport {
       signal: this.controller.signal,
     })
     if (response.status === 401) { await response.body?.cancel(); throw new AuthRequiredError(response.headers.get('www-authenticate')) }
-    if (!response.ok) throw new HttpStatusError(response.status, await response.text().catch(() => ''))
+    if (!response.ok) throw new HttpStatusError(response.status, await errorBody(response))
     let resolveEndpoint
     const endpoint = new Promise((resolve, reject) => {
       resolveEndpoint = resolve
@@ -376,7 +472,7 @@ class LegacySseTransport {
       signal: signal ? AbortSignal.any([signal, this.controller.signal]) : this.controller.signal,
     })
     if (response.status === 401) throw new AuthRequiredError(response.headers.get('www-authenticate'))
-    if (!response.ok) throw new HttpStatusError(response.status, await response.text().catch(() => ''))
+    if (!response.ok) throw new HttpStatusError(response.status, await errorBody(response))
     await response.body?.cancel()
   }
 
@@ -390,7 +486,9 @@ export class McpConnection {
   /**
    * @param {object} options
    * @param {object} options.spec - connector spec: { transport: 'stdio' | 'http', url, headers, command, args, env, cwd }.
-   * @param {() => Promise<Record<string,string>>} [options.authHeaders] - extra HTTP headers (the bearer token).
+   * @param {(options?: { refresh?: boolean }) => Promise<Record<string,string> | null>} [options.authHeaders] - extra HTTP
+   *   headers (the bearer token). With `refresh: false` it must not refresh an expired token, and answers null
+   *   when it has no usable one; only the session-end request asks that way.
    * @param {(connection: McpConnection) => void} options.onChange - called on every status or tool-list change.
    */
   constructor({ spec, authHeaders = async () => ({}), onChange }) {
@@ -496,7 +594,7 @@ export class McpConnection {
       const result = await this.request('tools/list', cursor ? { cursor } : {})
       for (const tool of result.tools ?? []) {
         if (typeof tool?.name !== 'string') continue
-        tools.push({ name: tool.name, title: tool.title ?? tool.annotations?.title, description: tool.description ?? '', inputSchema: tool.inputSchema ?? { type: 'object' } })
+        tools.push({ name: tool.name, title: tool.title ?? tool.annotations?.title, description: tool.description ?? '', inputSchema: tool.inputSchema ?? { type: 'object' }, readOnly: tool.annotations?.readOnlyHint === true })
       }
       cursor = result.nextCursor
       if (!cursor) break
@@ -568,6 +666,15 @@ export class McpConnection {
 
   notify(method, params) {
     return this.transport ? this.transport.send({ jsonrpc: '2.0', method, ...(params ? { params } : {}) }) : Promise.resolve()
+  }
+
+  /**
+   * Read one resource by its address (MCP resources/read).
+   * @returns {Promise<object>} the ReadResourceResult.
+   */
+  async readResource(uri, signal) {
+    if (this.status !== 'connected') throw new Error(`The connector is ${this.status}`)
+    return this.request('resources/read', { uri }, { signal, timeoutMs: 5000 })
   }
 
   /**

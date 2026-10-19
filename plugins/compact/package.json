@@ -1,14 +1,24 @@
 {
   "name": "@harness-studio/compact",
   "version": "0.2.0",
-  "description": "A Claude-like feel for Harness Studio in Harness's own colours: denser spacing, serif replies, calmer chrome, and whole-app zoom with ⌘+ / ⌘− / ⌘0.",
+  "description": "A Claude-like feel for Harness Studio in Harness's own colours: denser spacing, serif replies, calmer chrome, and whole-app zoom with \u2318+ / \u2318\u2212 / \u23180.",
   "license": "MIT",
   "author": "Vignesh Murugan",
   "homepage": "https://github.com/vigneshv1cky/harness-studio/tree/main/plugins/compact#readme",
-  "repository": { "type": "git", "url": "git+https://github.com/vigneshv1cky/harness-studio.git", "directory": "plugins/compact" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vigneshv1cky/harness-studio.git",
+    "directory": "plugins/compact"
+  },
   "bugs": "https://github.com/vigneshv1cky/harness-studio/issues",
   "type": "module",
-  "keywords": ["harness-plugin", "harness-studio", "theme", "density", "zoom"],
+  "keywords": [
+    "harness-plugin",
+    "harness-studio",
+    "theme",
+    "density",
+    "zoom"
+  ],
   "engines": {
     "dsh": ">=0.2.1-alpha.3 <0.3.0"
   },
@@ -18,10 +28,31 @@
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
-  "files": ["index.js", "client.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md"],
+  "files": [
+    "index.js",
+    "site-approval.js",
+    "data.js",
+    "computer-use.js",
+    "default-instructions.js",
+    "default-agents.md",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
   "dsh": {
     "manifestVersion": 1,
-    "bundle": { "patch": "./cordis.patch.yml" },
-    "client": { "platform": "web", "immediately": false, "inject": [] }
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": false,
+      "inject": []
+    }
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
   }
 }

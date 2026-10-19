@@ -14,6 +14,7 @@
  *   POST   /connectors/<id>/reconnect
  *   POST   /connectors/<id>/login          → opens the browser; returns { url }
  *   POST   /connectors/<id>/logout
+ *   GET    /chrome-bridge-link            → { port, key } of the connected Harness Studio Chrome bridge, or {}
  *   GET    /oauth/callback?code&state      → the authorization server's redirect (an HTML page)
  *
  * Safety:
@@ -114,6 +115,7 @@ export async function startHelper({ routes, secret, origins: allowed = DEFAULT_O
     try {
       const parts = url.pathname.split('/').filter(Boolean)
       if (url.pathname === '/hello') return send(200, { service: SERVICE, version: VERSION })
+      if (url.pathname === '/chrome-bridge-link' && request.method === 'GET') return send(200, await routes.chromeBridgeLink())
       if (parts[0] !== 'connectors') return send(404, { error: 'not found' })
       const id = parts[1] ? decodeURIComponent(parts[1]) : undefined
       const action = parts[2]

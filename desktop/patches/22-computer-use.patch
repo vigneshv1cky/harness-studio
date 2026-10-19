@@ -1,0 +1,318 @@
+diff --git a/packages/experimental/cua-macos/native/Sources/CuaNative/Main.swift b/packages/experimental/cua-macos/native/Sources/CuaNative/Main.swift
+index 174da127..4985bfd4 100644
+--- a/packages/experimental/cua-macos/native/Sources/CuaNative/Main.swift
++++ b/packages/experimental/cua-macos/native/Sources/CuaNative/Main.swift
+@@ -7,6 +7,13 @@ import Darwin
+     @MainActor static func main() {
+         do {
+             let arguments = Array(CommandLine.arguments.dropFirst())
++            // Report the two macOS permissions this helper needs, without opening a system dialog.
++            if arguments.first == "--permissions" {
++                let report = ["accessibility": AXIsProcessTrusted(), "screenRecording": CGPreflightScreenCaptureAccess()]
++                let data = try JSONEncoder().encode(report)
++                try FileHandle.standardOutput.write(contentsOf: data + Data([10]))
++                return
++            }
+             if arguments.first == "--ensure-shared" {
+                 try SharedHelperLauncher.ensure(SharedHelperOptions(arguments: arguments))
+                 return
+diff --git a/packages/experimental/cua-macos/native/Sources/CuaNative/SharedHelperServer.swift b/packages/experimental/cua-macos/native/Sources/CuaNative/SharedHelperServer.swift
+index 2de82bce..6cf3da85 100644
+--- a/packages/experimental/cua-macos/native/Sources/CuaNative/SharedHelperServer.swift
++++ b/packages/experimental/cua-macos/native/Sources/CuaNative/SharedHelperServer.swift
+@@ -67,6 +67,12 @@ final class NativeSignals {
+     deinit { sources.forEach { $0.cancel() } }
+ }
+ 
++/** Weak holder for the server, passed to the background accept loop and read back on the main actor. */
++final class WeakSharedHelperServer: @unchecked Sendable {
++    weak var value: SharedHelperServer?
++    init(_ value: SharedHelperServer) { self.value = value }
++}
++
+ @MainActor final class SharedHelperServer {
+     private let options: SharedHelperOptions
+     private let versionLock: SharedHelperLock
+@@ -113,7 +119,9 @@ final class NativeSignals {
+         try FileHandle.standardOutput.write(contentsOf: data + Data([10]))
+         try FileHandle.standardOutput.close()
+         let listener = self.listener
+-        DispatchQueue.global(qos: .utility).async { [weak self] in
++        // A weak reference the accept loop can carry across threads; it is only read on the main actor.
++        let server = WeakSharedHelperServer(self)
++        DispatchQueue.global(qos: .utility).async {
+             while !lifetime.isStopping {
+                 let descriptor = accept(listener.descriptor, nil, nil)
+                 if descriptor < 0 && errno == EINTR { continue }
+@@ -128,7 +136,7 @@ final class NativeSignals {
+                 let id = UUID()
+                 let cancellation = CancellationLatch()
+                 guard lifetime.add(id, channel: channel, cancellation: cancellation) else { channel.shutdown(); return }
+-                Task { @MainActor in self?.admit(id, channel: channel, cancellation: cancellation) }
++                Task { @MainActor in server.value?.admit(id, channel: channel, cancellation: cancellation) }
+             }
+         }
+     }
+diff --git a/packages/experimental/cua-macos/tests/provider-lifecycle.spec.ts b/packages/experimental/cua-macos/tests/provider-lifecycle.spec.ts
+index b91166ba..e09985be 100644
+--- a/packages/experimental/cua-macos/tests/provider-lifecycle.spec.ts
++++ b/packages/experimental/cua-macos/tests/provider-lifecycle.spec.ts
+@@ -57,7 +57,7 @@ vi.mock('@deepseek-ai/dsh-cua/native-client', async importOriginal => ({
+ const config = {
+   helperPath: resolve('fixture-helper'), buildTimeoutMs: 300_000, timeoutMs: 10_000, connectTimeoutMs: 5000, screenshotTimeoutMs: 5000, axTimeoutMs: 3000, maxRequestBytes: 1024, maxResponseBytes: 4096, maxClipboardBytes: 8192, pasteReadTimeoutMs: 1000, maxAppMatches: 20,
+   graceMs: 10, textEventIntervalMs: 8, maxElements: 64, maxDepth: 8, dragDurationMs: 200, dragSteps: 10,
+-} satisfies Omit<NativeProvider.Config, 'allowedApps'>
++} satisfies Omit<NativeProvider.Config, 'allowedApps' | 'refusedApps' | 'taskOnlyApps'>
+ 
+ const { helperPath: _helperPath, ...automaticConfig } = config
+ 
+@@ -102,7 +102,7 @@ async function selectApplication(f: Awaited<ReturnType<typeof setup>>) {
+ it('rejects a relative helper path before publishing computer-use operations', async () => {
+   const ctx = new Context()
+   onTestFinished(() => ctx.fiber.dispose())
+-  await expect(NativeProvider.apply(ctx, { ...config, allowedApps: { get: () => [] }, helperPath: 'relative-helper' })).rejects.toThrow('helperPath must be absolute')
++  await expect(NativeProvider.apply(ctx, { ...config, allowedApps: { get: () => [] }, refusedApps: { get: () => [] }, taskOnlyApps: { get: () => [] }, helperPath: 'relative-helper' })).rejects.toThrow('helperPath must be absolute')
+ })
+ 
+ it.each(['Allow for this task', 'Deny'])('obtains %s before a stopped application can launch', async (choice) => {
+@@ -547,7 +547,7 @@ it('prepares the selected native component before registering CUA and creates no
+   const f = await setup()
+   await f.provider.dispose()
+   native.prepare.mockReset().mockResolvedValue(resolve('prepared-helper'))
+-  await NativeProvider.apply(f.ctx, { ...automaticConfig, allowedApps: { get: () => [] } })
++  await NativeProvider.apply(f.ctx, { ...automaticConfig, allowedApps: { get: () => [] }, refusedApps: { get: () => [] }, taskOnlyApps: { get: () => [] } })
+   expect(native.prepare).toHaveBeenCalledTimes(1)
+   expect(native.instances).toHaveLength(0)
+   await f.execute()
+@@ -596,7 +596,7 @@ it('waits for canceled preparation and never publishes its late success', async
+   const ready = Promise.withResolvers<string>()
+   onTestFinished(() => { ready.resolve(resolve('late-helper')) })
+   native.prepare.mockReset().mockReturnValue(ready.promise)
+-  const starting = Promise.resolve(NativeProvider.apply(f.ctx, { ...automaticConfig, allowedApps: { get: () => [] } }))
++  const starting = Promise.resolve(NativeProvider.apply(f.ctx, { ...automaticConfig, allowedApps: { get: () => [] }, refusedApps: { get: () => [] }, taskOnlyApps: { get: () => [] } }))
+   const failed = expect(starting).rejects.toThrow()
+   const signal = native.prepare.mock.calls[0]![0].signal
+   const aborted = new Promise<void>((resolve) => {
+@@ -619,7 +619,7 @@ it('rejects an unsupported native host before starting preparation', async () =>
+   await f.provider.dispose()
+   native.architecture.mockImplementationOnce(() => { throw new Error('unsupported host') })
+   native.prepare.mockReset()
+-  await expect(NativeProvider.apply(f.ctx, { ...automaticConfig, allowedApps: { get: () => [] } })).rejects.toThrow('unsupported host')
++  await expect(NativeProvider.apply(f.ctx, { ...automaticConfig, allowedApps: { get: () => [] }, refusedApps: { get: () => [] }, taskOnlyApps: { get: () => [] } })).rejects.toThrow('unsupported host')
+   expect(native.prepare).not.toHaveBeenCalled()
+ })
+ 
+diff --git a/packages/experimental/cua/src/application-access.ts b/packages/experimental/cua/src/application-access.ts
+index 1412e0cc..90c701b5 100644
+--- a/packages/experimental/cua/src/application-access.ts
++++ b/packages/experimental/cua/src/application-access.ts
+@@ -16,6 +16,24 @@ export const ApplicationAuthorizationResult = z.object({
+ export interface AccessOptions {
+   grants: () => readonly CuaApplicationGrant[]
+   save?: ((grants: readonly CuaApplicationGrant[]) => Promise<void>) | undefined
++  /** Applications never controlled, by display name or `.app` bundle name, compared without case. */
++  refused?: () => readonly string[]
++  /** Applications approved only for the current task: "Always allow" is not offered for them. */
++  taskOnly?: () => readonly string[]
++}
++
++/**
++ * Whether an application matches a list entry by display name or by the name of the `.app` bundle holding its
++ * executable, ignoring case.
++ * @param identity Native application identity.
++ * @param list Application names.
++ * @returns whether any entry names the application.
++ */
++export function namesApplication(identity: { name: string, executablePath: string }, list: readonly string[]): boolean {
++  const names = new Set(list.map(entry => entry.trim().toLowerCase()).filter(Boolean))
++  if (names.size === 0) return false
++  const bundle = /\/([^/]+)\.app(?:\/|$)/i.exec(identity.executablePath)?.[1]
++  return names.has(identity.name.trim().toLowerCase()) || (bundle !== undefined && names.has(bundle.toLowerCase()))
+ }
+ interface Selection {
+   identity: CuaApplicationGrant
+@@ -34,6 +52,20 @@ interface ActiveOperation {
+   done: PromiseWithResolvers<void>
+ }
+ 
++/**
++ * The approval card's explanation: what the agent can do, for how long, and where the application lives
++ * (its `.app` bundle, shown without the system's internal volume prefix).
++ * @param identity Native application identity.
++ * @param canKeep Whether "Always allow" is offered.
++ * @returns plain text for the card.
++ */
++function accessDetail(identity: { name: string, executablePath: string }, canKeep: boolean): string {
++  const bundle = /^(.*?\.app)(?:\/|$)/i.exec(identity.executablePath)?.[1] ?? identity.executablePath
++  const where = bundle.replace(/^\/System\/Volumes\/Preboot\/Cryptexes\/App/, '')
++  const lasting = canKeep ? ' Always allow keeps it for later tasks too.' : ''
++  return `It can open ${identity.name} if it is not running, see its windows, and click and type in it. Allow for this task lasts until this task ends.${lasting}\n\n${where}`
++}
++
+ /** Owns application consent and cancels operations when saved access is removed. */
+ export class ApplicationAccess {
+   private readonly clients = new Map<NativeClient, ClientSelections>()
+@@ -76,6 +108,10 @@ export class ApplicationAccess {
+     identity: CuaApplicationGrant & { persistable: boolean }, signal: AbortSignal): Promise<void> {
+     await this.withOperation(agent, client, identity, signal, signal => this.selectInOrder(agent, identity.id, async () => {
+       signal.throwIfAborted()
++      // Refused applications stay refused even with a saved grant, before any question or launch.
++      if (namesApplication(identity, this.options.refused?.() ?? [])) {
++        throw new NativeError('APP_REFUSED', `${identity.name} is on the list of applications computer use may not control. Do not retry or use another tool to bypass this; ask the user to do this step themselves.`)
++      }
+       const existing = this.clients.get(client)?.handles.get(handle)
+       if (!client.disposed && existing && this.permitted(existing)) return
+       const saved = identity.persistable && this.options.grants().some(grant => grant.id === identity.id)
+@@ -85,13 +121,14 @@ export class ApplicationAccess {
+       if (!saved) {
+         const questions = this.ctx.get('userQuestions')
+         if (!questions) throw new NativeError('APP_APPROVAL_UNAVAILABLE', 'No human answerer is available for application access')
+-        const options = [{ label: 'Allow for this task' }, { label: 'Deny' }]
+-        if (identity.persistable && this.options.save) options.push({ label: 'Always allow' })
++        const taskOnly = namesApplication(identity, this.options.taskOnly?.() ?? [])
++        const options = [{ label: 'Allow for this task' },
++          ...(identity.persistable && this.options.save && !taskOnly ? [{ label: 'Always allow' }] : []), { label: 'Deny' }]
+         let result: AskUserQuestionAnswer
+         try {
+           result = await questions.ask({ agent, signal, questions: [{ id: 'cua-app-access',
+-            question: `Allow Computer Use to launch if needed, read, capture, and control ${identity.name}?`,
+-            detail: `Application: ${identity.executablePath}\nTask access applies to the selected application instance, including its launch if needed. macOS permissions and approval of sensitive actions remain separate. Saved access can be revoked by removing its allowedApps entry from this provider configuration. Task access ends with the task.`, options }] })
++            question: `Let the agent use ${identity.name}?`,
++            detail: accessDetail(identity, options.some(option => option.label === 'Always allow')), options }] })
+         } catch (error) {
+           if (error instanceof UserQuestionError && error.code === 'ASK_CANCELLED') {
+             this.invalidate(identity.id, agent)
+@@ -106,7 +143,7 @@ export class ApplicationAccess {
+         const answer = result.answers.find(answer => answer.id === 'cua-app-access')
+         const chosen = answer && !answer.custom?.trim() && answer.selected.length === 1 ? answer.selected[0] : undefined
+         if (chosen === 'Allow for this task') scope = 'task'
+-        else if (chosen === 'Always allow' && identity.persistable && this.options.save) {
++        else if (chosen === 'Always allow' && identity.persistable && this.options.save && !taskOnly) {
+           const { persistable: _persistable, ...grant } = identity
+           await this.persist((grants) => {
+             signal.throwIfAborted()
+diff --git a/packages/experimental/cua/src/index.ts b/packages/experimental/cua/src/index.ts
+index 131e15c3..a4c224eb 100644
+--- a/packages/experimental/cua/src/index.ts
++++ b/packages/experimental/cua/src/index.ts
+@@ -34,6 +34,10 @@ export interface CuaConfig {
+     /** Unbranded digest at the profile configuration boundary; admitted by the Config schema. */
+     id: string
+   }>>
++  /** Applications computer use never controls, by display name or `.app` bundle name. */
++  refusedApps: Volatile<string[]>
++  /** Applications that can be approved only for the current task (no "Always allow"), such as browsers. */
++  taskOnlyApps: Volatile<string[]>
+   /** Absolute native helper override; omission prepares the package-owned executable. */
+   helperPath?: string
+   /** Maximum time in milliseconds for native component preparation. */
+@@ -70,12 +74,31 @@ export interface CuaConfig {
+   maxDepth: number
+ }
+ 
++/**
++ * Applications refused by default: terminals and script runners (they run any command outside the sandbox),
++ * system settings, password stores, and Harness Studio itself (it holds the approval prompts).
++ */
++export const DEFAULT_REFUSED_APPS = [
++  'Terminal', 'iTerm', 'iTerm2', 'Warp', 'Ghostty', 'Alacritty', 'kitty', 'WezTerm', 'Hyper', 'Tabby',
++  'Script Editor', 'Automator', 'Shortcuts',
++  'System Settings', 'System Preferences', 'Keychain Access', 'Passwords',
++  '1Password', '1Password 7', 'Bitwarden', 'Dashlane', 'LastPass', 'KeePassXC', 'Enpass', 'Proton Pass',
++  'Harness Studio', 'Harness Studio Dev',
++] as const
++/** Browsers: approval lasts only for the task, since a browser reaches every site the user is signed in to. */
++export const DEFAULT_TASK_ONLY_APPS = [
++  'Safari', 'Google Chrome', 'Chromium', 'Firefox', 'Arc', 'Microsoft Edge', 'Brave Browser', 'Opera', 'Vivaldi',
++  'DuckDuckGo', 'Orion', 'Zen', 'Zen Browser',
++] as const
++
+ /** Validated host configuration; no driver is downloaded at runtime. */
+ export const CuaConfig = Schema.object({
+   allowedApps: Schema.array(Schema.object({
+     id: Schema.string().pattern(/^[a-f0-9]{64}$/).required(),
+     name: Schema.string().required(), executablePath: Schema.string().min(1).required(),
+   })).default([]).volatile(),
++  refusedApps: Schema.array(Schema.string()).default([...DEFAULT_REFUSED_APPS]).volatile(),
++  taskOnlyApps: Schema.array(Schema.string()).default([...DEFAULT_TASK_ONLY_APPS]).volatile(),
+   helperPath: Schema.string(),
+   buildTimeoutMs: Schema.number().step(1).min(1).max(2 ** 31 - 1).default(300_000),
+   timeoutMs: Schema.number().step(1).min(1).max(2 ** 31 - 1).default(30_000),
+@@ -159,6 +182,8 @@ export function installCua(ctx: Context, config: CuaConfig, backend: CuaBackend)
+   ctx.inject(['settings'], scope => scope.effect(() => scope.settings.configure({ auto: false }, ctx.fiber)))
+   const access = new ApplicationAccess(ctx, {
+     grants: () => config.allowedApps.get().map(grant => ({ ...grant, id: grant.id as CuaApplicationId })),
++    refused: () => config.refusedApps.get(),
++    taskOnly: () => config.taskOnlyApps.get(),
+     get save() {
+       const settings = ctx.get('settings')
+       if (entryId === undefined || settings === undefined) return undefined
+diff --git a/packages/experimental/cua/tests/application-access.spec.ts b/packages/experimental/cua/tests/application-access.spec.ts
+index fc77988a..592f6bf3 100644
+--- a/packages/experimental/cua/tests/application-access.spec.ts
++++ b/packages/experimental/cua/tests/application-access.spec.ts
+@@ -5,7 +5,7 @@ import { mountAgentLoopTestDependencies, mountAgentLoopTestHarness } from '@deep
+ import { SessionId } from '@deepseek-ai/dsh-session'
+ import UserQuestions, { UserQuestionError, type AskUserQuestionAnswer } from '@deepseek-ai/dsh-user-questions'
+ import { expect, it, onTestFinished, vi } from 'vitest'
+-import { ApplicationAuthorizationResult, ApplicationAccess } from '../src/application-access.ts'
++import { ApplicationAuthorizationResult, ApplicationAccess, namesApplication } from '../src/application-access.ts'
+ import type { CuaApplicationGrant } from '../src/application-types.ts'
+ import type { CuaAppHandle } from '../src/types.ts'
+ import { NativeClient } from '../src/native-client.ts'
+@@ -36,7 +36,7 @@ const identity = ApplicationAuthorizationResult.parse({ id: 'a'.repeat(64), name
+ const handle = 'fixture-app' as CuaAppHandle
+ const signal = new AbortController().signal
+ 
+-async function setup(choice = 'Allow for this task', options: { writable?: boolean; questions?: boolean; initial?: readonly CuaApplicationGrant[] } = {}) {
++async function setup(choice = 'Allow for this task', options: { writable?: boolean; questions?: boolean; initial?: readonly CuaApplicationGrant[]; refused?: string[]; taskOnly?: string[] } = {}) {
+   native.instances.length = 0
+   const ctx = new Context()
+   onTestFinished(() => ctx.fiber.dispose())
+@@ -44,12 +44,13 @@ async function setup(choice = 'Allow for this task', options: { writable?: boole
+   await mountAgentLoopTestHarness(ctx)
+   if (options.questions !== false) await ctx.plugin(UserQuestions)
+   const owner = await ctx.agents.create({ sessionId: SessionId('cua-access-test') })
+-  const answer = vi.fn<() => Promise<AskUserQuestionAnswer>>(async () => ({ answers: [{ id: 'cua-app-access', selected: [choice] }] }))
++  const answer = vi.fn<(request: unknown) => Promise<AskUserQuestionAnswer>>(async () => ({ answers: [{ id: 'cua-app-access', selected: [choice] }] }))
+   ctx.on('user-questions/request', answer)
+   let grants: readonly CuaApplicationGrant[] = options.initial ?? []
+   const save = vi.fn(async (next: readonly CuaApplicationGrant[]) => { grants = next })
+   let writable = options.writable !== false
+-  const access = new ApplicationAccess(ctx, { grants: () => grants, get save() { return writable ? save : undefined } })
++  const access = new ApplicationAccess(ctx, { grants: () => grants, get save() { return writable ? save : undefined },
++    refused: () => options.refused ?? [], taskOnly: () => options.taskOnly ?? [] })
+   const client = new NativeClient(ctx, nativeConfig, unusedConnector)
+   return { ctx, owner, agent: owner.agent, answer, save, access, client, grants: () => grants,
+     setWritable(value: boolean) { writable = value },
+@@ -317,3 +318,30 @@ it('keeps an active task operation running when a different task denies the same
+     await expect(pending).resolves.toBeNull()
+   } finally { release.resolve(null); await pending }
+ })
++
++it('matches applications by display name or .app bundle name, ignoring case', () => {
++  expect(namesApplication(identity, ['test APPLICATION'])).toBe(true)
++  expect(namesApplication(identity, ['fixture'])).toBe(true)
++  expect(namesApplication(identity, ['Fixture Helper', ''])).toBe(false)
++})
++
++it('refuses a listed application before asking, even with a saved grant', async () => {
++  const { persistable: _p, ...grant } = identity
++  const f = await setup('Allow for this task', { refused: ['Fixture'], initial: [grant] })
++  await expect(f.access.select(f.agent, f.client, handle, identity, signal)).rejects.toThrow('APP_REFUSED')
++  expect(f.answer).not.toHaveBeenCalled()
++})
++
++it('offers Always allow before Deny, and never for a task-only application', async () => {
++  const asked: string[][] = []
++  const normal = await setup('Allow for this task')
++  normal.answer.mockImplementation(async (request: any) => { asked.push(request.questions[0].options.map((o: { label: string }) => o.label)); return { answers: [{ id: 'cua-app-access', selected: ['Allow for this task'] }] } })
++  await normal.access.select(normal.agent, normal.client, handle, identity, signal)
++  expect(asked[0]).toEqual(['Allow for this task', 'Always allow', 'Deny'])
++
++  const browser = await setup('Always allow', { taskOnly: ['Test application'] })
++  browser.answer.mockImplementation(async (request: any) => { asked.push(request.questions[0].options.map((o: { label: string }) => o.label)); return { answers: [{ id: 'cua-app-access', selected: ['Always allow'] }] } })
++  await expect(browser.access.select(browser.agent, browser.client, handle, identity, signal)).rejects.toThrow('APP_ACCESS_DENIED')
++  expect(asked[1]).toEqual(['Allow for this task', 'Deny'])
++  expect(browser.save).not.toHaveBeenCalled()
++})

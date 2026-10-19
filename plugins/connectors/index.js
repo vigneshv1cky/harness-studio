@@ -18,6 +18,7 @@ import { execFile } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 import { McpConnection } from './mcp-connection.js'
 import { authorizationRequest, canonicalResource, discover, exchangeCode, expired, grantRevoked, isSecureUrl, pollDeviceToken, refreshTokens, registerClient, requestDeviceCode } from './oauth.js'
 import { MASK, cleanSpec, createStore, mergeSecrets } from './store.js'
@@ -31,6 +32,17 @@ const LOGIN_TTL_MS = 10 * 60 * 1000
 const REFRESH_RETRY_MS = 30000
 const MAX_PUBLIC_NAME_LENGTH = 64
 const MAX_RESULT_CHARS = 100000
+/** Image types a tool result may hand the model, and their decoded size per result (the store has its own limits too). */
+const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
+const MAX_RESULT_IMAGE_BYTES = 10 * 1024 * 1024
+/**
+ * A connector with more tools than this has them held back, like Claude Code's deferred tools: the model
+ * sees their names in one `connector_tools` tool and loads the ones it needs, instead of every schema
+ * riding along on every request (GitHub's server alone adds about 12,000 tokens).
+ */
+const DEFER_ABOVE = 10
+const LOADER_TOOL = 'connector_tools'
+const MAX_LOAD = 15
 
 /**
  * Servers whose authorization server does not register clients, signed in with an OAuth app that
@@ -62,19 +74,47 @@ export function publicToolName(serverName, rawName) {
   return `${normalized.slice(0, MAX_PUBLIC_NAME_LENGTH - 13)}_${hash}`
 }
 
-/** MCP tool result → the text the model reads. Images and audio become short notes. */
-function resultText(result) {
+/**
+ * MCP tool result → the text the model reads. Images that were stored for the model (see storeImages)
+ * are noted as attached; other images, and audio, become short notes that say why they are not shown.
+ * @param {object} result @param {{ shown: Map<number, object>, reason?: string }} [images]
+ */
+function resultText(result, images) {
   const parts = []
-  for (const block of Array.isArray(result?.content) ? result.content : []) {
+  const content = Array.isArray(result?.content) ? result.content : []
+  for (const [index, block] of content.entries()) {
     if (block?.type === 'text' && typeof block.text === 'string') parts.push(block.text)
     else if (block?.type === 'resource_link') parts.push(`Resource link: ${block.name ?? ''} (${block.uri ?? ''})`)
     else if (block?.type === 'resource' && typeof block.resource?.text === 'string') parts.push(block.resource.text)
-    else if (block?.type) parts.push(`[${block.type} content${block.mimeType ? ' ' + block.mimeType : ''} not shown]`)
+    else if (block?.type === 'image' && images?.shown.has(index)) parts.push(`[image ${block.mimeType}: attached below]`)
+    else if (block?.type) parts.push(`[${block.type} content${block.mimeType ? ' ' + block.mimeType : ''} not shown${block.type === 'image' && images?.reason ? ': ' + images.reason : ''}]`)
   }
   if (parts.length === 0 && result?.structuredContent !== undefined) parts.push(JSON.stringify(result.structuredContent, null, 2))
   let text = parts.join('\n') || '(the tool returned no content)'
   if (text.length > MAX_RESULT_CHARS) text = text.slice(0, MAX_RESULT_CHARS) + `\n… [truncated ${text.length - MAX_RESULT_CHARS} characters]`
   return text
+}
+
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]'])
+/** A tool name that starts with a lookup verb, as a word: `get_issue`, `listRepos`, `search` (not `getaway`). */
+const LOOKUP_NAME = /^(get|list|read|search|fetch|find|query|describe|show|view)/i
+
+/** Whether a URL connector's server runs somewhere other than this computer. */
+export function remoteServer(spec) {
+  if (spec.transport !== 'http') return false
+  try { return !LOOPBACK_HOSTS.has(new URL(spec.url).hostname) } catch { return true }
+}
+
+/**
+ * Whether "Ask before calls that can change things" lets a tool through without asking: its server marks
+ * it read-only and, for a server not on this computer, its name also reads as a lookup.
+ */
+export function treatedReadOnly(spec, tool) {
+  if (!tool.readOnly) return false
+  if (!remoteServer(spec)) return true
+  const match = LOOKUP_NAME.exec(tool.name)
+  // The verb must end where a lowercase letter does not follow: `getIssue` and `get_issue`, not `getaway`.
+  return Boolean(match) && !/^[a-z]/.test(tool.name.slice(match[0].length))
 }
 
 /**
@@ -103,6 +143,9 @@ export function openInBrowser(url) {
  * are refused by the Gateway's access policy, which grants nothing for this action.
  */
 export const HELPER_SERVICE = 'harnessStudioConnectors'
+/** The Harness Studio Chrome bridge (chrome-bridge/server.mjs): its MCP server name and its link-key resource. */
+const CHROME_BRIDGE_SERVER = 'harness-studio-chrome-bridge'
+const CHROME_BRIDGE_LINK = 'harness-studio://chrome-bridge/link'
 const REMOTE_METHODS_MARKER = '@deepseek-ai/dsh-typert-protocol/remote-methods'
 
 class HelperAccess {
@@ -178,23 +221,89 @@ export function apply(ctx) {
         output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: String(value) }] },
         async execute(args, exec) {
           const result = await entry.connection.callTool(tool.name, args && typeof args === 'object' ? args : {}, exec.signal, TOOL_CALL_TIMEOUT_MS)
-          const text = resultText(result)
-          if (result?.isError === true) throw new Error(text)
+          if (result?.isError === true) throw new Error(resultText(result))
+          const images = await storeImages(result, exec)
+          const text = resultText(result, images)
+          if (images.shown.size > 0) {
+            projections.set(exec, { text, content: [{ type: 'text', text }, ...[...images.shown.values()].map(attachment => ({ type: 'image', attachment }))] })
+          }
           return text
+        },
+        // The model gets the stored images with the text, unless a policy replaced the result meanwhile.
+        projectContent(exec, result) {
+          const projection = projections.get(exec)
+          if (!projection) return undefined
+          projections.delete(exec)
+          if (result.isError || result.value !== projection.text) return undefined
+          if (!isDeepStrictEqual(result.content, [{ type: 'text', text: projection.text }])) return undefined
+          return projection.content
         },
       })
     }
     return definitions
   }
 
+  /** Tool execution → the content (text, then stored images) prepared for it during execute. */
+  const projections = new WeakMap()
+
+  /**
+   * Store a result's images for the model, the way Harness's own MCP client does: only PNG, JPEG, WebP or
+   * GIF, at most MAX_RESULT_IMAGE_BYTES in all, and only when the session's current model accepts images.
+   * Anything else leaves every image as a note, with the reason.
+   * @returns {Promise<{ shown: Map<number, object>, reason?: string }>} content index → image attachment.
+   */
+  async function storeImages(result, exec) {
+    const shown = new Map()
+    const content = Array.isArray(result?.content) ? result.content : []
+    const indexes = [...content.keys()].filter(index => content[index]?.type === 'image')
+    if (indexes.length === 0) return { shown }
+    const refuse = reason => ({ shown, reason })
+    const decoded = []
+    let bytes = 0
+    for (const index of indexes) {
+      const { mimeType, data } = content[index]
+      if (!IMAGE_TYPES.has(mimeType) || typeof data !== 'string' || data === '') return refuse('it is not a PNG, JPEG, WebP or GIF image')
+      bytes += Math.floor(data.length * 3 / 4)
+      if (bytes > MAX_RESULT_IMAGE_BYTES) return refuse(`the images are larger than ${MAX_RESULT_IMAGE_BYTES / 1024 / 1024} MB`)
+      decoded.push({ data: Buffer.from(data, 'base64'), mediaType: mimeType })
+    }
+    const attachments = ctx.get('attachments')
+    const llm = ctx.get('llm')
+    if (!attachments || !llm) return refuse('this Harness cannot store images')
+    const routed = exec?.agent?.session?.requestHeader?.()?.config
+    const provider = routed?.provider ?? exec?.agent?.options?.provider
+    const model = routed?.model ?? exec?.agent?.options?.model
+    if (provider === undefined || model === undefined) return refuse('the current model could not be determined')
+    try {
+      const info = await llm.resolveModelInfo(provider, model, exec.signal)
+      if (!info?.inputModalities?.includes('image')) return refuse(`the current model (${model}) does not accept images`)
+      const refs = await attachments.saveImages(decoded)
+      indexes.forEach((index, n) => { if (refs[n]) shown.set(index, refs[n]) })
+      return { shown }
+    } catch (error) {
+      return refuse(`it could not be stored (${String(error?.message ?? error)})`)
+    }
+  }
+
+  /** Per Agent: the held-back tools it has loaded, and a counter bumped on each load. */
+  const loaded = new WeakMap()
+  const loadedOf = agent => {
+    let state = loaded.get(agent)
+    if (!state) loaded.set(agent, state = { names: new Set(), version: 0 })
+    return state
+  }
+
   function syncAgent(agent) {
     let perAgent = mounted.get(agent)
     if (!perAgent) mounted.set(agent, perAgent = new Map())
     const sessionId = agent.session?.id
+    const loads = loadedOf(agent)
     for (const [id, current] of perAgent) {
+      if (id === LOADER_TOOL) continue
       const entry = entries.get(id)
       const want = entry && entry.spec.enabled && entry.connection.status === 'connected' && enabledFor(sessionId, id)
-      if (!want || current.version !== entry.toolsVersion || current.entry !== entry) {
+      const stale = current.deferred.length > 0 && current.loadVersion !== loads.version
+      if (!want || current.version !== entry.toolsVersion || current.entry !== entry || stale) {
         for (const dispose of current.disposers) dispose()
         perAgent.delete(id)
       }
@@ -204,15 +313,83 @@ export function apply(ctx) {
       if (!entry.spec.enabled || entry.connection.status !== 'connected' || !enabledFor(sessionId, id)) continue
       const disposers = []
       const definitions = toolDefinitions(entry)
+      const defer = definitions.length > DEFER_ABOVE
+      const deferred = []
       for (const definition of definitions) {
+        if (defer && !loads.names.has(definition.name)) { deferred.push(definition); continue }
         try {
           disposers.push(agent.ctx.tools.register(definition))
         } catch (error) {
           entry.toolErrors[definition.name] = String(error.message ?? error)
         }
       }
-      perAgent.set(id, { entry, version: entry.toolsVersion, disposers })
+      perAgent.set(id, { entry, version: entry.toolsVersion, disposers, deferred, loadVersion: loads.version })
     }
+    syncLoader(agent, perAgent)
+  }
+
+  /** The one tool that lists held-back tools by name and loads them; absent when nothing is held back. */
+  function syncLoader(agent, perAgent) {
+    const held = []
+    for (const [id, current] of perAgent) if (id !== LOADER_TOOL) for (const definition of current.deferred) held.push({ connector: current.entry.spec.name, definition })
+    const signature = held.map(h => h.definition.name).join(',')
+    const current = perAgent.get(LOADER_TOOL)
+    if (current?.signature === signature) return
+    for (const dispose of current?.disposers ?? []) dispose()
+    perAgent.delete(LOADER_TOOL)
+    if (held.length === 0) return
+    const byConnector = new Map()
+    for (const { connector, definition } of held) {
+      const names = byConnector.get(connector) ?? []
+      names.push(definition.name)
+      byConnector.set(connector, names)
+    }
+    const catalog = [...byConnector].map(([connector, names]) => `${connector} (${names.length}): ${names.join(', ')}`).join('\n')
+    const definition = {
+      name: LOADER_TOOL,
+      description: 'Load tools from connected MCP servers before using them. These tools are held back to keep requests small; ' +
+        `load the ones a task needs by exact name, or by a search query, and call them from your next step (at most ${MAX_LOAD} per call).\n\n${catalog}`,
+      parameters: {
+        type: 'object',
+        properties: {
+          names: { type: 'array', items: { type: 'string' }, description: 'Exact tool names from the list to load.' },
+          query: { type: 'string', description: 'Words to search tool names and descriptions for, when you do not know the name.' },
+        },
+        additionalProperties: false,
+      },
+      output: { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: String(value) }] },
+      execute: async (args, exec) => loadTools(exec?.agent ?? agent, args ?? {}),
+    }
+    try {
+      perAgent.set(LOADER_TOOL, { signature, disposers: [agent.ctx.tools.register(definition)], deferred: [] })
+    } catch (error) {
+      console.warn('[connectors] could not register the tool loader:', error?.message ?? error)
+    }
+  }
+
+  function loadTools(agent, { names, query }) {
+    const perAgent = mounted.get(agent)
+    const held = []
+    for (const [id, current] of perAgent ?? []) if (id !== LOADER_TOOL) held.push(...current.deferred)
+    let picked = []
+    if (Array.isArray(names) && names.length > 0) {
+      const wanted = new Set(names.map(String))
+      picked = held.filter(d => wanted.has(d.name) || [...wanted].some(w => d.name.endsWith(`__${w}`)))
+    } else if (typeof query === 'string' && query.trim() !== '') {
+      const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+      const score = d => words.filter(w => d.name.toLowerCase().includes(w) || d.description.toLowerCase().includes(w)).length
+      picked = held.map(d => [d, score(d)]).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).map(([d]) => d)
+    } else {
+      throw new Error('Pass names from the list, or a query.')
+    }
+    picked = picked.slice(0, MAX_LOAD)
+    if (picked.length === 0) return 'No held-back tool matched; check the names in this tool\'s description.'
+    const loads = loadedOf(agent)
+    for (const d of picked) loads.names.add(d.name)
+    loads.version += 1
+    syncAgent(agent)
+    return `Loaded ${picked.length} tool(s); call them from your next step:\n` +
+      picked.map(d => `- ${d.name}: ${d.description.split('\n')[0].slice(0, 200)}`).join('\n')
   }
 
   function unmountAgent(agent) {
@@ -223,31 +400,66 @@ export function apply(ctx) {
   const syncAll = () => { if (!disposed) for (const agent of ctx.agents.list()) syncAgent(agent) }
 
   // ---- connections ------------------------------------------------------------------------------
-  async function authHeaders(entry) {
+  /**
+   * The bearer header for a connector's requests. A token that is expired, or about to be, is refreshed
+   * first, unless `refresh` is false (the session-end request of a closing connection): then the token
+   * is sent as it is while it still works, and past its expiry null says there is none and that request
+   * is skipped.
+   */
+  async function authHeaders(entry, { refresh: mayRefresh = true } = {}) {
     const grant = entry.grant
     if (!grant?.tokens?.access_token) return {}
+    if (!mayRefresh) {
+      const gone = grant.tokens.expires_at !== undefined && grant.tokens.expires_at <= Date.now()
+      return gone ? null : { authorization: `Bearer ${grant.tokens.access_token}` }
+    }
     if (expired(grant.tokens) && grant.tokens.refresh_token) await refresh(entry)
     return entry.grant?.tokens?.access_token ? { authorization: `Bearer ${entry.grant.tokens.access_token}` } : {}
   }
 
   /**
-   * Refresh once at a time per connector. Only a refused grant (`invalid_grant`, or a bare 400/401
-   * from the token endpoint) drops the tokens so sign-in is offered; a network error, timeout or
-   * server error keeps them and tries again in 30 seconds. A sign-out, edit or removal while the
-   * request is out wins: the result is discarded and nothing is written.
+   * Connector id → the refresh in flight for it, whichever entry started it. An edit replaces a
+   * connector's entry, and both can hold the same refresh token; under refresh-token rotation a second
+   * use is refused (`invalid_grant`) and would sign the user out, so refreshes for one id run in turn.
+   */
+  const refreshLocks = new Map()
+  /** Connector id → the last refresh that succeeded: the refresh token it spent and the tokens it got. */
+  const rotations = new Map()
+
+  /**
+   * Refresh once at a time per connector id, across entries. A refresh waits for the one before it; if
+   * that one already spent this entry's refresh token, its tokens are taken over instead of spending the
+   * token again. Only a refused grant (`invalid_grant`, or a bare 400/401 from the token endpoint) drops
+   * the tokens so sign-in is offered; a network error, timeout or server error keeps them and tries again
+   * in 30 seconds. A sign-out, edit or removal while the request is out wins: the result is discarded and
+   * nothing is written. New tokens are saved before the next refresh for the id may start.
    * @returns {Promise<boolean>} whether new tokens were stored.
    */
   function refresh(entry) {
     if (entry.refreshing) return entry.refreshing
+    const id = entry.spec.id
+    const before = refreshLocks.get(id)
     const run = (async () => {
+      if (before) await before.catch(() => {})
       const grant = entry.grant
       const generation = entry.authGeneration
+      if (entry.removed || !grant?.tokens?.refresh_token) return false
+      // Taken over only when they are newer than this entry's and still valid; a server that does not
+      // rotate keeps the same refresh token, and its own last result must not be reused.
+      const spent = rotations.get(id)
+      const takeOver = spent && spent.from === grant.tokens.refresh_token && spent.tokens.access_token !== grant.tokens.access_token
+        && !(spent.tokens.expires_at !== undefined && spent.tokens.expires_at <= Date.now())
       let tokens
       let failure
-      try {
-        tokens = await refreshTokens({ metadata: grant.metadata, client: grant.client, tokens: grant.tokens, resource: grant.resource })
-      } catch (error) {
-        failure = error
+      if (takeOver) {
+        tokens = spent.tokens
+      } else {
+        try {
+          tokens = await refreshTokens({ metadata: grant.metadata, client: grant.client, tokens: grant.tokens, resource: grant.resource })
+          rotations.set(id, { from: grant.tokens.refresh_token, tokens })
+        } catch (error) {
+          failure = error
+        }
       }
       if (entry.removed || entry.authGeneration !== generation || entry.grant !== grant) return false
       if (tokens) {
@@ -266,7 +478,11 @@ export function apply(ctx) {
       return false
     })()
     entry.refreshing = run
-    run.finally(() => { if (entry.refreshing === run) entry.refreshing = undefined }).catch(() => {})
+    refreshLocks.set(id, run)
+    run.finally(() => {
+      if (entry.refreshing === run) entry.refreshing = undefined
+      if (refreshLocks.get(id) === run) refreshLocks.delete(id)
+    }).catch(() => {})
     return run
   }
 
@@ -317,7 +533,7 @@ export function apply(ctx) {
     const entry = { spec, grant, toolsVersion: 0, toolErrors: {}, toolKey: '', authGeneration: 0, removed: false }
     entry.connection = new McpConnection({
       spec: spec.transport === 'http' ? { transport: 'http', url: spec.url, headers: spec.headers } : spec,
-      authHeaders: () => authHeaders(entry),
+      authHeaders: options => authHeaders(entry, options),
       onChange: () => onConnectionChange(entry),
     })
     entries.set(spec.id, entry)
@@ -358,7 +574,11 @@ export function apply(ctx) {
     else client = await registerClient(discovery.metadata, redirectUri)
     if (entry.removed) throw httpError(404, 'The connector was removed')
     const request = authorizationRequest({ metadata: discovery.metadata, client, scope: discovery.scope, resource: discovery.resource })
-    entry.grant = { ...entry.grant, client, issuer: discovery.issuer, metadata: discovery.metadata, resource: discovery.resource, scope: discovery.scope }
+    // Tokens from another authorization server (or token endpoint) are dropped here, not when this sign-in
+    // finishes: one abandoned halfway must not leave the next refresh sending the old refresh token, and
+    // the client secret, to the new token endpoint.
+    const moved = entry.grant?.issuer !== discovery.issuer || entry.grant?.metadata?.token_endpoint !== discovery.metadata.token_endpoint
+    entry.grant = { ...entry.grant, client, issuer: discovery.issuer, metadata: discovery.metadata, resource: discovery.resource, scope: discovery.scope, ...(moved ? { tokens: undefined } : {}) }
     await store.writeGrant(entry.spec.id, entry.grant)
     if (entry.removed) throw httpError(404, 'The connector was removed')
     for (const [key, pending] of logins) if (pending.entry === entry || pending.expires < Date.now()) logins.delete(key)
@@ -467,7 +687,10 @@ export function apply(ctx) {
     async edit(id, body) {
       writable()
       const entry = need(id)
-      const spec = cleanSpec({ ...mergeSecrets(body, entry.spec), id, enabled: entry.spec.enabled }, new Set())
+      // Saved secrets stay with the server they were given for: pointing the connector at another origin
+      // drops the ones not typed again (mergeSecrets), and the answer says which.
+      const merged = mergeSecrets(body, entry.spec)
+      const spec = cleanSpec({ ...merged, id, enabled: entry.spec.enabled }, new Set())
       // Let a refresh in flight settle so the new entry starts from the latest tokens.
       await entry.refreshing?.catch(() => {})
       if (entries.get(id) !== entry) throw httpError(409, 'The connector changed while saving; try again')
@@ -479,12 +702,15 @@ export function apply(ctx) {
       if (urlChanged) await store.writeGrant(id, undefined)
       await save()
       if (spec.enabled && live(next)) next.connection.restart()
-      return view(next)
+      const dropped = merged?.droppedSecrets ?? []
+      if (dropped.length === 0) return view(next)
+      return { ...view(next), droppedSecrets: dropped, notice: `The connector now points at another server, so the saved ${dropped.join(', ')} ${dropped.length === 1 ? 'was' : 'were'} not carried over. Enter ${dropped.length === 1 ? 'it' : 'them'} again if this server needs ${dropped.length === 1 ? 'it' : 'them'}.` }
     },
     async remove(id) {
       writable()
       need(id)
       removeEntry(id)
+      rotations.delete(id)
       state.connectors = state.connectors.filter(c => c.id !== id)
       for (const choices of Object.values(state.sessions)) delete choices[id]
       await store.writeGrant(id, undefined).catch(() => {})
@@ -535,6 +761,22 @@ export function apply(ctx) {
       return view(entry)
     },
     callback: params => finishLogin(params),
+    /**
+     * The link key of the Harness Studio Chrome bridge, read over its stdio pipe, for the window's pick
+     * polling (the devpreview plugin). Only a connected bridge that is listening on its port answers.
+     */
+    async chromeBridgeLink() {
+      for (const entry of entries.values()) {
+        const { connection } = entry
+        if (entry.removed || connection?.status !== 'connected' || connection.serverInfo?.name !== CHROME_BRIDGE_SERVER) continue
+        try {
+          const result = await connection.readResource(CHROME_BRIDGE_LINK)
+          const link = JSON.parse(result?.contents?.[0]?.text ?? 'null')
+          if (link?.listening === true && Number.isInteger(link.port) && /^[0-9a-f]{64}$/.test(link.key ?? '')) return { port: link.port, key: link.key }
+        } catch { /* an older bridge without a link key: no picks reach the window */ }
+      }
+      return {}
+    },
   }
 
   function need(id) {
@@ -542,6 +784,40 @@ export function apply(ctx) {
     if (!entry) throw httpError(404, 'No such connector')
     return entry
   }
+
+  // ---- asking before calls ----------------------------------------------------------------------
+  // A connector set to ask holds its tool calls for the user's approval in Harness's approval prompt:
+  // every call, or only calls to tools its server does not mark read-only. Other listeners decide first.
+  // Full access turns approval prompts off (each would be refused), so it lifts this as well.
+  //
+  // MCP calls the read-only label an untrusted hint, and "changes" relies on it. For a server that is
+  // not on this computer (a URL off loopback) the label alone is not enough: the tool's name must also
+  // read as a lookup (get, list, read, search, …), or the call asks.
+  function askingTool(name) {
+    if (!name.startsWith('mcp__')) return undefined
+    for (const entry of entries.values()) {
+      if (!entry.spec.ask) continue
+      const tool = entry.connection.tools.find(t => publicToolName(entry.spec.id, t.name) === name)
+      if (tool) return entry.spec.ask === 'changes' && treatedReadOnly(entry.spec, tool) ? undefined : { spec: entry.spec, tool }
+    }
+    return undefined
+  }
+  const fullAccess = session => {
+    try { return ctx.get('sandboxPolicy')?.resolve({ session }).mode === 'danger-full-access' } catch { return false }
+  }
+  ctx.on('tools/pre-execute', async (exec, next) => {
+    const decision = await next()
+    if (decision?.kind !== 'allow') return decision
+    const found = askingTool(exec.name)
+    if (!found || (exec.agent?.session && fullAccess(exec.agent.session))) return decision
+    const { spec, tool } = found
+    const when = spec.ask === 'always' ? 'every call' : 'calls that can change things'
+    return {
+      kind: 'ask',
+      reason: `Connector ${spec.name} asks before ${when}`,
+      displayReason: { en: `Let the agent use ${tool.title || tool.name} on ${spec.name}? This connector is set to ask before ${when}.` },
+    }
+  })
 
   // ---- lifecycle --------------------------------------------------------------------------------
   ctx.on('agent/created', ({ agent }) => { syncAgent(agent) })

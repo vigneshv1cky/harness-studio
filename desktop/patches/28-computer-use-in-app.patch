@@ -1,0 +1,122 @@
+diff --git a/apps/desktop/scripts/prepare-runtime.ts b/apps/desktop/scripts/prepare-runtime.ts
+index 95c9b08c..cc20e1bf 100644
+--- a/apps/desktop/scripts/prepare-runtime.ts
++++ b/apps/desktop/scripts/prepare-runtime.ts
+@@ -48,6 +48,23 @@ function prepareCli({ platform, arch }: DesktopTarget): void {
+   cpSync(join(import.meta.dirname, 'command-path.ps1'), join(cli, 'command-path.ps1'))
+ }
+ 
++/**
++ * Harness Studio: build macOS computer use's native helper from the checked-in Swift sources and ship it in
++ * Resources/runtime/cua, outside app.asar so it can run. The app hands its path to the Host (main.ts), and the
++ * bundled Compact plugin turns computer use on when that path is set.
++ */
++function prepareComputerUseHelper({ platform, arch }: DesktopTarget): void {
++  if (platform !== 'darwin') return
++  const packagePath = join(import.meta.dirname, '..', '..', '..', 'packages', 'experimental', 'cua-macos', 'native')
++  const build = ['swift', 'build', '--package-path', packagePath, '-c', 'release', '--arch', arch === 'x64' ? 'x86_64' : 'arm64']
++  execFileSync('xcrun', [...build, '--product', 'dsh-cua-native'], { stdio: 'inherit' })
++  const products = execFileSync('xcrun', [...build, '--show-bin-path'], { encoding: 'utf8' }).trim()
++  const helper = join(RUNTIME_ROOT, 'cua', 'dsh-cua-native')
++  mkdirSync(join(RUNTIME_ROOT, 'cua'), { recursive: true })
++  cpSync(join(products, 'dsh-cua-native'), helper)
++  chmodSync(helper, 0o755)
++}
++
+ async function main(): Promise<void> {
+   const { values } = parseArgs({ options: { 'defer-primary-runtime-smoke': { type: 'boolean', default: false } } })
+   const target = desktopTargetPlatform(resolveDesktopBuildTarget())
+@@ -59,6 +76,7 @@ async function main(): Promise<void> {
+   const { pnpm } = await readPrimaryRuntime(join(RUNTIME_ROOT, 'primary-runtime'))
+   if (pnpm === undefined) throw new Error('desktop runtime: primary-runtime manifest has no pnpm version')
+   await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'prepare:cli', async () => { prepareCli(target) })
++  await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'prepare:computer-use', async () => { prepareComputerUseHelper(target) })
+   writeFileSync(join(RUNTIME_ROOT, 'versions.json'), `${JSON.stringify({
+     schemaVersion: 1,
+     node: nodeVersion,
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index 0a07a05d..c3519cbb 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -317,6 +317,15 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
+   return window
+ }
+ 
++/**
++ * Harness Studio: the packaged macOS app ships computer use's native helper in Resources/runtime/cua
++ * (prepare-runtime.ts). Its path, handed to the Host, is what the bundled Compact plugin's computer-use entries read.
++ */
++function computerUseEnvironment(): Record<string, string> {
++  if (!app.isPackaged || process.platform !== 'darwin') return {}
++  return { DSH_CUA_HELPER: join(process.resourcesPath, 'runtime', 'cua', 'dsh-cua-native') }
++}
++
+ async function main(): Promise<void> {
+   const desktopSettings = readDesktopSettings(app.getPath('userData'))
+   const browserSignIn = readBrowserSignInCompatibility(app.getPath('userData'))
+@@ -467,7 +476,7 @@ async function main(): Promise<void> {
+   const backend = new DesktopBackendController((onFailure) => {
+     const hostInspectPort = developmentHostInspectPort(development)
+     const host = new DesktopHostProcess(resources.node, resources.dsh, activeProject,
+-      hostInspectPort, { ...hostEnvironment, DSH_CLIENT_VERSION: desktopClientVersion() }, onFailure,
++      hostInspectPort, { ...hostEnvironment, DSH_CLIENT_VERSION: desktopClientVersion(), ...computerUseEnvironment() }, onFailure,
+       primaryRuntime,
+       resources, (next) => { platformView.setSession(next) })
+     return {
+diff --git a/packages/bundle/web-app/cordis.patch.yml b/packages/bundle/web-app/cordis.patch.yml
+index ca535fbd..924e3161 100644
+--- a/packages/bundle/web-app/cordis.patch.yml
++++ b/packages/bundle/web-app/cordis.patch.yml
+@@ -593,3 +593,16 @@
+       name: '@deepseek-ai/dsh-agent-preset-registry'
+       config:
+         default: standard
++
++# Harness Studio: computer use on macOS, Harness's provider registry and its macOS provider, with the native
++# helper the packaged app ships in Resources/runtime/cua and hands to the Host as DSH_CUA_HELPER (main.ts). The
++# development app sets DSH_CUA_HELPER to a helper built with `swift build`. Off on other systems and without a helper.
++- insert:
++    - id: cua-provider-registry
++      name: '@deepseek-ai/dsh-computer-use'
++      disabled: !!js process.platform !== 'darwin' || !process.env.DSH_CUA_HELPER
++    - id: cua
++      name: '@deepseek-ai/dsh-experimental-cua-macos'
++      disabled: !!js process.platform !== 'darwin' || !process.env.DSH_CUA_HELPER
++      config:
++        helperPath: !!js process.env.DSH_CUA_HELPER
+diff --git a/packages/bundle/web-app/package.json b/packages/bundle/web-app/package.json
+index c43d687c..122385dd 100644
+--- a/packages/bundle/web-app/package.json
++++ b/packages/bundle/web-app/package.json
+@@ -127,6 +127,8 @@
+     "@deepseek-ai/dsh-command-goal": "workspace:*",
+     "@deepseek-ai/dsh-compaction-basic": "workspace:*",
+     "@deepseek-ai/dsh-compaction-tool-result-pruner": "workspace:*",
++    "@deepseek-ai/dsh-computer-use": "workspace:*",
++    "@deepseek-ai/dsh-experimental-cua-macos": "workspace:*",
+     "@deepseek-ai/dsh-cordis-client-runner": "workspace:*",
+     "@deepseek-ai/dsh-cordis-host-runner": "workspace:*",
+     "@deepseek-ai/dsh-file-reference": "workspace:*",
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+index 76248615..01a03811 100644
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -2806,12 +2806,18 @@ importers:
+       '@deepseek-ai/dsh-compaction-tool-result-pruner':
+         specifier: workspace:*
+         version: link:../../compaction/compaction-tool-result-pruner
++      '@deepseek-ai/dsh-computer-use':
++        specifier: workspace:*
++        version: link:../../computer-use/computer-use
+       '@deepseek-ai/dsh-cordis-client-runner':
+         specifier: workspace:*
+         version: link:../../extensions/cordis-client-runner
+       '@deepseek-ai/dsh-cordis-host-runner':
+         specifier: workspace:*
+         version: link:../../extensions/cordis-host-runner
++      '@deepseek-ai/dsh-experimental-cua-macos':
++        specifier: workspace:*
++        version: link:../../experimental/cua-macos
+       '@deepseek-ai/dsh-file-reference':
+         specifier: workspace:*
+         version: link:../../context/file-reference

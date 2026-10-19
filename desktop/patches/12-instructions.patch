@@ -1,0 +1,1937 @@
+diff --git a/packages/bundle/base/cordis.patch.yml b/packages/bundle/base/cordis.patch.yml
+index 57410b70..2eacd599 100644
+--- a/packages/bundle/base/cordis.patch.yml
++++ b/packages/bundle/base/cordis.patch.yml
+@@ -306,7 +306,7 @@
+     - id: agent-instructions
+       name: '@deepseek-ai/dsh-agent-instructions'
+       config:
+-        maxBytes: 65536
++        maxBytes: 131072
+ 
+     - id: skill
+       name: '@deepseek-ai/dsh-skill'
+diff --git a/packages/bundle/web-app/presets/cordis.patch.yml b/packages/bundle/web-app/presets/cordis.patch.yml
+index 75b94016..74141704 100644
+--- a/packages/bundle/web-app/presets/cordis.patch.yml
++++ b/packages/bundle/web-app/presets/cordis.patch.yml
+@@ -18,7 +18,7 @@
+           - id: agent-instructions
+             name: '@deepseek-ai/dsh-agent-instructions'
+             config:
+-              maxBytes: 65536
++              maxBytes: 131072
+           - id: time-context
+             name: '@deepseek-ai/dsh-time-context'
+           - id: tool-bash
+diff --git a/packages/bundle/web-app/presets/ptc.patch.yml b/packages/bundle/web-app/presets/ptc.patch.yml
+index 19771435..59ee3775 100644
+--- a/packages/bundle/web-app/presets/ptc.patch.yml
++++ b/packages/bundle/web-app/presets/ptc.patch.yml
+@@ -15,7 +15,7 @@
+           - id: agent-instructions
+             name: '@deepseek-ai/dsh-agent-instructions'
+             config:
+-              maxBytes: 65536
++              maxBytes: 131072
+           - id: time-context
+             name: '@deepseek-ai/dsh-time-context'
+           - id: tool-bash
+diff --git a/packages/bundle/web-app/presets/standard.patch.yml b/packages/bundle/web-app/presets/standard.patch.yml
+index 77c048fe..f0bf5d04 100644
+--- a/packages/bundle/web-app/presets/standard.patch.yml
++++ b/packages/bundle/web-app/presets/standard.patch.yml
+@@ -15,7 +15,7 @@
+           - id: agent-instructions
+             name: '@deepseek-ai/dsh-agent-instructions'
+             config:
+-              maxBytes: 65536
++              maxBytes: 131072
+           - id: time-context
+             name: '@deepseek-ai/dsh-time-context'
+           - id: tool-bash
+diff --git a/packages/client/ui-chat/src/client/chat/ContextBody.tsx b/packages/client/ui-chat/src/client/chat/ContextBody.tsx
+index 6501ffda..094c3b33 100644
+--- a/packages/client/ui-chat/src/client/chat/ContextBody.tsx
++++ b/packages/client/ui-chat/src/client/chat/ContextBody.tsx
+@@ -269,6 +269,51 @@ export function InstructionsBody({ content, source, t }: {
+   )
+ }
+ 
++/** Budget marker the instructions producer writes at the top of a cut baseline. */
++const BUDGET_MARKER = /Workspace instruction budget \d+ bytes: ([^\n]+)/
++const TRUNCATED_ENTRY = /^(.+) from (\d+) to (\d+) bytes$/
++
++function kilobytes(bytes: number): string {
++  return String(Math.max(1, Math.round(bytes / 1024)))
++}
++
++/**
++ * Collapsed-row account of instruction files the byte budget left out or cut,
++ * read from the marker the producer writes into the model-facing text, so the
++ * user sees a cut without expanding the row.
++ * @param content - Durable model-facing content of the instructions context.
++ * @param t - Locale seat.
++ * @returns One line naming each omitted or truncated file, or null when nothing was cut.
++ */
++export function instructionBudgetSummary(content: ContextMessageNode['content'], t: Translate): string | null {
++  const text = content.flatMap(block => block.type === 'text' ? [block.text] : []).join('\n')
++  const marker = BUDGET_MARKER.exec(text)?.[1]
++  if (marker === undefined) return null
++  const parts: string[] = []
++  const cuts: { included: string; original: string }[] = []
++  for (const part of marker.split('; ')) {
++    if (part.startsWith('omitted ')) {
++      parts.push(t('message.context.instructions.omitted', { paths: part.slice('omitted '.length) }))
++      continue
++    }
++    if (!part.startsWith('truncated ')) continue
++    for (const entry of part.slice('truncated '.length).split(', ')) {
++      const match = TRUNCATED_ENTRY.exec(entry)
++      if (match === null) continue
++      const [, path = '', original = '0', included = '0'] = match
++      const cut = { included: kilobytes(Number(included)), original: kilobytes(Number(original)) }
++      cuts.push(cut)
++      parts.push(t('message.context.instructions.truncated', { path, ...cut }))
++    }
++  }
++  if (parts.length === 1 && cuts.length === 1 && !marker.includes('omitted ')) {
++    const [only] = cuts
++    /* v8 ignore next -- a single part comes from a single parsed cut. */
++    if (only !== undefined) return t('message.context.instructions.cut', { included: only.included, original: only.original })
++  }
++  return parts.length === 0 ? null : parts.join(' · ')
++}
++
+ /** One catalog entry, as the durable source records it. */
+ interface CatalogEntry {
+   name: string
+@@ -542,8 +587,9 @@ function noticeSummary(source: unknown): string | null {
+  * Returns the form the body actually rendered as, which is not always the
+  * declared one: a declared form whose fields are unreadable falls back to
+  * opaque, and the caller labels the row with what it really shows.
+- * `summary` is the collapsed row's one-line account, which only a `notice`
+- * records: its whole point is being readable without expanding.
++ * `summary` is the collapsed row's one-line account, recorded by a `notice` and
++ * by instructions that the byte budget cut: its whole point is being readable
++ * without expanding.
+  * @param form - the producer-declared form projected onto the node.
+  * @param props - durable content, its source, and the locale seat.
+  * @returns the rendered form (null for opaque), its collapsed summary, and its body.
+@@ -557,7 +603,7 @@ export function contextBody(
+     case 'instructions':
+       return instructionChanges(props.source) === null
+         ? opaque
+-        : { rendered: 'instructions', summary: null, body: <InstructionsBody {...props} /> }
++        : { rendered: 'instructions', summary: instructionBudgetSummary(props.content, props.t), body: <InstructionsBody {...props} /> }
+     case 'catalog':
+       return catalogEntries(props.source) === null
+         ? opaque
+diff --git a/packages/client/ui-chat/src/client/contract/chat-visibility.ts b/packages/client/ui-chat/src/client/contract/chat-visibility.ts
+index 2fd60b4b..5e2eb034 100644
+--- a/packages/client/ui-chat/src/client/contract/chat-visibility.ts
++++ b/packages/client/ui-chat/src/client/contract/chat-visibility.ts
+@@ -1,9 +1,24 @@
+ /** Chat-only row visibility; durable events and trajectory inspection remain intact. */
+ import type { ChatNode } from './chat-nodes.ts'
+ 
++/** Marker the instructions producer writes when its byte budget left out or cut a file. */
++const INSTRUCTION_BUDGET_MARKER = 'Workspace instruction budget '
++
++/**
++ * Whether a context message carries workspace instructions that the byte budget left out or cut.
++ * @param data - the context message's durable content and source.
++ * @returns true when the instructions producer recorded a budget cut.
++ */
++export function isCutInstructionsContext(data: Pick<Extract<ChatNode, { kind: 'context' }>['data'], 'content' | 'source'>): boolean {
++  const source = data.source as { kind?: unknown } | null | undefined
++  return source?.kind === 'agent-instructions'
++    && data.content.some(block => block.type === 'text' && block.text.includes(INSTRUCTION_BUDGET_MARKER))
++}
++
+ /**
+  * Exclude system prompts, ordinary Context, and permission commands from visible Chat rows.
+- * Context containing tool changes retains its notice row.
++ * Context containing tool changes retains its notice row, and so do workspace
++ * instructions that the byte budget left out or cut, so the user sees the cut.
+  * @param node - projected Chat node.
+  * @returns whether the node contributes a visible Chat row.
+  */
+@@ -11,6 +26,7 @@ export function isVisibleChatNode(node: ChatNode): boolean {
+   return node.visibility === 'visible'
+     && node.kind !== 'system-prompt'
+     && (node.kind !== 'context'
+-      || node.data.content.some(block => block.type === 'tool-addition' || block.type === 'tool-removal'))
++      || node.data.content.some(block => block.type === 'tool-addition' || block.type === 'tool-removal')
++      || isCutInstructionsContext(node.data))
+     && !(node.kind === 'command' && node.data.name === 'permission')
+ }
+diff --git a/packages/client/ui-chat/src/client/conversation-nodes/message.ts b/packages/client/ui-chat/src/client/conversation-nodes/message.ts
+index 87394667..2030c3c6 100644
+--- a/packages/client/ui-chat/src/client/conversation-nodes/message.ts
++++ b/packages/client/ui-chat/src/client/conversation-nodes/message.ts
+@@ -6,6 +6,7 @@ import { isAppendSurfaceEvent, isReplacementSurfaceEvent } from '@deepseek-ai/ds
+ import type { InboxState } from './inbox.ts'
+ import { chatNode, contextLocation } from './common.ts'
+ import { contextForm, contextProducer } from './event-projection.ts'
++import { isCutInstructionsContext } from '../contract/chat-visibility.ts'
+ 
+ interface ReferencedUserMessageNode extends UserMessageNode {
+   /** Labels cited by the immediately following session-reference context. */
+@@ -120,12 +121,15 @@ export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
+     const location = contextLocation(context)
+     const human = context.state.kind === 'user' || context.state.kind === 'steering'
+     const opensExchange = human && location.kind === 'step' && location.step.step === 1
++    // Cut workspace instructions stay beside the input rather than inside the
++    // collapsed work details, so the user sees the cut without expanding.
++    const cutInstructions = context.state.kind === 'context' && isCutInstructionsContext(context.state)
+     return chatNode(
+       context,
+       waking ? 'turn-trigger' : context.state.kind,
+       context.state.seq,
+       context.state,
+-      { location, groupTree: opensExchange ? 'exchange' : (human || waking) ? 'input' : undefined },
++      { location, groupTree: opensExchange ? 'exchange' : (human || waking || cutInstructions) ? 'input' : undefined },
+     )
+   },
+ }
+diff --git a/packages/client/ui-chat/src/client/locale.ts b/packages/client/ui-chat/src/client/locale.ts
+index 4d6e01b0..2d397ce2 100644
+--- a/packages/client/ui-chat/src/client/locale.ts
++++ b/packages/client/ui-chat/src/client/locale.ts
+@@ -131,6 +131,9 @@ export const zh = {
+   'message.context.instructions.added': '已新增',
+   'message.context.instructions.updated': '已更新',
+   'message.context.instructions.removed': '已移除',
++  'message.context.instructions.truncated': '{path} 已截断为 {included}/{original} KB',
++  'message.context.instructions.omitted': '已省略：{paths}',
++  'message.context.instructions.cut': '已截断为 {included}/{original} KB',
+   'message.context.catalog.replaced': '替换目录',
+   'message.context.catalog.more': '…还有 {count} 条',
+   'message.context.snapshot.supersedes': '取代先前的快照',
+@@ -329,6 +332,9 @@ export const en = {
+   'message.context.instructions.added': 'added',
+   'message.context.instructions.updated': 'updated',
+   'message.context.instructions.removed': 'removed',
++  'message.context.instructions.truncated': '{path} cut to {included} of {original} KB',
++  'message.context.instructions.omitted': 'left out: {paths}',
++  'message.context.instructions.cut': 'cut to {included} of {original} KB',
+   'message.context.catalog.replaced': 'Replacement catalog',
+   'message.context.catalog.more': '… {count} more',
+   'message.context.snapshot.supersedes': 'Supersedes earlier snapshots',
+diff --git a/packages/client/ui-chat/tests/instruction-budget-row.client.spec.ts b/packages/client/ui-chat/tests/instruction-budget-row.client.spec.ts
+new file mode 100644
+index 00000000..600d4604
+--- /dev/null
++++ b/packages/client/ui-chat/tests/instruction-budget-row.client.spec.ts
+@@ -0,0 +1,36 @@
++import { describe, expect, it } from 'vitest'
++import { instructionBudgetSummary } from '../src/client/chat/ContextBody.tsx'
++import { isCutInstructionsContext } from '../src/client/contract/chat-visibility.ts'
++
++const t = (key: string, values?: Record<string, string>): string =>
++  `${key}${values === undefined ? '' : ` ${JSON.stringify(values)}`}`
++
++function text(body: string) {
++  return [{ type: 'text' as const, text: `<system-reminder>\n${body}\n\nInstructions from: AGENTS.md\n</system-reminder>` }]
++}
++
++describe('cut workspace instructions in Chat', () => {
++  it('summarises a single cut file without repeating its path', () => {
++    const content = text('Workspace instruction budget 131072 bytes: truncated AGENTS.md from 174973 to 130958 bytes')
++    expect(instructionBudgetSummary(content, t as never)).toBe('message.context.instructions.cut {"included":"128","original":"171"}')
++  })
++
++  it('names every omitted and cut file when there are several', () => {
++    const content = text('Workspace instruction budget 2048 bytes: omitted ~/.harness-studio/AGENTS.md; truncated CLAUDE.md from 4096 to 1500 bytes')
++    expect(instructionBudgetSummary(content, t as never)).toBe([
++      'message.context.instructions.omitted {"paths":"~/.harness-studio/AGENTS.md"}',
++      'message.context.instructions.truncated {"path":"CLAUDE.md","included":"1","original":"4"}',
++    ].join(' · '))
++  })
++
++  it('stays quiet when nothing was cut', () => {
++    expect(instructionBudgetSummary(text('The following workspace instructions may be relevant.'), t as never)).toBeNull()
++  })
++
++  it('shows the row only for instructions that were cut', () => {
++    const cut = text('Workspace instruction budget 131072 bytes: truncated AGENTS.md from 174973 to 130958 bytes')
++    expect(isCutInstructionsContext({ content: cut, source: { kind: 'agent-instructions', form: 'instructions', changes: [] } })).toBe(true)
++    expect(isCutInstructionsContext({ content: text('Rules.'), source: { kind: 'agent-instructions', form: 'instructions', changes: [] } })).toBe(false)
++    expect(isCutInstructionsContext({ content: cut, source: { kind: 'skill-catalog' } })).toBe(false)
++  })
++})
+diff --git a/packages/context/agent-instructions/README.md b/packages/context/agent-instructions/README.md
+index 25c48ba1..3bbda67a 100644
+--- a/packages/context/agent-instructions/README.md
++++ b/packages/context/agent-instructions/README.md
+@@ -1,5 +1,5 @@
+ ---
+-description: "Workspace-instruction context for users and maintainers enabling, sizing, or debugging AGENTS.md/CLAUDE.md loading and refresh."
++description: "Workspace-instruction context for users and maintainers enabling, sizing, or debugging AGENTS.md loading and refresh."
+ kind: "package-reference"
+ ---
+ 
+@@ -27,24 +27,28 @@ English | [中文](README.zh.md)
+ 
+ Changing the Session's working directory reloads the applicable project instruction chain before the next request.
+ 
+-Mount this plugin when agents should work from the workspace's own instruction files. `dsh-base` already includes it with a 65,536-byte budget, so base-backed profiles only need to replace the row when they want another `maxBytes`; providerless trees load nothing until a filesystem provider is present.
++Mount this plugin when agents should work from the workspace's own instruction files. `dsh-base` already includes it with a 131,072-byte budget, so base-backed profiles only need to replace the row when they want another `maxBytes`; providerless trees load nothing until a filesystem provider is present.
+ 
+ ### What the agent gets
+ 
+-The first request includes one durable baseline message with the user-global chain — `$DSH_HOME/AGENTS.md`, then `<agentsHome>/AGENTS.md` — followed by the project chain: every existing candidate file from the project root down to the session working directory, in broad-to-specific order. Within one candidate group, files whose content matches after trimming render once: a `CLAUDE.md` that duplicates its `AGENTS.md` is not repeated, and a shared-root `AGENTS.md` that duplicates the harness-home file collapses behind it. After a successful `read`, `write`, or `edit` call reaches a deeper directory, the next request includes the newly applicable instruction file; a changed file replaces its content, and a file that disappears or duplicates an earlier candidate produces a removal notice.
++The first request includes one durable baseline message with the user-global file — `$DSH_HOME/AGENTS.md` (in Harness Studio, `~/.harness-studio/AGENTS.md`) — followed by the project chain: each folder's `AGENTS.md` from the project root down to the session working directory, in broad-to-specific order, each followed by that folder's `AGENTS.local.md`. Nothing else is read: no `CLAUDE.md`, `CLAUDE.local.md` or shared `~/.agents/AGENTS.md`. After a successful `read`, `write`, or `edit` call reaches a deeper directory, the next request includes the newly applicable instruction file; a changed file replaces its content — sent as an edit naming the changed lines when that is under half the file and the earlier text was sent in this process, otherwise as the whole file — and a file that disappears or duplicates an earlier candidate produces a removal notice.
++
++### Imports
++
++A line containing `@path` imports another file, as in Claude Code's `CLAUDE.md`. The path may start with `~/`, `/`, `./` or `../`, or be a relative path ending in a file extension; it resolves against the importing file's directory. The reference line stays and the imported content follows it under `Imported from <path>:`. Imports nest up to five levels; a file already imported while expanding one instruction file (a cycle, or the same file named again) is not read or shown again, and references inside fenced or inline code, e-mail addresses, and missing or unreadable files are left as written. A project instruction file may only import files inside its project root, checked on the real path so a symlink cannot escape; only the real user-global file (`AGENTS.md` in the harness home, recognized by absolute path, not by how the path is displayed) may import any readable file. An import of a file discovery loads anyway (`AGENTS.md` or `AGENTS.local.md` in the importing folder or above it) is skipped; `@CLAUDE.md` is not discovered, so it expands like any other file. `maxSourceBytes` bounds a file and its imports together and is enforced while reading, so expansion stops before the first import that would exceed it, and one load probes or reads at most 200 imported files. Imported files are read when their importing file loads or reloads, so editing only an imported file takes effect in the next session.
+ 
+ ### Configuration
+ 
+-The defaults suit a typical checkout: `.git` marks the project root, `AGENTS.md` and `CLAUDE.md` are the base candidates, and `AGENTS.local.md` and `CLAUDE.local.md` are additive local overlays. Only `maxBytes` is required — it caps the complete rendered baseline so each deployment chooses its prompt budget explicitly.
++The defaults suit a typical checkout: `.git` marks the project root, `AGENTS.md` is the base candidate, and `AGENTS.local.md` is the additive local overlay. Only `maxBytes` is required — it caps the complete rendered baseline so each deployment chooses its prompt budget explicitly.
+ 
+-The harness home holding the user-global `AGENTS.md` is process policy rather than row configuration: the plugin resolves `$DSH_HOME`, or `~/.dsh`, through `@deepseek-ai/dsh-home-paths`, so instruction loading always reads the process home. The shared agents root resolves the same way, from `$DSH_AGENTS_HOME` or `~/.agents`. Stray `dshHome` and `agentsHome` row keys are ignored.
++The harness home holding the user-global `AGENTS.md` is process policy rather than row configuration: the plugin resolves `$DSH_HOME`, or `~/.dsh`, through `@deepseek-ai/dsh-home-paths`, so instruction loading always reads the process home. The shared agents root (`$DSH_AGENTS_HOME` or `~/.agents`) is not read for instructions. Stray `dshHome` and `agentsHome` row keys are ignored.
+ 
+ Root discovery climbs only when a marker probe confirms that the marker is absent. A permission or I/O failure stops discovery and surfaces the host or filesystem-provider error instead of selecting an ancestor project. The [historical root-marker metadata decision](../../../.agents/notes/archived/bug-fix/2026-09-03-root-marker-metadata-failures.md) records why discovery fails instead of substituting another root.
+ 
+ ```yaml
+ - name: '@deepseek-ai/dsh-agent-instructions'
+   config:
+-    maxBytes: 65536
++    maxBytes: 131072
+ ```
+ 
+ The accepted fields, at a glance:
+@@ -64,8 +68,8 @@ export interface Config {
+ | `maxBytes` | required | Cap on the complete rendered baseline message, in bytes |
+ | `maxSourceBytes` | `1048576` | Cap on one source instruction file before rendering |
+ | `projectRootMarkers` | `['.git']` | Directory names that mark the project root |
+-| `instructionFileCandidates` | `['AGENTS.md', 'CLAUDE.md']` | Base file names loaded in each project directory |
+-| `localInstructionFileCandidates` | `['AGENTS.local.md', 'CLAUDE.local.md']` | Local overlay file names loaded after the base files |
++| `instructionFileCandidates` | `['AGENTS.md']` | Base file names loaded in each project directory |
++| `localInstructionFileCandidates` | `['AGENTS.local.md']` | Local overlay file names loaded after the base files |
+ 
+ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-agent-instructions) is the exhaustive source for every accepted field and its JSDoc.
+ 
+@@ -218,9 +222,9 @@ These limits define when instruction loading is a poor fit or needs operational
+ 
+ - **Discovery follows structured fs tools, not shell navigation** — a `bash` command that changes directories does not trigger nested instruction discovery because shell syntax and per-call shell state are not a reliable filesystem seam.
+ - **Refresh is touch-driven** — there is no watcher; external edits become visible on the next successful first-party `read`, `write`, or `edit`, when resume reconciles a visible baseline, or when an entering pre-step restores a shadowed baseline.
+-- **Candidate semantics stay intentionally small** — lowercase names, `.claude/rules/`, and `@path` imports are not interpreted; project scopes load `AGENTS.local.md`/`CLAUDE.local.md` overlays by default, but neither user-global root has a local overlay and other custom names require explicit candidate configuration. A project directory named like a user-global scope directory renders as `./<name>/...`, so it keeps its own scope instead of resolving to the global root.
+-- **Deduplication is content-based within one candidate group** — candidates collapse only when byte-identical after trimming leading and trailing whitespace. The two user-global roots share one group, so the shared-root file collapses behind a matching harness-home file; sibling project candidates collapse the same way, while a distinct real copy that has drifted from `AGENTS.md` loads in full alongside it. A duplicate of budget-retained content stays reconciled: when the retained candidate changes or disappears, the duplicate becomes visible again. Unchanged hidden duplicates, including files removed from visible state as duplicates, use cached metadata instead of content reads.
+-- **One candidate group shares failure fate** — when metadata or content cannot be read for any candidate, including a hidden duplicate, the group keeps its last-good state for that pass. An unreadable shared agents root therefore also postpones a harness-home change notice until a later pass observes both roots.
++- **Candidate semantics stay intentionally small** — lowercase names, `.claude/rules/`, and `@path` imports are not interpreted; project scopes load `AGENTS.local.md` overlays by default, but the user-global file has no local overlay and other custom names require explicit candidate configuration. A project directory named like a user-global scope directory renders as `./<name>/...`, so it keeps its own scope instead of resolving to the global root.
++- **Deduplication is content-based within one candidate group** — candidates collapse only when byte-identical after trimming leading and trailing whitespace; with the default candidates each project folder has one base file and one overlay, so this matters only for custom candidate lists. A duplicate of budget-retained content stays reconciled: when the retained candidate changes or disappears, the duplicate becomes visible again. Unchanged hidden duplicates, including files removed from visible state as duplicates, use cached metadata instead of content reads.
++- **One candidate group shares failure fate** — when metadata or content cannot be read for any candidate, including a hidden duplicate, the group keeps its last-good state for that pass.
+ - **A byte-budget omission does not re-enter reconciliation** — a candidate the baseline dropped for budget reasons, including any content duplicate of that candidate, is not probed again while that visible baseline holds; it becomes visible only after the baseline is rebuilt.
+ - **Symlinked instruction files are followed across the trust boundary** — a candidate whose final component is a symlink is resolved and its target loaded, so a cloned repository can surface off-tree file content as lower-authority workspace guidance (it never overrides system, developer, or direct user instructions). Confine `ctx.fs` with the filesystem policy gate or an OS sandbox when loading untrusted repositories.
+ - **Instruction content is bounded, not summarized** — over-budget broad files are omitted and the most-specific file may be truncated; the plugin never asks a model to compress instruction prose.
+diff --git a/packages/context/agent-instructions/src/config.ts b/packages/context/agent-instructions/src/config.ts
+index 1c9cea89..4eb8573c 100644
+--- a/packages/context/agent-instructions/src/config.ts
++++ b/packages/context/agent-instructions/src/config.ts
+@@ -9,8 +9,9 @@ import z from '@deepseek-ai/schemastery'
+ import { resolveAgentsHome, resolveDshHome } from '@deepseek-ai/dsh-home-paths'
+ 
+ const DEFAULT_PROJECT_ROOT_MARKERS = ['.git'] as const
+-const DEFAULT_INSTRUCTION_FILE_CANDIDATES = ['AGENTS.md', 'CLAUDE.md'] as const
+-const DEFAULT_LOCAL_INSTRUCTION_FILE_CANDIDATES = ['AGENTS.local.md', 'CLAUDE.local.md'] as const
++// Harness Studio reads its own instruction files only: AGENTS.md, each followed by its AGENTS.local.md overlay.
++const DEFAULT_INSTRUCTION_FILE_CANDIDATES = ['AGENTS.md'] as const
++const DEFAULT_LOCAL_INSTRUCTION_FILE_CANDIDATES = ['AGENTS.local.md'] as const
+ const DEFAULT_MAX_SOURCE_BYTES = 1_048_576
+ const RESERVED_PATH_SEGMENTS = new Set(['', '.', '..'])
+ 
+diff --git a/packages/context/agent-instructions/src/digest.ts b/packages/context/agent-instructions/src/digest.ts
+index 17017af6..b67186ea 100644
+--- a/packages/context/agent-instructions/src/digest.ts
++++ b/packages/context/agent-instructions/src/digest.ts
+@@ -26,3 +26,20 @@ export function instructionContentSha1(content: string): string {
+ export function trimmedInstructionDigest(content: string): string {
+   return instructionContentSha1(content.trim())
+ }
++
++/**
++ * Identity used to keep one instruction file per candidate kind in a project directory.
++ * Harness Studio loads one base file (`AGENTS.md`) and one local overlay (`AGENTS.local.md`) per
++ * project directory; should a configuration list more candidates of a kind, the later one is
++ * dropped whatever its content, so a directory never pays for its instructions twice. The
++ * user-global file collapses only on matching content.
++ * @param displayPath - model-facing path of the loaded file.
++ * @param content - exact UTF-8 instruction text.
++ * @returns a per-kind key for project files, or the trimmed-content digest for user-global files.
++ */
++export function instructionDuplicateKey(displayPath: string, content: string): string {
++  const name = displayPath.slice(Math.max(displayPath.lastIndexOf('/'), displayPath.lastIndexOf('\\')) + 1)
++  const userGlobal = displayPath.startsWith('~/') || displayPath.startsWith('$')
++  if (userGlobal) return trimmedInstructionDigest(content)
++  return /\.local\.md$/i.test(name) ? 'candidate:local' : 'candidate:base'
++}
+diff --git a/packages/context/agent-instructions/src/files.ts b/packages/context/agent-instructions/src/files.ts
+index de3650d0..016e29c2 100644
+--- a/packages/context/agent-instructions/src/files.ts
++++ b/packages/context/agent-instructions/src/files.ts
+@@ -5,15 +5,15 @@
+  */
+ 
+ import { createReadStream } from 'node:fs'
+-import { stat } from 'node:fs/promises'
+-import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
++import { realpath, stat } from 'node:fs/promises'
++import { homedir } from 'node:os'
++import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+ import type { FileSystem, FsInfo, FsTarget, FsVersion } from '@deepseek-ai/dsh-fs'
+-import { agentsHomeDisplay, dshHomeDisplay } from '@deepseek-ai/dsh-home-paths'
++import { dshHomeDisplay } from '@deepseek-ai/dsh-home-paths'
+ import { assertNever } from '@deepseek-ai/dsh-util-values'
+ import { resolveConfig, resolveDiscoveryConfig, type ResolvedConfig, type ResolvedDiscoveryConfig } from './config.ts'
+-import { trimmedInstructionDigest } from './digest.ts'
++import { instructionDuplicateKey } from './digest.ts'
+ import {
+-  AGENTS_GLOBAL_DIRECTORY,
+   decodeScopeKey,
+   escapeProjectDisplayPath,
+   instructionCandidateGroup,
+@@ -92,8 +92,6 @@ function userGlobalRoots(config: ResolvedDiscoveryConfig): UserGlobalRoot[] {
+     switch (directory) {
+       case USER_GLOBAL_DIRECTORY:
+         return { directory, home: config.dshHome, display: dshHomeDisplay(config.dshHome) }
+-      case AGENTS_GLOBAL_DIRECTORY:
+-        return { directory, home: config.agentsHome, display: agentsHomeDisplay(config.agentsHome) }
+       /* v8 ignore next -- USER_GLOBAL_DIRECTORIES is closed; this arm only makes adding a label a compile error. */
+       default:
+         return assertNever(directory, 'user-global directory')
+@@ -416,6 +414,237 @@ async function readBounded(
+   }
+ }
+ 
++/**
++ * Import depth limit for `@path` references, matching Claude Code's CLAUDE.md
++ * import rule so files written for it expand the same way here.
++ */
++const MAX_IMPORT_DEPTH = 5
++
++/**
++ * An `@path` import token: at line start or after whitespace or `(`, naming a
++ * home-relative (`~/`), absolute, `./` or `../` path, or a relative path whose
++ * last segment has an extension. The leading-character rule keeps e-mail
++ * addresses and `name@version` specifiers out.
++ */
++const IMPORT_TOKEN = /(^|[\s(])@((?:~\/|\.{1,2}\/|\/)[^\s)`'"<>]+|[\w.-]+(?:\/[^\s)`'"<>]+)*\.[A-Za-z0-9]+)/g
++
++const FENCE = /^\s{0,3}(```|~~~)/
++
++/**
++ * Instruction file names discovery loads on its own, so an import of one would load it twice. CLAUDE.md is
++ * not discovered, so an explicit `@CLAUDE.md` import expands like any other file.
++ */
++const INSTRUCTION_FILE_NAME = /^AGENTS(?:\.local)?\.md$/i
++
++/** Most files one load may read for `@path` imports, across every instruction file it expands. */
++export const MAX_IMPORT_READS = 200
++
++/**
++ * Shared count of import reads for one load. Pass the same object to every
++ * {@link expandInstructionImports} call of a load so the cap covers the whole load.
++ */
++export interface ImportReadCounter {
++  reads: number
++}
++
++interface ImportScope {
++  /** Project root that imported files must stay inside; undefined allows any readable file. */
++  root: string | undefined
++  /** The project root with symlinks resolved, checked against each import's real path. */
++  realRoot: string | undefined
++  /** Directory used to display imported paths relative to, when inside it. */
++  displayRoot: string | undefined
++  maxSourceBytes: number
++  fileSystem: FileSystem | undefined
++  signal: AbortSignal | undefined
++  /** Reads so far in this load, capped at {@link MAX_IMPORT_READS}. */
++  counter: ImportReadCounter
++  /** Real paths already imported while expanding this file: each is read and shown once. */
++  seen: Set<string>
++  /** UTF-8 bytes of the expansion so far: the file plus every import and label added. */
++  bytes: number
++  /** Set once the byte budget or read cap is reached; nothing more is read. */
++  stopped: boolean
++}
++
++function isInside(root: string, path: string): boolean {
++  const rel = relative(root, path)
++  return rel.length === 0 || (!rel.startsWith('..') && !isAbsolute(rel))
++}
++
++async function realOrSelf(path: string): Promise<string> {
++  try {
++    return await realpath(path)
++  } catch {
++    // The path is not on this host (a remote provider) or is missing; the
++    // provider read below decides whether it exists.
++    return path
++  }
++}
++
++function importDisplay(path: string, scope: ImportScope): string {
++  if (scope.displayRoot !== undefined && isInside(scope.displayRoot, path)) return relative(scope.displayRoot, path) || '.'
++  const home = homedir()
++  return path === home || path.startsWith(home + sep) ? `~${path.slice(home.length)}` : path
++}
++
++/**
++ * Whether discovery loads `target` anyway: an instruction file in the importing file's own folder or
++ * a folder above it (within the project root for project files). Importing it would repeat its text,
++ * as in an `AGENTS.local.md` that only says `@AGENTS.md`.
++ */
++function loadedByDiscovery(target: string, importer: string, scope: ImportScope): boolean {
++  if (!INSTRUCTION_FILE_NAME.test(basename(target))) return false
++  const folder = dirname(target)
++  const from = dirname(importer)
++  if (!isInside(folder, from)) return false
++  return scope.root === undefined ? folder === from : isInside(scope.root, folder)
++}
++
++function maskInlineCode(line: string): string {
++  return line.replace(/`[^`]*`/g, match => ' '.repeat(match.length))
++}
++
++/**
++ * Read one import within what is left of the byte budget, counting the read. A file larger than the budget
++ * left, or a read past the cap, stops the whole expansion: nothing after it is read.
++ */
++async function readImport(path: string, scope: ImportScope): Promise<string | undefined> {
++  if (scope.counter.reads >= MAX_IMPORT_READS) {
++    scope.stopped = true
++    return undefined
++  }
++  // Probes count too, so references to missing files cannot be repeated without limit.
++  scope.counter.reads += 1
++  const probe = await statFile(path, scope.fileSystem, scope.signal)
++  if (probe.kind !== 'present') return undefined
++  const left = scope.maxSourceBytes - scope.bytes
++  if (probe.info.size !== undefined && probe.info.size > left) {
++    scope.stopped = true
++    return undefined
++  }
++  const content = await readBounded({ absolutePath: path, ...probe.info }, left, scope.fileSystem, scope.signal)
++  if (content === undefined && probe.info.size === undefined) scope.stopped = true
++  return content
++}
++
++async function expandWithin(
++  content: string,
++  absolutePath: string,
++  scope: ImportScope,
++  depth: number,
++): Promise<string> {
++  if (depth > MAX_IMPORT_DEPTH) return content
++  const lines = content.split('\n')
++  const out: string[] = []
++  let inFence = false
++  for (const line of lines) {
++    out.push(line)
++    if (scope.stopped) continue
++    if (FENCE.test(line)) {
++      inFence = !inFence
++      continue
++    }
++    if (inFence || !line.includes('@')) continue
++    for (const match of maskInlineCode(line).matchAll(IMPORT_TOKEN)) {
++      if (scope.stopped) break
++      const reference = match[2]
++      /* v8 ignore next -- the second group always participates in a match. */
++      if (reference === undefined) continue
++      const target = reference.startsWith('~/')
++        ? join(homedir(), reference.slice(2))
++        : resolve(dirname(absolutePath), reference)
++      if (loadedByDiscovery(target, absolutePath, scope)) continue
++      const real = await realOrSelf(target)
++      if (scope.root !== undefined && scope.realRoot !== undefined
++        && (!isInside(scope.root, target) || !isInside(scope.realRoot, real))) continue
++      // A cycle, or a file this expansion already shows: repeating it would only multiply reads and text.
++      if (scope.seen.has(real)) continue
++      scope.seen.add(real)
++      const imported = await readImport(target, scope)
++      if (imported === undefined) continue
++      const label = `\nImported from ${importDisplay(target, scope)}:\n\n`
++      scope.bytes += Buffer.byteLength(imported, 'utf8') + Buffer.byteLength(label, 'utf8') + 2
++      if (scope.bytes > scope.maxSourceBytes) {
++        scope.stopped = true
++        break
++      }
++      const expanded = await expandWithin(imported, target, scope, depth + 1)
++      out.push('', `Imported from ${importDisplay(target, scope)}:`, '', expanded.trimEnd(), '')
++    }
++  }
++  return out.join('\n')
++}
++
++/**
++ * The real user-global instruction file: `AGENTS.md` in the harness home. Only it may import files outside a
++ * project, so a project file whose displayed path merely looks global (a folder named `~` or `$DSH_HOME`
++ * inside the repository) gets project rules.
++ * @param homes - the resolved harness home.
++ * @returns its absolute instruction-file path.
++ */
++export function userGlobalInstructionFiles(homes: { dshHome: string }): string[] {
++  return [resolve(join(homes.dshHome, USER_GLOBAL_FILE))]
++}
++
++/** Options for {@link expandInstructionImports}. */
++export interface InstructionImportOptions {
++  /** Root that bounds imports from project files. */
++  projectRoot: string
++  /** Absolute paths of the real user-global instruction files ({@link userGlobalInstructionFiles}); any other file is a project file. */
++  globalFiles: readonly string[]
++  /** Per-file source cap, applied to the file and its imports together, while they are read. */
++  maxSourceBytes: number
++  /** Optional provider used instead of host filesystem reads. */
++  fileSystem?: FileSystem
++  /** Cancellation for probes and reads. */
++  signal?: AbortSignal
++  /** Read count shared across one load; a fresh one caps this file alone. */
++  counter?: ImportReadCounter
++}
++
++/**
++ * Expand Claude Code-style `@path` imports in an instruction file. Each import
++ * keeps its reference line and adds the imported file's content after it,
++ * labelled with its path; nested imports expand up to {@link MAX_IMPORT_DEPTH}
++ * levels, and a file already imported in this expansion (a cycle, or the same
++ * file named twice) is not read or shown again. References inside fenced or
++ * inline code are left alone, and unreadable, missing, or disallowed files leave
++ * the reference unchanged. A project instruction file may only import files
++ * inside its project root (checked on the real path, so a symlink cannot
++ * escape); the user-global files, recognized by their absolute path rather than
++ * by how it is displayed, may import any readable file, because the user wrote
++ * them. The per-file source cap is enforced while reading, so expansion stops
++ * before the first import that would exceed it, and one load reads at most
++ * {@link MAX_IMPORT_READS} imported files.
++ * @param file - the loaded instruction file.
++ * @param options - project root, global files, byte cap, provider, cancellation and shared read count.
++ * @returns the file with its imports expanded.
++ */
++export async function expandInstructionImports(
++  file: LoadedInstructionFile,
++  options: InstructionImportOptions,
++): Promise<LoadedInstructionFile> {
++  if (!file.content.includes('@')) return file
++  const global = options.globalFiles.some(path => resolve(path) === resolve(file.absolutePath))
++  const root = global ? undefined : resolve(options.projectRoot)
++  const realRoot = root === undefined ? undefined : await realOrSelf(root)
++  const scope: ImportScope = {
++    root,
++    realRoot,
++    displayRoot: root,
++    maxSourceBytes: options.maxSourceBytes,
++    fileSystem: options.fileSystem,
++    signal: options.signal,
++    counter: options.counter ?? { reads: 0 },
++    seen: new Set([await realOrSelf(file.absolutePath)]),
++    bytes: Buffer.byteLength(file.content, 'utf8'),
++    stopped: false,
++  }
++  const content = await expandWithin(file.content, file.absolutePath, scope, 1)
++  return content === file.content ? file : { ...file, content }
++}
++
+ /**
+  * Drop later candidates whose trimmed content duplicates an earlier candidate in
+  * the same candidate group. Different groups never collapse even when identical;
+@@ -437,7 +666,7 @@ export function dedupInstructionFilesByCandidateGroup(files: LoadedInstructionFi
+       digests = new Set()
+       keptDigestsByGroup.set(group, digests)
+     }
+-    const digest = trimmedInstructionDigest(file.content)
++    const digest = instructionDuplicateKey(file.displayPath, file.content)
+     if (digests.has(digest)) continue
+     digests.add(digest)
+     kept.push(file)
+@@ -474,16 +703,27 @@ export async function loadBaselineInstructionSet(
+   if (config.maxBytes <= 0 || !Number.isFinite(config.maxBytes)) return undefined
+   if (config.maxSourceBytes <= 0 || !Number.isFinite(config.maxSourceBytes)) return undefined
+   const discovered = await discoverInstructionFiles(options, fileSystem)
++  const importRoot = options.projectRoot
++    ?? await findProjectRoot(resolve(options.cwd), config.projectRootMarkers, fileSystem, options.signal)
++  const imports: InstructionImportOptions = {
++    projectRoot: importRoot,
++    // The same homes discovery used, so the files it found as user-global are the ones recognized here.
++    globalFiles: userGlobalInstructionFiles(resolveDiscoveryConfig(options)),
++    maxSourceBytes: config.maxSourceBytes,
++    ...fileSystem === undefined ? {} : { fileSystem },
++    ...options.signal === undefined ? {} : { signal: options.signal },
++    counter: { reads: 0 },
++  }
+   const loaded: LoadedInstructionFile[] = []
+   for (const file of discovered) {
+     const content = await readBounded(file, config.maxSourceBytes, fileSystem, options.signal)
+     if (content !== undefined) {
+-      loaded.push({
++      loaded.push(await expandInstructionImports({
+         absolutePath: file.absolutePath,
+         displayPath: file.displayPath,
+         content,
+         ...file.version === undefined ? {} : { version: file.version },
+-      })
++      }, imports))
+     }
+   }
+   const kept = dedupInstructionFilesByCandidateGroup(loaded)
+@@ -583,6 +823,7 @@ export async function probeScopeInstruction(
+  * @param maxSourceBytes - maximum UTF-8 bytes accepted from the source.
+  * @param fileSystem - provider used for the streaming read.
+  * @param signal - cancellation for provider streaming.
++ * @param imports - project root and global files that bound `@path` imports; omitted reads the file without expanding imports.
+  * @returns loaded content with the probed version, or undefined when unavailable.
+  */
+ export async function readScopeInstruction(
+@@ -590,13 +831,20 @@ export async function readScopeInstruction(
+   maxSourceBytes: number,
+   fileSystem: FileSystem,
+   signal?: AbortSignal,
++  imports?: { projectRoot: string; globalFiles: readonly string[] },
+ ): Promise<LoadedInstructionFile | undefined> {
+   const content = await readBounded(file, maxSourceBytes, fileSystem, signal)
+   if (content === undefined) return undefined
+-  return {
++  const loaded = {
+     absolutePath: file.absolutePath,
+     displayPath: file.displayPath,
+     content,
+     version: file.version,
+   }
++  return imports === undefined ? loaded : expandInstructionImports(loaded, {
++    ...imports,
++    maxSourceBytes,
++    fileSystem,
++    ...signal === undefined ? {} : { signal },
++  })
+ }
+diff --git a/packages/context/agent-instructions/src/index.ts b/packages/context/agent-instructions/src/index.ts
+index 74d6e5fa..c5e1676c 100644
+--- a/packages/context/agent-instructions/src/index.ts
++++ b/packages/context/agent-instructions/src/index.ts
+@@ -11,6 +11,8 @@
+ 
+ import type {} from '@deepseek-ai/dsh-working-directory'
+ import type { Context } from '@deepseek-ai/cordis'
++import { readFileSync } from 'node:fs'
++import { join } from 'node:path'
+ import { isDeepStrictEqual } from 'node:util'
+ import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
+ import { createUserMessage } from '@deepseek-ai/dsh-llm'
+@@ -19,7 +21,7 @@ import type {} from '@deepseek-ai/dsh-session-projection'
+ import type { ToolExecution, ToolExecutionResult, ToolExecutionToken } from '@deepseek-ai/dsh-tools'
+ import { Config, resolveConfig, workspaceBaselineIdentity, type ResolvedConfig } from './config.ts'
+ import { findProjectRoot, loadBaselineInstructionSet } from './files.ts'
+-import { trimmedInstructionDigest } from './digest.ts'
++import { instructionDuplicateKey } from './digest.ts'
+ import {
+   applyInstructionVersionUpdates,
+   baselineInstructionState,
+@@ -83,8 +85,29 @@ function filePathFromExecution(exec: ToolExecution): string | undefined {
+   return filePath.length > 0 ? filePath : undefined
+ }
+ 
++/**
++ * The instruction byte budget chosen on Harness Studio's Instructions page, saved in
++ * `<harness home>/harness-studio/instructions.json` as `{ "maxBytes": n }`, where 0 means no limit.
++ * It is read for every request, so a change applies from the next message; an absent or unreadable
++ * file, or a value under 4 KB, keeps the configured budget.
++ * @param configured - the plugin row's resolved configuration.
++ * @returns the configuration with the saved budget applied.
++ */
++export function withSavedLimit(configured: ResolvedConfig): ResolvedConfig {
++  try {
++    const saved = JSON.parse(readFileSync(join(configured.dshHome, 'harness-studio', 'instructions.json'), 'utf8')) as { maxBytes?: unknown }
++    if (saved.maxBytes === 0) return { ...configured, maxBytes: Number.MAX_SAFE_INTEGER }
++    if (typeof saved.maxBytes === 'number' && Number.isInteger(saved.maxBytes) && saved.maxBytes >= 4096) {
++      return { ...configured, maxBytes: saved.maxBytes }
++    }
++  } catch {
++    // No saved choice, or one that cannot be read: the configured budget applies.
++  }
++  return configured
++}
++
+ export function apply(ctx: Context, config: Config): void {
+-  const resolved: ResolvedConfig = resolveConfig(config)
++  const configured: ResolvedConfig = resolveConfig(config)
+   const instructionVersions: InstructionVersionCache = new WeakMap()
+   const baselinePreparations = new WeakMap<Session, {
+     identity: string
+@@ -115,6 +138,7 @@ export function apply(ctx: Context, config: Config): void {
+     touchedPaths: readonly string[] = [],
+   ): Promise<UserMessage | undefined> => {
+     signal.throwIfAborted()
++    const resolved = withSavedLimit(configured)
+     if (resolved.maxBytes <= 0 || !Number.isFinite(resolved.maxBytes)) {
+       return undefined
+     }
+@@ -158,7 +182,7 @@ export function apply(ctx: Context, config: Config): void {
+       for (const file of instructions?.included ?? []) {
+         const group = instructionCandidateGroup(scopeForDisplayPath(file.displayPath))
+         const digests = includedDigestsByGroup.get(group) ?? new Set<string>()
+-        digests.add(trimmedInstructionDigest(file.content))
++        digests.add(instructionDuplicateKey(file.displayPath, file.content))
+         includedDigestsByGroup.set(group, digests)
+       }
+       // A duplicate inherits its winner's budget omission. Only duplicates of
+@@ -167,7 +191,7 @@ export function apply(ctx: Context, config: Config): void {
+       for (const scope of baseline.changes.keys()) excludedScopes.delete(scope)
+       for (const file of instructions?.deduped ?? []) {
+         const group = instructionCandidateGroup(scopeForDisplayPath(file.displayPath))
+-        if (includedDigestsByGroup.get(group)?.has(trimmedInstructionDigest(file.content))) {
++        if (includedDigestsByGroup.get(group)?.has(instructionDuplicateKey(file.displayPath, file.content))) {
+           excludedScopes.delete(instructionScopeKey(file.displayPath))
+         }
+       }
+diff --git a/packages/context/agent-instructions/src/render.ts b/packages/context/agent-instructions/src/render.ts
+index b006d866..f7ff256e 100644
+--- a/packages/context/agent-instructions/src/render.ts
++++ b/packages/context/agent-instructions/src/render.ts
+@@ -5,12 +5,7 @@
+  */
+ 
+ import { basename, dirname, sep } from 'node:path'
+-import {
+-  AGENTS_HOME_ENV,
+-  DEFAULT_AGENTS_HOME_DISPLAY,
+-  DEFAULT_DSH_HOME_DISPLAY,
+-  DSH_HOME_ENV,
+-} from '@deepseek-ai/dsh-home-paths'
++import { DEFAULT_DSH_HOME_DISPLAY, DSH_HOME_ENV } from '@deepseek-ai/dsh-home-paths'
+ import type { InstructionFile, LoadedInstructionFile } from './files.ts'
+ 
+ const SYSTEM_REMINDER_OPEN = '<system-reminder>'
+@@ -61,6 +56,8 @@ export interface AgentInstructionChange {
+ export interface ChangeRenderItem {
+   change: AgentInstructionChange
+   file: LoadedInstructionFile
++  /** For a replacement: the text the model was last given for this file, so the change can be sent as an edit. */
++  previousContent?: string
+ }
+ 
+ interface RenderStyle {
+@@ -96,22 +93,18 @@ function sectionText(file: LoadedInstructionFile): string {
+ export const USER_GLOBAL_DIRECTORY = 'user-global'
+ 
+ /**
+- * Directory component that identifies the shared agents-root user-global scope.
+- *
+- * It is a distinct scope so the harness-home file keeps the scope key that
+- * earlier sessions recorded, while {@link instructionCandidateGroup} still
+- * deduplicates the two roots as one candidate group.
++ * Directory component of the shared agents-root (`~/.agents`) scope that earlier sessions recorded.
++ * Harness Studio no longer reads that root; the name stays reserved so such a recorded scope still decodes
++ * as user-global and a project folder of that name keeps its own scope.
+  */
+ export const AGENTS_GLOBAL_DIRECTORY = 'agents-global'
+ 
+ /**
+- * Ordered user-global scope directories.
+- *
+- * Discovery, baseline reconciliation, and deduplication all iterate this order,
+- * so the harness home stays the candidate that decides content duplicates
+- * against the shared agents root.
++ * Ordered user-global scope directories: the harness home only. Harness Studio reads its own instruction
++ * files (the harness home's `AGENTS.md`, then each project folder's `AGENTS.md` and `AGENTS.local.md`), not the
++ * shared `~/.agents/AGENTS.md`.
+  */
+-export const USER_GLOBAL_DIRECTORIES = [USER_GLOBAL_DIRECTORY, AGENTS_GLOBAL_DIRECTORY] as const
++export const USER_GLOBAL_DIRECTORIES = [USER_GLOBAL_DIRECTORY] as const
+ 
+ /**
+  * File name of the user-global instruction file under each user-global root.
+@@ -124,13 +117,11 @@ export const USER_GLOBAL_FILE = 'AGENTS.md'
+ /**
+  * Derive the logical instruction scope from a model-facing path.
+  * @param displayPath - project-relative or user-global instruction path.
+- * @returns `user-global`, `agents-global`, `.`, or the containing project-relative directory.
++ * @returns `user-global`, `.`, or the containing project-relative directory.
+  */
+ export function scopeForDisplayPath(displayPath: string): string {
+   if (displayPath === `${DEFAULT_DSH_HOME_DISPLAY}/${USER_GLOBAL_FILE}`
+     || displayPath === `$${DSH_HOME_ENV}/${USER_GLOBAL_FILE}`) return USER_GLOBAL_DIRECTORY
+-  if (displayPath === `${DEFAULT_AGENTS_HOME_DISPLAY}/${USER_GLOBAL_FILE}`
+-    || displayPath === `$${AGENTS_HOME_ENV}/${USER_GLOBAL_FILE}`) return AGENTS_GLOBAL_DIRECTORY
+   return dirname(displayPath)
+ }
+ 
+@@ -158,7 +149,7 @@ export function instructionCandidateGroup(directory: string): string {
+ }
+ 
+ /** Directory names that {@link scopeForDisplayPath} reads as a user-global scope, not a project path. */
+-const RESERVED_SCOPE_DIRECTORIES: ReadonlySet<string> = new Set(USER_GLOBAL_DIRECTORIES)
++const RESERVED_SCOPE_DIRECTORIES: ReadonlySet<string> = new Set([USER_GLOBAL_DIRECTORY, AGENTS_GLOBAL_DIRECTORY])
+ 
+ /**
+  * Keep a project-relative path out of the user-global scope namespace.
+@@ -183,7 +174,7 @@ const SCOPE_SEPARATOR = '\u0000'
+  * Each loaded candidate is tracked independently, so the key pairs the logical
+  * directory with the exact candidate file name behind a NUL separator that no
+  * directory path or file name can contain. Distinct candidates in one directory
+- * (`AGENTS.md` vs `CLAUDE.md`, a base file vs its `.local` overlay) therefore
++ * (a base file vs its `.local` overlay) therefore
+  * never collide in the scope-keyed state maps.
+  * @param directory - `user-global`, `agents-global`, `.`, or a project-relative directory.
+  * @param candidateName - instruction file name within that directory.
+@@ -245,8 +236,47 @@ function baselineRenderStyle(files: LoadedInstructionFile[], replacePreviousBase
+   }
+ }
+ 
++/**
++ * The changed block between two versions of a file: the lines before the first difference and after the last
++ * one are shared, everything between them was removed and replaced.
++ */
++function lineEdit(before: string, after: string): { line: number; removed: string[]; added: string[] } {
++  const a = before.split('\n')
++  const b = after.split('\n')
++  let head = 0
++  while (head < a.length && head < b.length && a[head] === b[head]) head += 1
++  let tail = 0
++  while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail += 1
++  return { line: head + 1, removed: a.slice(head, a.length - tail), added: b.slice(head, b.length - tail) }
++}
++
++/**
++ * Describe a replacement as an edit when that is much shorter than the whole file: a small change to a large
++ * instruction file should not send the file again.
++ * @returns the edit text, or undefined when the whole file is the better message.
++ */
++function editSectionText(path: string, before: string, after: string): string | undefined {
++  const edit = lineEdit(before, after)
++  const changed = [...edit.removed, ...edit.added].join('\n')
++  if (byteLength(changed) * 2 > byteLength(after) || byteLength(after) < 2048) return undefined
++  const span = edit.removed.length === 0
++    ? `insert ${edit.added.length} line(s) before line ${edit.line}`
++    : `replace ${edit.removed.length} line(s) starting at line ${edit.line}${edit.added.length === 0 ? ' with nothing' : ` with ${edit.added.length} line(s)`}`
++  return [
++    `Updated instructions from: ${path}`,
++    '',
++    `This file changed after it was loaded. Apply this edit to the previously loaded instructions from this file: ${span}. The rest of the file is unchanged.`,
++    ...edit.removed.length === 0 ? [] : ['', 'Removed lines:', '', edit.removed.join('\n')],
++    ...edit.added.length === 0 ? [] : ['', 'Added lines:', '', edit.added.join('\n')],
++  ].join('\n')
++}
++
+ function changedSectionText(item: ChangeRenderItem): string {
+   const { change, file } = item
++  if (change.action === 'replace' && item.previousContent !== undefined) {
++    const edit = editSectionText(change.path, item.previousContent, file.content)
++    if (edit !== undefined) return edit
++  }
+   if (change.action === 'set') return additionalSectionText(file)
+   if (change.action === 'remove') {
+     return `Instructions removed: ${change.path}\n\nThe previously loaded instructions from this file no longer apply.`
+diff --git a/packages/context/agent-instructions/src/state.ts b/packages/context/agent-instructions/src/state.ts
+index 9727d7ac..0cebcd3c 100644
+--- a/packages/context/agent-instructions/src/state.ts
++++ b/packages/context/agent-instructions/src/state.ts
+@@ -10,7 +10,7 @@ import type { Message } from '@deepseek-ai/dsh-llm'
+ import type { Session, UserMessage } from '@deepseek-ai/dsh-session'
+ import type { FileSystem, FsVersion } from '@deepseek-ai/dsh-fs'
+ import type { ResolvedConfig } from './config.ts'
+-import { instructionContentSha1, trimmedInstructionDigest } from './digest.ts'
++import { instructionContentSha1, instructionDuplicateKey } from './digest.ts'
+ import {
+   ancestorChain,
+   descendantDirsBetween,
+@@ -19,6 +19,7 @@ import {
+   readScopeInstruction,
+   relativeDisplay,
+   scopeInstructionFile,
++  userGlobalInstructionFiles,
+   type LoadedInstructionFile,
+ } from './files.ts'
+ import {
+@@ -54,11 +55,16 @@ declare module '@deepseek-ai/dsh-llm' {
+   }
+ }
+ 
+-/** Per-scope metadata cache; instruction prose is deliberately not retained. */
++/** Per-scope metadata cache, plus the text last sent for the scope in this process. */
+ export interface InstructionVersionState {
+   path: string
+   version: FsVersion
+   digest: string
++  /**
++   * The content last sent to the model for this scope, kept in memory only so a later change can be sent
++   * as an edit instead of the whole file. Absent after a resume, when the whole file is sent again.
++   */
++  content?: string
+   /**
+    * Trimmed-content identity ({@link trimmedInstructionDigest}) used to suppress
+    * candidate-group duplicates on the metadata fast path without re-reading a sibling.
+@@ -185,7 +191,8 @@ export function baselineInstructionState(files: LoadedInstructionFile[]): {
+         path: file.displayPath,
+         version: file.version,
+         digest,
+-        trimmedDigest: trimmedInstructionDigest(file.content),
++        trimmedDigest: instructionDuplicateKey(file.displayPath, file.content),
++        content: file.content,
+       })
+     }
+   }
+@@ -404,18 +411,19 @@ export async function reconcileInstructionContext(
+           && hasKeptTrimmed(group, cached.trimmedDigest)) continue
+       }
+ 
+-      const file = await readScopeInstruction(probedFile, resolved.maxSourceBytes, fileSystem, options.signal)
++      const file = await readScopeInstruction(probedFile, resolved.maxSourceBytes, fileSystem, options.signal, { projectRoot, globalFiles: userGlobalInstructionFiles(resolved) })
+       if (file === undefined) {
+         rollbackGroup()
+         break
+       }
+       const currentDigest = instructionContentSha1(file.content)
+-      const trimmedDigest = trimmedInstructionDigest(file.content)
++      const trimmedDigest = instructionDuplicateKey(file.displayPath, file.content)
+       const nextVersion: InstructionVersionState = {
+         path: file.displayPath,
+         version: probedFile.version,
+         digest: currentDigest,
+         trimmedDigest,
++        content: file.content,
+       }
+       if (registerKeptTrimmed(group, trimmedDigest)) {
+         // A distinct file whose trimmed content already appeared earlier in this
+@@ -439,7 +447,8 @@ export async function reconcileInstructionContext(
+         path: file.displayPath,
+         digest: currentDigest,
+       }
+-      items.push({ change, file })
++      const previousContent = action === 'replace' && cached?.path === file.displayPath ? cached.content : undefined
++      items.push({ change, file, ...previousContent === undefined ? {} : { previousContent } })
+       versionUpdates.push({ change, state: nextVersion })
+     }
+   }
+diff --git a/packages/context/agent-instructions/tests/agent-instructions.spec.ts b/packages/context/agent-instructions/tests/agent-instructions.spec.ts
+index 721866df..da6cff25 100644
+--- a/packages/context/agent-instructions/tests/agent-instructions.spec.ts
++++ b/packages/context/agent-instructions/tests/agent-instructions.spec.ts
+@@ -405,14 +405,13 @@ describe('workspace context instruction discovery', () => {
+       pinHarnessHome(home)
+       const files = await discoverBaselineInstructionFiles({ cwd })
+ 
++      // CLAUDE.md is not one of Harness Studio's instruction files.
+       expect(files.map(file => file.displayPath)).toEqual([
+         '$DSH_HOME/AGENTS.md',
+         'AGENTS.md',
+-        'CLAUDE.md',
+-        join('packages', 'CLAUDE.md'),
+         join('packages', 'app', 'AGENTS.md'),
+       ])
+-      expect(files.map(file => file.absolutePath)).toContain(join(root, 'CLAUDE.md'))
++      expect(files.map(file => file.absolutePath)).not.toContain(join(root, 'CLAUDE.md'))
+     } finally {
+       vi.unstubAllEnvs()
+       await rm(root, { recursive: true, force: true })
+@@ -434,11 +433,10 @@ describe('workspace context instruction discovery', () => {
+       pinHarnessHome(home)
+       const files = await discoverBaselineInstructionFiles({ cwd })
+ 
++      // CLAUDE.md and CLAUDE.local.md are ignored; each AGENTS.md is followed by its AGENTS.local.md.
+       expect(files.map(file => file.displayPath)).toEqual([
+         'AGENTS.md',
+         'AGENTS.local.md',
+-        join('pkg', 'CLAUDE.md'),
+-        join('pkg', 'CLAUDE.local.md'),
+       ])
+     } finally {
+       vi.unstubAllEnvs()
+@@ -753,7 +751,7 @@ describe('workspace context instruction discovery', () => {
+     }
+   })
+ 
+-  it('honors DSH_AGENTS_HOME from the process environment', async () => {
++  it('does not read DSH_AGENTS_HOME: the shared agents root is not an instruction source', async () => {
+     const root = await tempRepo()
+     const emptyHome = await tempRepo()
+     const envAgents = await tempRepo()
+@@ -764,7 +762,7 @@ describe('workspace context instruction discovery', () => {
+       pinHarnessHome(emptyHome)
+       const files = await discoverBaselineInstructionFiles({ cwd: root })
+ 
+-      expect(files).toEqual([{ absolutePath: join(envAgents, 'AGENTS.md'), displayPath: '$DSH_AGENTS_HOME/AGENTS.md' }])
++      expect(files).toEqual([])
+     } finally {
+       vi.unstubAllEnvs()
+       await rm(root, { recursive: true, force: true })
+@@ -773,7 +771,7 @@ describe('workspace context instruction discovery', () => {
+     }
+   })
+ 
+-  it('loads both user-global roots with the harness home first', async () => {
++  it('loads the harness home AGENTS.md as the only user-global file', async () => {
+     const root = await tempRepo()
+     const home = await tempRepo()
+     const agents = await tempRepo()
+@@ -788,8 +786,7 @@ describe('workspace context instruction discovery', () => {
+       const text = loaded?.text ?? ''
+ 
+       expect(text).toContain('Instructions from: $DSH_HOME/AGENTS.md\n\nharness home rule')
+-      expect(text).toContain('Instructions from: $DSH_AGENTS_HOME/AGENTS.md\n\nshared agents rule')
+-      expect(text.indexOf('harness home rule')).toBeLessThan(text.indexOf('shared agents rule'))
++      expect(text).not.toContain('shared agents rule')
+     } finally {
+       vi.unstubAllEnvs()
+       await rm(root, { recursive: true, force: true })
+@@ -798,7 +795,7 @@ describe('workspace context instruction discovery', () => {
+     }
+   })
+ 
+-  it('labels the default agents root as ~/.agents when HOME points at the configured default', async () => {
++  it('does not read the default ~/.agents/AGENTS.md', async () => {
+     const root = await tempRepo()
+     const home = await tempRepo()
+     try {
+@@ -813,7 +810,7 @@ describe('workspace context instruction discovery', () => {
+       const isolated = await import('@deepseek-ai/dsh-agent-instructions')
+       const files = await isolated.discoverBaselineInstructionFiles({ cwd: root })
+ 
+-      expect(files.map(file => file.displayPath)).toEqual(['~/.agents/AGENTS.md'])
++      expect(files).toEqual([])
+     } finally {
+       vi.unstubAllEnvs()
+       vi.doUnmock('node:os')
+@@ -1484,7 +1481,9 @@ describe('workspace context request injection', () => {
+     }
+   })
+ 
+-  it('keeps a duplicate excluded when only a different digest fits the same group budget', async () => {
++  // Harness Studio keeps one base file and one local overlay per folder whatever their content, so this
++  // content-based sibling behaviour no longer applies; the rule is covered in instruction-imports.spec.ts.
++  it.skip('keeps a duplicate excluded when only a different digest fits the same group budget', async () => {
+     const root = await tempRepo()
+     const home = await tempRepo()
+     const ctx = new Context()
+@@ -1553,7 +1552,9 @@ describe('workspace context request injection', () => {
+     }
+   })
+ 
+-  it('recomposes the baseline when candidate precedence changes between resumes', async () => {
++  // Harness Studio keeps one base file and one local overlay per folder whatever their content, so this
++  // content-based sibling behaviour no longer applies; the rule is covered in instruction-imports.spec.ts.
++  it.skip('recomposes the baseline when candidate precedence changes between resumes', async () => {
+     const root = await tempRepo()
+     const home = await tempRepo()
+     const originalCtx = new Context()
+@@ -2007,357 +2008,25 @@ describe('workspace context request injection', () => {
+     }
+   })
+ 
+-  it('reports a changed shared-agents instruction through the visible-scope reconcile path', async () => {
+-    const root = await tempRepo()
+-    const home = await tempRepo()
+-    const agents = await tempRepo()
+-    try {
+-      await mkdir(join(root, '.git'), { recursive: true })
+-      await write(join(agents, 'AGENTS.md'), 'shared rule')
+-      const ctx = new Context()
+-      pinHarnessHome(home)
+-      pinAgentsHome(agents)
+-      await mountFileToolsAndAgentInstructions(ctx, { maxBytes: 65536 })
+-      const agent = await stubAgent(root)
+-      await composeBaselinePrefix(ctx, agent)
+-
+-      await write(join(agents, 'AGENTS.md'), 'updated shared rule')
+-      await syncAgentInstructions(ctx, agent)
+-
+-      const pending = await agentInstructionsOf(agent)
+-      expect(pending?.source).toMatchObject({
+-        kind: 'agent-instructions',
+-        changes: [{ action: 'replace', scope: sk(AGENTS_GLOBAL_DIRECTORY, USER_GLOBAL_FILE) }],
+-      })
+-      expect(blocksText(pending?.content)).toContain('updated shared rule')
+-    } finally {
+-      vi.unstubAllEnvs()
+-      await rm(root, { recursive: true, force: true })
+-      await rm(home, { recursive: true, force: true })
+-      await rm(agents, { recursive: true, force: true })
+-    }
+-  })
+-
+-  it('queues a removal when a rendered shared-agents file disappears', async () => {
+-    const root = await tempRepo()
+-    const home = await tempRepo()
+-    const agents = await tempRepo()
+-    try {
+-      await mkdir(join(root, '.git'), { recursive: true })
+-      await write(join(agents, 'AGENTS.md'), 'shared rule')
+-      const ctx = new Context()
+-      pinHarnessHome(home)
+-      pinAgentsHome(agents)
+-      await mountFileToolsAndAgentInstructions(ctx, { maxBytes: 65536 })
+-      const agent = await stubAgent(root)
+-      await composeBaselinePrefix(ctx, agent)
+-
+-      await rm(join(agents, 'AGENTS.md'))
+-      await syncAgentInstructions(ctx, agent)
+-
+-      const pending = await agentInstructionsOf(agent)
+-      expect(pending?.source).toMatchObject({
+-        kind: 'agent-instructions',
+-        changes: [{ action: 'remove', scope: sk(AGENTS_GLOBAL_DIRECTORY, USER_GLOBAL_FILE) }],
+-      })
+-      expect(blocksText(pending?.content)).toContain('Instructions removed: $DSH_AGENTS_HOME/AGENTS.md')
+-    } finally {
+-      vi.unstubAllEnvs()
+-      await rm(root, { recursive: true, force: true })
+-      await rm(home, { recursive: true, force: true })
+-      await rm(agents, { recursive: true, force: true })
+-    }
+-  })
+-
+-  it('renders a shared-agents delta without exposing the internal scope key', async () => {
++  it('does not read the shared agents root at all: a file there stays out of the baseline and of reconciliation', async () => {
+     const root = await tempRepo()
+     const home = await tempRepo()
+     const agents = await tempRepo()
+     try {
+       await mkdir(join(root, '.git'), { recursive: true })
+-      await write(join(root, 'AGENTS.md'), 'repo rule')
++      await write(join(home, 'AGENTS.md'), 'harness home rule')
++      await write(join(agents, 'AGENTS.md'), 'shared agents rule')
+       const ctx = new Context()
+       pinHarnessHome(home)
+       pinAgentsHome(agents)
+       await mountFileToolsAndAgentInstructions(ctx, { maxBytes: 65536 })
+       const agent = await stubAgent(root)
+       await composeBaselinePrefix(ctx, agent)
+-
+-      await write(join(agents, 'AGENTS.md'), 'shared delta rule')
+-      await syncAgentInstructions(ctx, agent)
+-
+-      const text = blocksText((await agentInstructionsOf(agent))?.content)
+-      expect(text).toContain('Additional instructions from: $DSH_AGENTS_HOME/AGENTS.md')
+-      expect(text).toContain('These user-global instructions apply to all work.')
+-      expect(text).toContain('shared delta rule')
+-      expect(text).not.toContain(AGENTS_GLOBAL_DIRECTORY)
+-    } finally {
+-      vi.unstubAllEnvs()
+-      await rm(root, { recursive: true, force: true })
+-      await rm(home, { recursive: true, force: true })
+-      await rm(agents, { recursive: true, force: true })
+-    }
+-  })
+-
+-  it.each([
+-    { failure: 'metadata', winner: 'edit' },
+-    { failure: 'metadata', winner: 'delete' },
+-    { failure: 'read', winner: 'edit' },
+-    { failure: 'read', winner: 'delete' },
+-  ] as const)(
+-    'preserves the global group when a hidden duplicate has a $failure failure and its winner is $winner',
+-    async ({ failure, winner }) => {
+-      const root = await tempRepo()
+-      const home = await tempRepo()
+-      const agents = await tempRepo()
+-      const ctx = new Context()
+-      try {
+-        await ctx.plugin(RecordingFileSystem)
+-        const fs = ctx.fs as RecordingFileSystem
+-        const harnessPath = join(home, USER_GLOBAL_FILE)
+-        const sharedPath = join(agents, USER_GLOBAL_FILE)
+-        fs.entries.set(join(root, '.git'), { type: 'directory' })
+-        fs.entries.set(harnessPath, { type: 'file', content: 'shared global rule', version: FsVersion('harness-v1') })
+-        fs.entries.set(sharedPath, { type: 'file', content: 'shared global rule', version: FsVersion('shared-v1') })
+-        pinHarnessHome(home)
+-        pinAgentsHome(agents)
+-        await mountAgentInstructionsPlugin(ctx, { maxBytes: 65536 })
+-        const agent = await stubAgent(root)
+-        await composeBaselinePrefix(ctx, agent)
+-
+-        expect(derivedText(agent).match(/shared global rule/g)).toHaveLength(1)
+-        expect(derivedText(agent)).not.toContain('$DSH_AGENTS_HOME/AGENTS.md')
+-        await syncAgentInstructions(ctx, agent)
+-        expect(agent.inbox.nextStep.filter(message => message.source.kind === 'agent-instructions')).toEqual([])
+-
+-        if (winner === 'edit') {
+-          fs.entries.set(harnessPath, { type: 'file', content: 'new harness rule', version: FsVersion('harness-v2') })
+-        } else {
+-          fs.entries.delete(harnessPath)
+-        }
+-        const failures = failure === 'metadata' ? fs.throwOnStat : fs.throwOnRead
+-        failures.add(sharedPath)
+-        await syncAgentInstructions(ctx, agent)
+-
+-        expect(agent.inbox.nextStep.filter(message => message.source.kind === 'agent-instructions')).toEqual([])
+-        expect(baselineEvents(agent)).toHaveLength(1)
+-
+-        failures.delete(sharedPath)
+-        await syncAgentInstructions(ctx, agent)
+-        const pending = agent.inbox.nextStep.filter(message => message.source.kind === 'agent-instructions')
+-        expect(pending).toHaveLength(1)
+-        expect(pending[0]?.source).toMatchObject({
+-          kind: 'agent-instructions',
+-          changes: [
+-            {
+-              action: winner === 'edit' ? 'replace' : 'remove',
+-              scope: sk(USER_GLOBAL_DIRECTORY, USER_GLOBAL_FILE),
+-              path: '$DSH_HOME/AGENTS.md',
+-            },
+-            { action: 'set', scope: sk(AGENTS_GLOBAL_DIRECTORY, USER_GLOBAL_FILE), path: '$DSH_AGENTS_HOME/AGENTS.md' },
+-          ],
+-        })
+-        const recoveredText = blocksText(pending[0]?.content)
+-        expect(recoveredText).toContain(`${winner === 'edit' ? 'Updated instructions from:' : 'Instructions removed:'} $DSH_HOME/AGENTS.md`)
+-        expect(recoveredText).toContain('Additional instructions from: $DSH_AGENTS_HOME/AGENTS.md')
+-        expect(recoveredText).toContain('These user-global instructions apply to all work.')
+-        expect(recoveredText.match(/shared global rule/g)).toHaveLength(1)
+-        if (winner === 'edit') expect(recoveredText).toContain('new harness rule')
+-
+-        for (const message of claimInbox(agent, 'next-step')) {
+-          const event = agent.session.append('user/message', message, { surfaceOp: 'append' })
+-          ctx.emit('session/event', agent.session, event)
+-        }
+-        await syncAgentInstructions(ctx, agent)
+-        await syncAgentInstructions(ctx, agent)
+-        expect(agent.inbox.nextStep.filter(message => message.source.kind === 'agent-instructions')).toEqual([])
+-        expect(baselineEvents(agent)).toHaveLength(1)
+-      } finally {
+-        vi.unstubAllEnvs()
+-        await ctx.fiber.dispose()
+-        await rm(root, { recursive: true, force: true })
+-        await rm(home, { recursive: true, force: true })
+-        await rm(agents, { recursive: true, force: true })
+-      }
+-    },
+-  )
+-
+-  it.each(['shared-stat', 'shared-read', 'home-stat-once'] as const)('keeps a user-global group frozen across a project alias during %s', async (failure) => {
+-    const root = await tempRepo()
+-    const agents = await tempRepo()
+-    const ctx = new Context()
+-    try {
+-      await ctx.plugin(RecordingFileSystem)
+-      const fs = ctx.fs as RecordingFileSystem
+-      const homePath = join(root, 'AGENTS.md')
+-      const sharedPath = join(agents, 'AGENTS.md')
+-      fs.entries.set(join(root, '.git'), { type: 'directory' })
+-      fs.entries.set(homePath, { type: 'file', content: 'global rule A', version: FsVersion('home-v1') })
+-      fs.entries.set(sharedPath, { type: 'file', content: 'global rule A', version: FsVersion('shared-v1') })
+-      pinHarnessHome(root)
+-      pinAgentsHome(agents)
+-      await mountAgentInstructionsPlugin(ctx, { maxBytes: 65536 })
+-      const agent = await stubAgent(root)
+-      await composeBaselinePrefix(ctx, agent)
+-      const baseline = baselineEvents(agent)[0]
+-      expect(baseline?.type === 'user/message' ? baseline.data.source : undefined).toMatchObject({
+-        changes: [{ action: 'set', scope: sk(USER_GLOBAL_DIRECTORY, USER_GLOBAL_FILE) }],
+-      })
+-      fs.entries.set(homePath, { type: 'file', content: 'global rule B', version: FsVersion('home-v2') })
+-      const originalStat = fs.stat.bind(fs)
+-      let failHomeOnce = failure === 'home-stat-once'
+-      fs.stat = async (target, signal) => {
+-        if (failHomeOnce && target.targetKey === homePath) {
+-          failHomeOnce = false
+-          throw new Error('One transient failure of the aliased home path')
+-        }
+-        return originalStat(target, signal)
+-      }
+-      if (failure === 'shared-stat') fs.throwOnStat.add(sharedPath)
+-      if (failure === 'shared-read') fs.throwOnRead.add(sharedPath)
+-      await syncAgentInstructions(ctx, agent)
+-      expect(agent.inbox.nextStep.filter(message => message.source.kind === 'agent-instructions')).toEqual([])
+-      fs.throwOnStat.clear()
+-      fs.throwOnRead.clear()
+-      await syncAgentInstructions(ctx, agent)
+-      const recovered = await agentInstructionsOf(agent)
+-      expect(recovered.source).toMatchObject({
+-        changes: [
+-          { action: 'replace', scope: sk(USER_GLOBAL_DIRECTORY, USER_GLOBAL_FILE) },
+-          { action: 'set', scope: sk(AGENTS_GLOBAL_DIRECTORY, USER_GLOBAL_FILE) },
+-        ],
+-      })
+-      expect(blocksText(recovered.content)).toContain('Updated instructions from: $DSH_HOME/AGENTS.md')
+-      expect(blocksText(recovered.content)).toContain('Additional instructions from: $DSH_AGENTS_HOME/AGENTS.md')
+-      expect(blocksText(recovered.content)).not.toContain('Additional instructions from: AGENTS.md')
+-      await appendAdditionalContexts(ctx, agent)
++      expect(derivedText(agent)).toContain('harness home rule')
++      expect(derivedText(agent)).not.toContain('shared agents rule')
++      await write(join(agents, 'AGENTS.md'), 'changed shared agents rule')
+       await syncAgentInstructions(ctx, agent)
+       expect(agent.inbox.nextStep.filter(message => message.source.kind === 'agent-instructions')).toEqual([])
+-    } finally {
+-      vi.unstubAllEnvs()
+-      await ctx.fiber.dispose()
+-      for (const path of [root, agents]) await rm(path, { recursive: true, force: true })
+-    }
+-  })
+-
+-  it('preserves a cold global group when the unrecorded shared duplicate cannot be probed', async () => {
+-    const root = await tempRepo()
+-    const home = await tempRepo()
+-    const agents = await tempRepo()
+-    const ctx = new Context()
+-    try {
+-      await ctx.plugin(RecordingFileSystem)
+-      const fs = ctx.fs as RecordingFileSystem
+-      const harnessPath = join(home, USER_GLOBAL_FILE)
+-      const sharedPath = join(agents, USER_GLOBAL_FILE)
+-      fs.entries.set(join(root, '.git'), { type: 'directory' })
+-      fs.entries.set(harnessPath, { type: 'file', content: 'new harness rule', version: FsVersion('harness-v2') })
+-      fs.entries.set(sharedPath, { type: 'file', content: 'shared global rule', version: FsVersion('shared-v1') })
+-      const agent = await stubAgent(root)
+-      const baseline = baselineInstructionState([{
+-        absolutePath: harnessPath,
+-        displayPath: '$DSH_HOME/AGENTS.md',
+-        content: 'shared global rule',
+-        version: FsVersion('harness-v1'),
+-      }])
+-      agent.session.append('user/message', createUserMessage({
+-        content: [{ type: 'text', text: 'shared global rule' }],
+-        source: { kind: 'agent-instructions', form: 'instructions', changes: [...baseline.changes.values()] },
+-      }), { surfaceOp: 'append' })
+-      pinHarnessHome(home)
+-      pinAgentsHome(agents)
+-      const resolved = resolveConfig({ maxBytes: 65536 })
+-      const cache: InstructionVersionCache = new WeakMap()
+-      const options = {
+-        cwd: root,
+-        authorityMessages: [],
+-        scopeMessages: [],
+-        touchedPaths: [],
+-        includeBaselineScopes: true,
+-        projectRoot: root,
+-        signal: testToolSignal,
+-      }
+-      fs.throwOnStat.add(sharedPath)
+-
+-      expect(await reconcileInstructionContext(agent, resolved, cache, fs, options)).toBeUndefined()
+-      expect(cache.get(agent.session)?.size ?? 0).toBe(0)
+-
+-      fs.throwOnStat.delete(sharedPath)
+-      const recovered = await reconcileInstructionContext(agent, resolved, cache, fs, options)
+-      expect(recovered?.context.source).toMatchObject({
+-        kind: 'agent-instructions',
+-        changes: [
+-          { action: 'replace', scope: sk(USER_GLOBAL_DIRECTORY, USER_GLOBAL_FILE), path: '$DSH_HOME/AGENTS.md' },
+-          { action: 'set', scope: sk(AGENTS_GLOBAL_DIRECTORY, USER_GLOBAL_FILE), path: '$DSH_AGENTS_HOME/AGENTS.md' },
+-        ],
+-      })
+-      expect(blocksText(recovered?.context.content)).toContain('These user-global instructions apply to all work.')
+-    } finally {
+-      vi.unstubAllEnvs()
+-      await ctx.fiber.dispose()
+-      await rm(root, { recursive: true, force: true })
+-      await rm(home, { recursive: true, force: true })
+-      await rm(agents, { recursive: true, force: true })
+-    }
+-  })
+-
+-  it('promotes a content-deduplicated shared file when the harness-home file disappears', async () => {
+-    const root = await tempRepo()
+-    const home = await tempRepo()
+-    const agents = await tempRepo()
+-    try {
+-      await mkdir(join(root, '.git'), { recursive: true })
+-      await write(join(home, 'AGENTS.md'), 'shared global rule')
+-      await write(join(agents, 'AGENTS.md'), 'shared global rule')
+-      const ctx = new Context()
+-      pinHarnessHome(home)
+-      pinAgentsHome(agents)
+-      await mountFileToolsAndAgentInstructions(ctx, { maxBytes: 65536 })
+-      const agent = await stubAgent(root)
+-      await composeBaselinePrefix(ctx, agent)
+-
+-      expect(derivedText(agent).match(/shared global rule/g)).toHaveLength(1)
+-
+-      await rm(join(home, 'AGENTS.md'))
+-      await syncAgentInstructions(ctx, agent)
+-
+-      const text = blocksText((await agentInstructionsOf(agent))?.content)
+-      expect(text).toContain('Instructions removed: $DSH_HOME/AGENTS.md')
+-      expect(text).toContain('Additional instructions from: $DSH_AGENTS_HOME/AGENTS.md')
+-      expect(text).toContain('shared global rule')
+-      expect(text).not.toContain('agents-global')
+-    } finally {
+-      vi.unstubAllEnvs()
+-      await rm(root, { recursive: true, force: true })
+-      await rm(home, { recursive: true, force: true })
+-      await rm(agents, { recursive: true, force: true })
+-    }
+-  })
+-
+-  it('loads a changed shared file that the baseline deduplicated', async () => {
+-    const root = await tempRepo()
+-    const home = await tempRepo()
+-    const agents = await tempRepo()
+-    try {
+-      await mkdir(join(root, '.git'), { recursive: true })
+-      await write(join(home, 'AGENTS.md'), 'shared global rule')
+-      await write(join(agents, 'AGENTS.md'), 'shared global rule')
+-      const ctx = new Context()
+-      pinHarnessHome(home)
+-      pinAgentsHome(agents)
+-      await mountFileToolsAndAgentInstructions(ctx, { maxBytes: 65536 })
+-      const agent = await stubAgent(root)
+-      await composeBaselinePrefix(ctx, agent)
+-
+-      await write(join(agents, 'AGENTS.md'), 'updated shared global rule')
+-      await syncAgentInstructions(ctx, agent)
+-
+-      const pending = await agentInstructionsOf(agent)
+-      expect(pending?.source).toMatchObject({
+-        kind: 'agent-instructions',
+-        changes: [{ action: 'set', scope: sk(AGENTS_GLOBAL_DIRECTORY, USER_GLOBAL_FILE) }],
+-      })
+-      expect(blocksText(pending?.content)).toContain('updated shared global rule')
+     } finally {
+       vi.unstubAllEnvs()
+       await rm(root, { recursive: true, force: true })
+@@ -2366,104 +2035,7 @@ describe('workspace context request injection', () => {
+     }
+   })
+ 
+-  it.each([
+-    { formation: 'shared-edited', winner: 'edit' },
+-    { formation: 'shared-edited', winner: 'delete' },
+-    { formation: 'home-edited', winner: 'edit' },
+-    { formation: 'home-edited', winner: 'delete' },
+-  ] as const)(
+-    'caches a removed duplicate after $formation and promotes it after winner $winner',
+-    async ({ formation, winner }) => {
+-      const root = await tempRepo()
+-      const home = await tempRepo()
+-      const agents = await tempRepo()
+-      const ctx = new Context()
+-      try {
+-        await ctx.plugin(RecordingFileSystem)
+-        const fs = ctx.fs as RecordingFileSystem
+-        const harnessPath = join(home, USER_GLOBAL_FILE)
+-        const sharedPath = join(agents, USER_GLOBAL_FILE)
+-        const duplicateText = 'global rule B'
+-        fs.entries.set(join(root, '.git'), { type: 'directory' })
+-        fs.entries.set(harnessPath, {
+-          type: 'file',
+-          content: formation === 'shared-edited' ? duplicateText : 'harness rule A',
+-          version: FsVersion('harness-v1'),
+-        })
+-        fs.entries.set(sharedPath, {
+-          type: 'file',
+-          content: formation === 'shared-edited' ? 'shared rule A' : duplicateText,
+-          version: FsVersion('shared-v1'),
+-        })
+-        pinHarnessHome(home)
+-        pinAgentsHome(agents)
+-        await mountAgentInstructionsPlugin(ctx, { maxBytes: 65536 })
+-        const agent = await stubAgent(root)
+-        await composeBaselinePrefix(ctx, agent)
+-        expect(derivedText(agent)).toContain('Instructions from: $DSH_HOME/AGENTS.md')
+-        expect(derivedText(agent)).toContain('Instructions from: $DSH_AGENTS_HOME/AGENTS.md')
+-
+-        if (formation === 'shared-edited') {
+-          fs.entries.set(sharedPath, { type: 'file', content: duplicateText, version: FsVersion('shared-v2') })
+-        } else {
+-          fs.entries.set(harnessPath, { type: 'file', content: duplicateText, version: FsVersion('harness-v2') })
+-        }
+-        const removal = await syncedAgentInstructions(ctx, agent)
+-        if (removal.source.kind !== 'agent-instructions') throw new Error('missing instruction removal source')
+-        expect(removal.source.changes).toContainEqual({
+-          action: 'remove',
+-          scope: sk(AGENTS_GLOBAL_DIRECTORY, USER_GLOBAL_FILE),
+-          path: '$DSH_AGENTS_HOME/AGENTS.md',
+-        })
+-        expect(blocksText(removal.content)).toContain('Instructions removed: $DSH_AGENTS_HOME/AGENTS.md')
+-        await appendAdditionalContexts(ctx, agent)
+-
+-        fs.readTargets.length = 0
+-        await syncAgentInstructions(ctx, agent)
+-        await syncAgentInstructions(ctx, agent)
+-        expect(agent.inbox.nextStep.filter(message => message.source.kind === 'agent-instructions')).toEqual([])
+-        expect(fs.readTargets).not.toContain(sharedPath)
+-
+-        if (winner === 'edit') {
+-          fs.entries.set(harnessPath, { type: 'file', content: 'harness rule C', version: FsVersion('harness-v3') })
+-        } else {
+-          fs.entries.delete(harnessPath)
+-        }
+-        const promotion = await syncedAgentInstructions(ctx, agent)
+-        expect(promotion.source).toMatchObject({
+-          kind: 'agent-instructions',
+-          changes: [
+-            {
+-              action: winner === 'edit' ? 'replace' : 'remove',
+-              scope: sk(USER_GLOBAL_DIRECTORY, USER_GLOBAL_FILE),
+-              path: '$DSH_HOME/AGENTS.md',
+-            },
+-            { action: 'set', scope: sk(AGENTS_GLOBAL_DIRECTORY, USER_GLOBAL_FILE), path: '$DSH_AGENTS_HOME/AGENTS.md' },
+-          ],
+-        })
+-        const promotedText = blocksText(promotion.content)
+-        expect(promotedText).toContain('Additional instructions from: $DSH_AGENTS_HOME/AGENTS.md')
+-        expect(promotedText).toContain('These user-global instructions apply to all work.')
+-        expect(promotedText.match(/global rule B/g)).toHaveLength(1)
+-        expect(fs.readTargets.filter(path => path === sharedPath)).toHaveLength(1)
+-        await appendAdditionalContexts(ctx, agent)
+-
+-        await syncAgentInstructions(ctx, agent)
+-        await syncAgentInstructions(ctx, agent)
+-        expect(agent.inbox.nextStep.filter(message => message.source.kind === 'agent-instructions')).toEqual([])
+-        expect(fs.readTargets.filter(path => path === sharedPath)).toHaveLength(1)
+-        expect(baselineEvents(agent)).toHaveLength(1)
+-      } finally {
+-        vi.unstubAllEnvs()
+-        await ctx.fiber.dispose()
+-        await rm(root, { recursive: true, force: true })
+-        await rm(home, { recursive: true, force: true })
+-        await rm(agents, { recursive: true, force: true })
+-      }
+-    },
+-  )
+-
+-  it('keeps a shared file created later with identical content suppressed without re-reading it', async () => {
++  it('ignores a shared agents-root file created later, whatever its content', async () => {
+     const root = await tempRepo()
+     const home = await tempRepo()
+     const agents = await tempRepo()
+@@ -3154,7 +2726,7 @@ describe('workspace context request injection', () => {
+     }
+   })
+ 
+-  it('loads user-global and CLAUDE fallback content through ctx.fs', async () => {
++  it('loads user-global and project content through ctx.fs, never CLAUDE.md', async () => {
+     const root = await tempRepo()
+     const home = await tempRepo()
+     try {
+@@ -3168,6 +2740,7 @@ describe('workspace context request injection', () => {
+       fs.entries.set(join(root, '.git'), { type: 'directory' })
+       fs.entries.set(join(home, 'AGENTS.md'), { type: 'file', content: 'ctx global rule' })
+       fs.entries.set(join(root, 'CLAUDE.md'), { type: 'file', content: 'ctx claude rule' })
++      fs.entries.set(join(root, 'AGENTS.md'), { type: 'file', content: 'ctx project rule' })
+       pinHarnessHome(home)
+       await mountAgentInstructionsPlugin(ctx, { maxBytes: 65536 })
+       const agent = await stubAgent(root)
+@@ -3175,7 +2748,8 @@ describe('workspace context request injection', () => {
+       await composeBaselinePrefix(ctx, agent)
+ 
+       expect(derivedText(agent)).toContain('ctx global rule')
+-      expect(derivedText(agent)).toContain('ctx claude rule')
++      expect(derivedText(agent)).toContain('ctx project rule')
++      expect(derivedText(agent)).not.toContain('ctx claude rule')
+       expect(derivedText(agent)).not.toContain('node global rule')
+       expect(derivedText(agent)).not.toContain('node claude rule')
+     } finally {
+@@ -3275,7 +2849,8 @@ describe('workspace context request injection', () => {
+       fs.throwOnStat.add(join(root, 'AGENTS.md'))
+       fs.entries.set(join(root, 'CLAUDE.md'), { type: 'file', content: 'claude sibling rule' })
+       pinHarnessHome(home)
+-      await mountAgentInstructionsPlugin(ctx, { maxBytes: 65536 })
++      // A configuration that lists a second base candidate, which the default no longer does.
++      await mountAgentInstructionsPlugin(ctx, { maxBytes: 65536, instructionFileCandidates: ['AGENTS.md', 'CLAUDE.md'] })
+       const agent = await stubAgent(root)
+ 
+       await composeBaselinePrefix(ctx, agent)
+@@ -3558,7 +3133,7 @@ describe('workspace context request injection', () => {
+       const isolated = await import('@deepseek-ai/dsh-agent-instructions')
+ 
+       pinHarnessHome(home)
+-      const rendered = await isolated.loadBaselineInstructions({ cwd: root, maxBytes: 65536 })
++      const rendered = await isolated.loadBaselineInstructions({ cwd: root, maxBytes: 65536, instructionFileCandidates: ['AGENTS.md', 'CLAUDE.md'] })
+ 
+       expect(rendered?.text).toContain('claude host sibling rule')
+     } finally {
+@@ -4159,7 +3734,48 @@ describe('dynamic nested workspace context injection', () => {
+     }
+   })
+ 
+-  it('reconciles distinct sibling candidates as independent scopes', async () => {
++  it('sends a small change to a large instruction file as an edit, not the whole file again', async () => {
++    const root = await tempRepo()
++    const home = await tempRepo()
++    try {
++      await mkdir(join(root, '.git'), { recursive: true })
++      const lines = Array.from({ length: 200 }, (_, index) => `Rule ${index + 1}: keep the package small and readable.`)
++      await write(join(root, 'pkg/AGENTS.md'), lines.join('\n'))
++      await write(join(root, 'pkg/file.txt'), 'hello')
++      const ctx = new Context()
++      provideWorkingDirectoryFixture(ctx)
++      pinHarnessHome(home)
++      await mountFileToolsAndAgentInstructions(ctx, { maxBytes: 65536 })
++      const agent = await stubAgent(root)
++      await ctx.tools.execute({
++        signal: testToolSignal,
++        callId: ToolCallId('read-large'), name: 'read', arguments: { file_path: join('pkg', 'file.txt') }, agent,
++      })
++      expect(blocksText(((await syncedAgentInstructions(ctx, agent))).content)).toContain('Rule 200:')
++      await appendAdditionalContexts(ctx, agent)
++      const edited = [...lines]
++      edited[99] = 'Rule 100: prefer plain JavaScript over a build step.'
++      await write(join(root, 'pkg/AGENTS.md'), edited.join('\n'))
++      await ctx.tools.execute({
++        signal: testToolSignal,
++        callId: ToolCallId('read-after-edit'), name: 'read', arguments: { file_path: join('pkg', 'file.txt') }, agent,
++      })
++      const update = blocksText(((await syncedAgentInstructions(ctx, agent))).content)
++      expect(update).toContain('Apply this edit to the previously loaded instructions from this file: replace 1 line(s) starting at line 100 with 1 line(s).')
++      expect(update).toContain('Rule 100: keep the package small and readable.')
++      expect(update).toContain('Rule 100: prefer plain JavaScript over a build step.')
++      expect(update).not.toContain('Rule 1: keep')
++      expect(update).not.toContain('Rule 200:')
++    } finally {
++      vi.unstubAllEnvs()
++      await rm(root, { recursive: true, force: true })
++      await rm(home, { recursive: true, force: true })
++    }
++  })
++
++  // Harness Studio loads one base file per folder (AGENTS.md, else CLAUDE.md), so a sibling CLAUDE.md
++  // stays hidden while AGENTS.md exists and takes its place once AGENTS.md is removed.
++  it('ignores a sibling CLAUDE.md, before and after AGENTS.md is removed', async () => {
+     const root = await tempRepo()
+     const home = await tempRepo()
+     try {
+@@ -4179,7 +3795,7 @@ describe('dynamic nested workspace context injection', () => {
+       })
+       const firstText = blocksText(((await syncedAgentInstructions(ctx, agent))).content)
+       expect(firstText).toContain('native package rule')
+-      expect(firstText).toContain('sibling package rule')
++      expect(firstText).not.toContain('sibling package rule')
+       await appendAdditionalContexts(ctx, agent)
+       await rm(join(root, 'pkg/AGENTS.md'))
+       await ctx.tools.execute({
+@@ -4187,12 +3803,9 @@ describe('dynamic nested workspace context injection', () => {
+         callId: ToolCallId('read-after-one-sibling-removed'), name: 'read', arguments: { file_path: join('pkg', 'file.txt') }, agent,
+       })
+ 
+-      // Removing one candidate only removes its own scope; the sibling scope is untouched.
+-      expect(((await syncedAgentInstructions(ctx, agent))).source).toMatchObject({
+-        changes: [{ action: 'remove', scope: sk('pkg', 'AGENTS.md'), path: join('pkg', 'AGENTS.md') }],
+-      })
+-      expect(blocksText(((await syncedAgentInstructions(ctx, agent))).content)).toContain(`Instructions removed: ${join('pkg', 'AGENTS.md')}`)
+-      expect(blocksText(((await syncedAgentInstructions(ctx, agent))).content)).not.toContain('sibling package rule')
++      const after = await syncedAgentInstructions(ctx, agent)
++      expect(blocksText(after.content)).toContain(`Instructions removed: ${join('pkg', 'AGENTS.md')}`)
++      expect(blocksText(after.content)).not.toContain('sibling package rule')
+     } finally {
+       vi.unstubAllEnvs()
+       await rm(root, { recursive: true, force: true })
+@@ -4438,7 +4051,9 @@ describe('dynamic nested workspace context injection', () => {
+     }
+   })
+ 
+-  it('removes a previously rendered sibling once its content becomes a duplicate of an earlier candidate', async () => {
++  // Harness Studio keeps one base file and one local overlay per folder whatever their content, so this
++  // content-based sibling behaviour no longer applies; the rule is covered in instruction-imports.spec.ts.
++  it.skip('removes a previously rendered sibling once its content becomes a duplicate of an earlier candidate', async () => {
+     const root = await tempRepo()
+     const home = await tempRepo()
+     try {
+@@ -4478,7 +4093,9 @@ describe('dynamic nested workspace context injection', () => {
+     }
+   })
+ 
+-  it('removes an unchanged sibling when an earlier candidate changes to match its content', async () => {
++  // Harness Studio keeps one base file and one local overlay per folder whatever their content, so this
++  // content-based sibling behaviour no longer applies; the rule is covered in instruction-imports.spec.ts.
++  it.skip('removes an unchanged sibling when an earlier candidate changes to match its content', async () => {
+     const root = await tempRepo()
+     const home = await tempRepo()
+     try {
+diff --git a/packages/context/agent-instructions/tests/instruction-imports.spec.ts b/packages/context/agent-instructions/tests/instruction-imports.spec.ts
+new file mode 100644
+index 00000000..4269d350
+--- /dev/null
++++ b/packages/context/agent-instructions/tests/instruction-imports.spec.ts
+@@ -0,0 +1,195 @@
++import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
++import { join } from 'node:path'
++import { tmpdir } from 'node:os'
++import { afterEach, beforeEach, describe, expect, it } from 'vitest'
++import { loadBaselineInstructions, withSavedLimit } from '@deepseek-ai/dsh-agent-instructions'
++import { MAX_IMPORT_READS } from '../src/files.ts'
++
++describe('@path imports in instruction files', () => {
++  let base: string
++  let project: string
++  let home: string
++  let outside: string
++
++  beforeEach(async () => {
++    base = await mkdtemp(join(tmpdir(), 'dsh-instruction-imports-'))
++    project = join(base, 'project')
++    home = join(base, 'home')
++    outside = join(base, 'outside')
++    await mkdir(join(project, '.git'), { recursive: true })
++    await mkdir(join(project, 'docs'), { recursive: true })
++    await mkdir(home, { recursive: true })
++    await mkdir(outside, { recursive: true })
++    await writeFile(join(outside, 'secret.md'), 'OUTSIDE-SECRET\n')
++  })
++
++  afterEach(async () => {
++    await rm(base, { recursive: true, force: true })
++  })
++
++  async function load(maxBytes = 131072, options: { cwd?: string; maxSourceBytes?: number } = {}): Promise<string> {
++    const rendered = await loadBaselineInstructions({ cwd: project, dshHome: home, agentsHome: join(base, 'agents'), maxBytes, ...options })
++    return rendered?.text ?? ''
++  }
++
++  it('expands a project file import relative to the importing file', async () => {
++    await writeFile(join(project, 'AGENTS.md'), 'Root rule.\n@docs/style.md\n')
++    await writeFile(join(project, 'docs', 'style.md'), 'Use tabs.\n@./nested.md\n')
++    await writeFile(join(project, 'docs', 'nested.md'), 'Nested rule.\n')
++    const text = await load()
++    expect(text).toContain('Root rule.\n@docs/style.md\n\nImported from docs/style.md:\n\nUse tabs.')
++    expect(text).toContain('Imported from docs/nested.md:\n\nNested rule.')
++  })
++
++  it('keeps project imports inside the project root, including through symlinks', async () => {
++    await symlink(join(outside, 'secret.md'), join(project, 'docs', 'link.md'))
++    await writeFile(join(project, 'AGENTS.md'), `@../outside/secret.md\n@${join(outside, 'secret.md')}\n@docs/link.md\n`)
++    const text = await load()
++    expect(text).not.toContain('OUTSIDE-SECRET')
++    expect(text).toContain('@../outside/secret.md')
++  })
++
++  it('lets the user-global file import any readable file', async () => {
++    await writeFile(join(home, 'AGENTS.md'), `Personal rules:\n@${join(outside, 'secret.md')}\n`)
++    const text = await load()
++    expect(text).toContain('OUTSIDE-SECRET')
++  })
++
++  it('does not read the shared agents root, so nothing it imports loads either', async () => {
++    await mkdir(join(base, 'agents'), { recursive: true })
++    await writeFile(join(base, 'agents', 'AGENTS.md'), `SHARED RULES\n@${join(outside, 'secret.md')}\n`)
++    const text = await load()
++    expect(text).not.toContain('SHARED RULES')
++    expect(text).not.toContain('OUTSIDE-SECRET')
++  })
++
++  it('gives a project file project rules even when its displayed path looks user-global', async () => {
++    // Folders named `~/.agents`, `~/.dsh` or `$DSH_AGENTS_HOME` inside the repository display like the global roots.
++    for (const folder of [join('~', '.agents'), join('~', '.dsh'), '$DSH_AGENTS_HOME', '$DSH_HOME']) {
++      const dir = join(project, folder)
++      await mkdir(dir, { recursive: true })
++      await writeFile(join(dir, 'AGENTS.md'), `Folder rules.\n@${join(outside, 'secret.md')}\n@~/../../${join(outside, 'secret.md')}\n`)
++      const text = await load(131072, { cwd: dir })
++      expect(text).toContain('Folder rules.')
++      expect(text).not.toContain('OUTSIDE-SECRET')
++    }
++  })
++
++  it('reads each imported file once per expansion, however often it is named, and caps reads per load', async () => {
++    // Six files each naming the next 51 times would otherwise read the last one 51^5 times.
++    for (let level = 0; level < 6; level += 1) {
++      await writeFile(join(project, 'docs', `f${level}.md`), `F${level}\n${`@f${level + 1}.md\n`.repeat(51)}`)
++    }
++    await writeFile(join(project, 'docs', 'f6.md'), 'F6\n')
++    await writeFile(join(project, 'AGENTS.md'), '@docs/f0.md\n'.repeat(51))
++    const started = Date.now()
++    const text = await load()
++    expect(Date.now() - started).toBeLessThan(5000)
++    for (let level = 0; level <= 4; level += 1) expect(text.match(new RegExp(`Imported from docs/f${level}\\.md`, 'g'))).toHaveLength(1)
++
++    const many = Array.from({ length: 250 }, (_, index) => `@docs/m${index}.md`)
++    await Promise.all(many.map((_, index) => writeFile(join(project, 'docs', `m${index}.md`), `M${index}\n`)))
++    await writeFile(join(project, 'AGENTS.md'), `${many.join('\n')}\n`)
++    const capped = await load()
++    const imported = capped.match(/Imported from docs\/m\d+\.md/g) ?? []
++    expect(imported.length).toBe(MAX_IMPORT_READS)
++    expect(capped).toContain('@docs/m249.md')
++  })
++
++  it('stops reading imports once the file and its imports reach the source cap', async () => {
++    await writeFile(join(project, 'docs', 'a.md'), `${'a'.repeat(600)}\n`)
++    await writeFile(join(project, 'docs', 'b.md'), `${'b'.repeat(600)}\n`)
++    await writeFile(join(project, 'AGENTS.md'), '@docs/a.md\n@docs/b.md\n')
++    const text = await load(131072, { maxSourceBytes: 1000 })
++    expect(text).toContain('a'.repeat(600))
++    expect(text).not.toContain('b'.repeat(600))
++    expect(text).toContain('@docs/b.md')
++  })
++
++  it('ignores references in code, e-mail addresses and missing files', async () => {
++    await writeFile(join(project, 'docs', 'style.md'), 'STYLE\n')
++    await writeFile(join(project, 'AGENTS.md'), [
++      '```',
++      '@docs/style.md',
++      '```',
++      'Inline `@docs/style.md` stays code.',
++      'Mail me at someone@docs/style.md or a@b.md.',
++      '@docs/missing.md',
++      '',
++    ].join('\n'))
++    const text = await load()
++    expect(text).not.toContain('STYLE')
++    expect(text).toContain('@docs/missing.md')
++  })
++
++  it('stops at import cycles and the depth limit', async () => {
++    await writeFile(join(project, 'AGENTS.md'), '@docs/a.md\n')
++    await writeFile(join(project, 'docs', 'a.md'), 'A\n@b.md\n')
++    await writeFile(join(project, 'docs', 'b.md'), 'B\n@a.md\n')
++    const cycle = await load()
++    expect(cycle.match(/Imported from docs\/a\.md/g)).toHaveLength(1)
++    expect(cycle.match(/Imported from docs\/b\.md/g)).toHaveLength(1)
++
++    for (let level = 1; level <= 7; level += 1) {
++      await writeFile(join(project, 'docs', `d${level}.md`), `D${level}\n@d${level + 1}.md\n`)
++    }
++    await writeFile(join(project, 'AGENTS.md'), '@docs/d1.md\n')
++    const deep = await load()
++    expect(deep).toContain('D5')
++    expect(deep).not.toContain('D6')
++  })
++
++  it('reports a cut in the budget marker once imports exceed the limit', async () => {
++    await writeFile(join(project, 'AGENTS.md'), '@docs/big.md\n')
++    await writeFile(join(project, 'docs', 'big.md'), 'x'.repeat(4000))
++    const text = await load(2048)
++    expect(text).toMatch(/Workspace instruction budget 2048 bytes: truncated AGENTS\.md from \d+ to \d+ bytes/)
++  })
++
++  it('loads AGENTS.md and AGENTS.local.md, never CLAUDE.md or CLAUDE.local.md', async () => {
++    await writeFile(join(project, 'AGENTS.md'), 'AGENTS RULES\n')
++    await writeFile(join(project, 'AGENTS.local.md'), 'LOCAL RULES\n')
++    await writeFile(join(project, 'CLAUDE.md'), 'CLAUDE RULES\n')
++    await writeFile(join(project, 'CLAUDE.local.md'), 'CLAUDE LOCAL RULES\n')
++    const both = await load()
++    expect(both).toContain('AGENTS RULES')
++    expect(both.indexOf('AGENTS RULES')).toBeLessThan(both.indexOf('LOCAL RULES'))
++    expect(both).not.toContain('CLAUDE RULES')
++    expect(both).not.toContain('CLAUDE LOCAL RULES')
++  })
++
++  it('loads nothing from a folder that has only CLAUDE.md', async () => {
++    await writeFile(join(project, 'CLAUDE.md'), 'CLAUDE RULES\n')
++    await writeFile(join(project, 'CLAUDE.local.md'), 'CLAUDE LOCAL RULES\n')
++    expect(await load()).toBe('')
++  })
++
++  it('expands an explicit @CLAUDE.md import from AGENTS.md', async () => {
++    await writeFile(join(project, 'AGENTS.md'), 'AGENTS RULES\n@CLAUDE.md\n')
++    await writeFile(join(project, 'CLAUDE.md'), 'CLAUDE RULES\n')
++    const text = await load()
++    expect(text).toContain('AGENTS RULES\n@CLAUDE.md\n\nImported from CLAUDE.md:\n\nCLAUDE RULES')
++    expect(text.match(/CLAUDE RULES/g)).toHaveLength(1)
++  })
++
++  it('does not repeat AGENTS.md when a folder\'s AGENTS.md only includes it', async () => {
++    await writeFile(join(project, 'AGENTS.md'), 'SHARED RULES\n')
++    await mkdir(join(project, 'web'), { recursive: true })
++    await writeFile(join(project, 'web', 'AGENTS.md'), '@../AGENTS.md\nWeb rules.\n')
++    const rendered = await loadBaselineInstructions({ cwd: join(project, 'web'), dshHome: home, agentsHome: join(base, 'agents'), maxBytes: 131072 })
++    expect(rendered?.text.match(/SHARED RULES/g)).toHaveLength(1)
++    expect(rendered?.text).toContain('Web rules.')
++  })
++
++  it('uses the limit saved on the Instructions page, with 0 meaning no limit', async () => {
++    const configured = { dshHome: home, agentsHome: join(base, 'agents'), projectRootMarkers: ['.git'], instructionFileCandidates: ['AGENTS.md', 'CLAUDE.md'], localInstructionFileCandidates: ['AGENTS.local.md', 'CLAUDE.local.md'], maxBytes: 131072, maxSourceBytes: 1048576 }
++    expect(withSavedLimit(configured).maxBytes).toBe(131072)
++    await mkdir(join(home, 'harness-studio'), { recursive: true })
++    await writeFile(join(home, 'harness-studio', 'instructions.json'), JSON.stringify({ maxBytes: 262144 }))
++    expect(withSavedLimit(configured).maxBytes).toBe(262144)
++    await writeFile(join(home, 'harness-studio', 'instructions.json'), JSON.stringify({ maxBytes: 0 }))
++    expect(withSavedLimit(configured).maxBytes).toBe(Number.MAX_SAFE_INTEGER)
++    await writeFile(join(home, 'harness-studio', 'instructions.json'), 'not json')
++    expect(withSavedLimit(configured).maxBytes).toBe(131072)
++  })
++})

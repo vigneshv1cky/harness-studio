@@ -7,6 +7,8 @@
  *     the parent's permission preset and sends the brief as its first message (which starts its first turn
  *     and makes the row appear). With `initiation: 'proposal'` it first asks the user on Harness's own
  *     question card ("New session" / "Do it here") and creates nothing unless the user picks New session.
+ *     A folder outside the parent's working folder always gets a card naming it first, whatever the
+ *     initiation; the home folder, the filesystem root and the Harness home are refused outright.
  *   - When a started Session ends a turn, its final message (cut to `reportChars`) is sent to the parent:
  *     waking it when it is idle, or into its next step when it is busy, the user drove that turn, or the
  *     wake budget is spent.
@@ -30,7 +32,7 @@ import { realpath, stat, access } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import {
-  BRIEF_SOURCE, DO_IT_HERE, REPORT_SOURCE, START, START_QUESTION_ID, briefText, cardDetail, readCardChoice, slugify, startOutcome, cleanMessageArgs, cleanStartArgs, contentText, deliveryMode,
+  BRIEF_SOURCE, DONT_START, DO_IT_HERE, FOLDER_QUESTION_ID, REPORT_SOURCE, START, START_QUESTION_ID, START_THERE, briefText, folderScope, cardDetail, readCardChoice, slugify, startOutcome, cleanMessageArgs, cleanStartArgs, contentText, deliveryMode,
   describeEnding, reportText, resolveConfig, userMessage,
 } from './logic.js'
 import { createRunner } from './process.js'
@@ -49,6 +51,7 @@ const ARCHIVE_SETTLE_MS = 1500
 
 const text = { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: String(value) }] }
 const exists = p => access(p).then(() => true, () => false)
+const realpathOr = p => realpath(p).catch(() => path.resolve(p))
 
 const GUIDANCE = [
   'Separate sessions: start_session hands a piece of work to a new top-level session in the user\'s sidebar, which the user can open and talk to.',
@@ -169,6 +172,7 @@ export function apply(ctx, rawConfig) {
     await ready
     const parent = exec.agent
     if (!parent) throw new Error('start_session needs a session')
+    // Helper agents start no sessions at all, so none in another folder either.
     if (parent.session.header?.origin === 'subagent') throw new Error('Only a top-level session can start sessions; report back to your parent instead.')
     const args = cleanStartArgs(rawArgs)
     const depth = (store.child(parent.id)?.depth ?? 0) + 1
@@ -176,13 +180,44 @@ export function apply(ctx, rawConfig) {
     const running = store.childrenOf(parent.id).filter(c => ctx.agents.get(c.id)?.status === 'running').length
     if (running >= config.maxLiveChildren) throw new Error(`${running} sessions started from here are still running (the limit is ${config.maxLiveChildren}); wait for their reports.`)
 
-    const requested = args.folder ?? await ctx.workingDirectory.ensure(parent, exec.signal)
+    const working = await ctx.workingDirectory.ensure(parent, exec.signal)
+    const requested = args.folder ?? working
     const folder = await realpath(requested).catch(() => { throw new Error(`${requested} does not exist`) })
     if (!(await stat(folder)).isDirectory()) throw new Error(`${folder} is not a folder`)
+    // The model chooses the folder and the initiation, so neither is trusted on its own: a folder that would
+    // reach everything is refused, and one outside this session's own folder needs the user's yes on a card.
+    const parentFolder = await realpathOr(working)
+    const scope = folderScope({ folder, parentFolder, userHome: await realpathOr(os.homedir()), harnessHome: await realpathOr(home) })
+    if (scope === 'refused') {
+      throw new Error(`Sessions are never started in ${folder} (the home folder, the filesystem root or the Harness home): it reaches everything below it. Choose the project folder itself.`)
+    }
     let plan = args.worktree ? await worktrees.plan({ folder, slug: args.slug, prefix: config.branchPrefix, signal: exec.signal }) : undefined
+    const brief = args.prompt.length > CARD_PROMPT_CHARS ? args.prompt.slice(0, CARD_PROMPT_CHARS) + '…' : args.prompt
+    let approved = false
 
-    if (args.initiation === 'proposal') {
-      const brief = args.prompt.length > CARD_PROMPT_CHARS ? args.prompt.slice(0, CARD_PROMPT_CHARS) + '…' : args.prompt
+    if (scope === 'outside') {
+      // Harness's generic question form draws this one, so the full folder is shown as written.
+      const reply = await askUser(parent, exec.signal, {
+        id: FOLDER_QUESTION_ID,
+        header: 'New session',
+        question: `Start the session "${args.title}" in ${folder}? That folder is outside this session's folder, ${parentFolder}.`,
+        detail: `${plan ? `New worktree on branch ${plan.branch}.\n\n` : ''}${brief}`,
+        options: [
+          { label: START_THERE, description: `Start it in ${folder} with this session's permissions; its report comes back here.` },
+          { label: DONT_START, description: 'Start nothing; the work stays in this session.' },
+        ],
+      })
+      if (typeof reply === 'string') return reply
+      if (!reply.selected.includes(START_THERE)) {
+        const said = typeof reply.custom === 'string' ? reply.custom.trim() : ''
+        return said
+          ? `Nothing was started. The user answered: ${said}`
+          : `Nothing was started: the user did not approve a session in ${folder}. Continue the task in this session.`
+      }
+      approved = true
+      // The card may have been open for a while, so take whatever names are free now.
+      if (plan) plan = await worktrees.plan({ folder, slug: args.slug, prefix: config.branchPrefix, signal: exec.signal })
+    } else if (args.initiation === 'proposal') {
       // The card (client.js) draws this question itself; Harness's generic question form is the fallback.
       const reply = await askUser(parent, exec.signal, {
         id: START_QUESTION_ID,
@@ -196,6 +231,7 @@ export function apply(ctx, rawConfig) {
       })
       if (typeof reply === 'string') return reply
       const choice = readCardChoice(reply)
+      approved = choice.start
       if (!choice.start) {
         return choice.said
           ? `Nothing was started. The user answered: ${choice.said}`
@@ -220,8 +256,7 @@ export function apply(ctx, rawConfig) {
       throw error
     }
     const where = plan ? `${plan.workDir} (worktree of ${plan.repoRoot}, branch ${plan.branch})` : folder
-    const approved = args.initiation === 'proposal' ? ' The user approved it on the card.' : ''
-    return `Started session "${args.title}" (${child.id}) in ${where}.${approved} Its report arrives here as a message when it ends a turn; do not poll it. Use message_session to send it follow-ups.`
+    return `Started session "${args.title}" (${child.id}) in ${where}.${approved ? ' The user approved it on the card.' : ''} Its report arrives here as a message when it ends a turn; do not poll it. Use message_session to send it follow-ups.`
   }
 
   /** One question on Harness's question card; a string result is the tool's answer when the user could not be asked. */
@@ -333,7 +368,7 @@ export function apply(ctx, rawConfig) {
       id: 'remove-worktree',
       header: 'Remove worktree',
       question: `Remove the worktree of "${record.title}"?`,
-      detail: `${record.worktreePath}\nIt has no uncommitted files and no unpushed, unmerged commits. The branch ${record.branch} is kept.`,
+      detail: `${record.worktreePath}\nIt has no uncommitted or untracked files and no unpushed, unmerged commits. Any ignored files are in folders a build or install recreates (such as node_modules or dist) and are deleted with it. The branch ${record.branch} is kept.`,
       options: [{ label: REMOVE }, { label: KEEP }],
     })
     if (typeof reply === 'string') return reply
@@ -365,7 +400,7 @@ export function apply(ctx, rawConfig) {
           title: { type: 'string', description: 'Short name for the session, at most 60 characters.' },
           prompt: { type: 'string', description: 'The brief: the task, the files or area, and what done looks like. The new session has not seen this conversation.' },
           background: { type: 'string', description: 'What the new session needs from this conversation: decisions, constraints, findings.' },
-          folder: { type: 'string', description: 'Absolute folder to work in. Defaults to this session\'s working directory.' },
+          folder: { type: 'string', description: 'Absolute folder to work in. Defaults to this session\'s working directory. A folder outside it starts only after the user approves it on a card; the home folder, the filesystem root and the Harness home are refused.' },
           worktree: { type: 'boolean', description: 'Run in its own new git worktree and branch of the folder\'s repository. Use it when the session will edit files that another session may also edit.' },
           branch_name: { type: 'string', description: 'Short name for the worktree\'s branch; derived from the title when omitted. Only with worktree.' },
           initiation: { type: 'string', enum: ['user_asked', 'proposal'], description: '"user_asked": the user asked in words for separate or parallel work; it starts now. "proposal": your own idea; the user is asked first.' },
@@ -403,7 +438,7 @@ export function apply(ctx, rawConfig) {
     },
     {
       name: 'remove_session_worktree',
-      description: 'Remove the git worktree folder of a session this session started, after the user confirms. Refused when the worktree has uncommitted or untracked files or commits that are neither pushed nor merged; the branch is always kept.',
+      description: 'Remove the git worktree folder of a session this session started, after the user confirms. Refused when the worktree has uncommitted or untracked files, ignored files outside regenerable folders such as node_modules or dist, or commits that are neither pushed nor merged; the branch is always kept.',
       parameters: sessionIdOnly('Id of a session this session started with worktree: true.'),
       execute: removeSessionWorktree,
     },
@@ -517,4 +552,70 @@ export function apply(ctx, rawConfig) {
     }
     return activity
   })
+
+  // ---- your own session in a new worktree (New Session screen) -----------------------------------
+  // The client half offers a New worktree switch on the New Session screen. When you send the first message,
+  // it asks here first: a new worktree and branch are made from the session's folder and the session's
+  // working folder becomes the worktree, before the message goes out, so the agent works there from its first
+  // step. Only a session with no turns yet can be moved, and a folder that is not in a git repository with
+  // commits is refused before anything is created.
+  const sessionAgent = async (sessionId) => {
+    if (typeof sessionId !== 'string' || !sessionId) throw new Error('sessionId is required')
+    const resolved = await ctx.sessionController.resolveAgent(sessionId)
+    if ('error' in resolved) throw resolved.error
+    return resolved.agent
+  }
+  const actions = {
+    /** Whether the session's folder can have a worktree: inside a git repository with at least one commit. */
+    async worktreeOption({ sessionId }) {
+      const agent = await sessionAgent(sessionId)
+      const folder = await ctx.workingDirectory.ensure(agent)
+      try {
+        const planned = await worktrees.plan({ folder, slug: 'probe', prefix: config.branchPrefix })
+        return { available: true, repo: path.basename(planned.repoRoot) }
+      } catch (error) {
+        return { available: false, reason: String(error?.message ?? error) }
+      }
+    },
+    /** Make the worktree and move the fresh session into it. */
+    async startInWorktree({ sessionId, title }) {
+      const agent = await sessionAgent(sessionId)
+      if (agent.status !== 'idle' || (agent.session?.messageProjections?.length ?? 0) > 0) {
+        throw new Error('This session has already started, so it stays in its folder')
+      }
+      const folder = await ctx.workingDirectory.ensure(agent)
+      // The branch is named after the message's first five words, so it never ends mid-word.
+      const words = String(title ?? '').split(/\s+/).filter(Boolean).slice(0, 5).join(' ')
+      const plan = await worktrees.plan({ folder, slug: slugify(words) || 'session', prefix: config.branchPrefix })
+      await worktrees.add(plan)
+      try {
+        await ctx.workingDirectory.set(agent, plan.workDir)
+      } catch (error) {
+        await worktrees.discardFresh(plan).catch(() => {})
+        throw error
+      }
+      return { path: plan.workDir, branch: plan.branch, repoRoot: plan.repoRoot }
+    },
+  }
+  class SessionsAccess {
+    constructor() {
+      this.typertRemote = Object.freeze({ service: this, serviceKey: SESSIONS_SERVICE, namespace: SESSIONS_SERVICE })
+    }
+    /** @param {{ action: string }} request */
+    async call(request) {
+      const action = actions[request?.action]
+      if (!action) throw new Error(`Unknown action ${request?.action}`)
+      return action(request)
+    }
+  }
+  Object.defineProperty(SessionsAccess.prototype, '@deepseek-ai/dsh-typert-protocol/remote-methods', {
+    configurable: true,
+    value: Object.freeze({ version: 1, methods: Object.freeze([Object.freeze({ method: 'call', invocation: Object.freeze({ kind: 'direct' }) })]) }),
+  })
+  if (typeof ctx.provide === 'function') ctx.provide(SESSIONS_SERVICE, new SessionsAccess())
+  return { actions }
 }
+
+/** The Remote service the client half calls (`harnessStudioSessions/call`). */
+export const SESSIONS_SERVICE = 'harnessStudioSessions'
+

@@ -1,0 +1,29 @@
+{
+  "name": "@harness-studio/editor",
+  "version": "0.1.0",
+  "description": "A code editor in Harness Studio's right panel: edit any file in your workspace with CodeMirror, save, and follow the agent's changes without losing your cursor, undo history or unsaved edits.",
+  "license": "MIT",
+  "author": "Vignesh Murugan",
+  "homepage": "https://github.com/vigneshv1cky/harness-studio/tree/main/plugins/editor#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vigneshv1cky/harness-studio.git",
+    "directory": "plugins/editor"
+  },
+  "bugs": "https://github.com/vigneshv1cky/harness-studio/issues",
+  "type": "module",
+  "keywords": ["harness-plugin", "harness-studio", "editor", "codemirror"],
+  "engines": { "dsh": ">=0.2.1-alpha.3 <0.3.0" },
+  "exports": { ".": "./index.js", "./client": "./client.js" },
+  "files": ["index.js", "client.js", "cordis.patch.yml", "vendor/LICENSE", "vendor/PACKAGES.txt", "README.md"],
+  "scripts": { "build": "node build.mjs", "test": "node --test test/*.test.mjs" },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "immediately": false,
+      "inject": ["@deepseek-ai/dsh-client-ui-sidebar-right", "@deepseek-ai/dsh-client-ui-sidebar-documentpreview"]
+    }
+  }
+}

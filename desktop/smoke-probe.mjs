@@ -1,8 +1,8 @@
-// Smoke-test probe for the installed app (desktop/smoke-linux.sh, desktop/smoke-windows.sh): reads the running
+// Smoke-test probe for the installed app (desktop/smoke-mac.sh, desktop/smoke-linux.sh): reads the running
 // app through its debugging port, records window titles, visible text and screenshots, chooses a model provider
-// on the welcome screen, opens the Connectors page and the Session and Browser panes, and fails unless the
-// workspace shows Harness Studio with its three plugins, a default workspace, those pages, and no DeepSeek
-// account, feedback or sign-in.
+// on the welcome screen, checks the Chat font row in Settings → General, opens the Connectors page and the Session
+// and Browser panes, and fails unless the workspace shows Harness Studio with its four client plugins, a default
+// workspace, those pages, and no DeepSeek account, feedback or sign-in.
 import { writeFileSync } from 'node:fs'
 const port = process.argv[2] ?? '9222'
 const out = process.argv[3] ?? '/a'
@@ -56,6 +56,17 @@ if (main) {
   const run = async expression => (await call(main.webSocketDebuggerUrl, 'Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })).result.value
   const click = label => run(`(() => { const b = [...document.querySelectorAll('button,[role=button],a')].find(e => (e.getAttribute('aria-label') ?? e.textContent.trim()) === ${JSON.stringify(label)}); if (!b) return false; b.click(); return true })()`)
   const text = () => run('document.body.innerText')
+  // Settings → General: Compact's "Chat font" row directly follows "Font size" and starts at System.
+  await run(`[...document.querySelectorAll('[role=dialog] button,[role=dialog] [role=tab],[role=dialog] a')].find(e => e.textContent.trim() === 'General')?.click()`)
+  await wait(1500)
+  report.generalSettings = await run(`document.querySelector('[role=dialog]')?.innerText ?? ''`)
+  const general = report.generalSettings.split('\n').map(line => line.trim()).filter(Boolean)
+  const fontSize = general.indexOf('Font size')
+  const chatFont = general.indexOf('Chat font')
+  // Font size's row is its label, description, value and unit; the next label must be Chat font.
+  report.chatFont = { afterFontSize: fontSize >= 0 && chatFont > fontSize && chatFont - fontSize <= 4,
+    system: await run(`document.querySelector('[role=dialog] select[aria-label="Chat font"]')?.value === 'system'`) }
+  writeFileSync(`${out}/settings-general.png`, Buffer.from((await call(main.webSocketDebuggerUrl, 'Page.captureScreenshot', { format: 'png' })).data, 'base64'))
   await run(`[...document.querySelectorAll('[role=dialog] button')].find(b => b.getAttribute('aria-label') === 'Close' || b.textContent.trim() === 'Close')?.click()`)
   await wait(1000)
   report.pages = { defaultWorkspace: (await text()).includes('Default workspace') }
@@ -78,11 +89,15 @@ const w = report.workspace
 const problems = [
   w === undefined && 'no workspace window',
   w && !w.title.includes('Harness Studio') && `title is ${JSON.stringify(w.title)}`,
-  w && w.plugins.length !== 3 && `plugins loaded: ${w.plugins.join(', ') || 'none'}`,
+  // Remember is host-only, so the client boot lists the other four; the smoke scripts check that the profile enables all five.
+  w && ['devpreview', 'connectors', 'compact', 'sessions'].some(name => !w.plugins.includes(`@harness-studio/${name}`))
+    && `client plugins loaded: ${w.plugins.join(', ') || 'none'}`,
   w && w.accountUi && 'the DeepSeek account interface is loaded',
   w && w.feedbackUi && 'the feedback interface is loaded',
   w && w.signInText && 'a DeepSeek sign-in prompt is visible',
   ...Object.entries(report.pages ?? {}).filter(([, shown]) => !shown).map(([page]) => `${page} did not appear`),
+  report.chatFont && !report.chatFont.afterFontSize && 'Settings → General has no Chat font row right after Font size',
+  report.chatFont && !report.chatFont.system && 'the Chat font row is not set to System',
 ].filter(Boolean)
 if (problems.length > 0) { console.error(`smoke: ${problems.join('; ')}`); process.exit(1) }
 console.log('smoke: passed')

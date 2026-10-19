@@ -1,0 +1,529 @@
+diff --git a/apps/desktop/README.md b/apps/desktop/README.md
+index eeb2ff84..c199ac35 100644
+--- a/apps/desktop/README.md
++++ b/apps/desktop/README.md
+@@ -54,6 +54,10 @@ Press F12 (Fn+F12 on media-key keyboards), Command+Option+I on macOS, or Ctrl+Sh
+ 
+ <a id="terminal-command"></a>
+ 
++## Browser pane DevTools access
++
++The product document can send an allowed set of Chrome DevTools Protocol commands to a Browser pane page it holds a lease for (`dshDesktop.browserDevtools(guestId, method, params)`, Harness Studio patch): real input (`Input.dispatchMouseEvent`, `Input.dispatchKeyEvent`, `Input.insertText`, `Input.dispatchScrollEvent`), `Page.captureScreenshot`, `Page.getLayoutMetrics`, `Page.reload`, `Runtime.evaluate`, DOM reads, `Accessibility.getFullAXTree` and `Network.getResponseBody`. The pseudo-method `Harness.events` with `{ since, kinds? }` returns the page's buffered console messages, uncaught exceptions with stack frames, log entries and network requests, responses and failures, in sequence order, as `{ events, latest, dropped: { console, network } }`. Each kind has its own ring (console, exception and log keep the latest 300 each; request, response and failed the latest 500 each), so heavy network traffic cannot push errors out; `dropped` counts what each group's rings have evicted, and `kinds` limits the reply to the kinds named. The main process attaches the debugger on the first command, enables the Runtime, Log, Network and Page domains, refuses any other method and any page outside the sender's own leases, and forgets the buffer when the page closes. Only pages on this computer or the local network (loopback, `0.0.0.0`, `.localhost`, `.test` and `.local` names, private addresses) are read: commands for other pages are refused, the debugger detaches when a page starts loading, is redirected to, or commits another address, and a command that lands mid-navigation re-checks the address after attaching. Navigation stays with the pane and its main-process checks. Source: [`src/browser-devtools.ts`](src/browser-devtools.ts).
++
+ ## Terminal command
+ 
+ The application menu's **Install Command-Line Tool…** entry, immediately below **Check for Updates…**, shows the current command and offers Install, Repair, and Remove. The `harness-studio` command uses Desktop's installed runtime and the ordinary [dsh CLI](../cli/README.md), including when the Desktop application is closed. Open a new terminal after installation and run `harness-studio --version`.
+diff --git a/apps/desktop/src/browser-devtools.ts b/apps/desktop/src/browser-devtools.ts
+new file mode 100644
+index 00000000..57fea549
+--- /dev/null
++++ b/apps/desktop/src/browser-devtools.ts
+@@ -0,0 +1,249 @@
++/**
++ * DevTools access to the Browser pane's own pages (Harness Studio patch). The product document may send an
++ * allowed set of Chrome DevTools Protocol commands to a guest page it owns through a browser lease: real
++ * mouse and keyboard input, screenshots, DOM and accessibility reads, script evaluation, and response bodies.
++ * Console, exception and network events are kept per page, so the agent can read them after the fact. The
++ * debugger attaches on the first command and detaches when the page closes. Navigation still goes through the
++ * pane, whose main-process checks keep applying.
++ *
++ * Only pages on this computer or the local network are read: a command for any other page is refused, and the
++ * debugger detaches as soon as a page starts loading, is redirected to, or commits such an address; a command
++ * that lands while a page is mid-way to one re-checks the address after attaching. Sites can detect an
++ * attached debugger, and a signed-in site's responses can hold account data that would reach the model.
++ */
++import type { WebContents } from 'electron'
++
++/** Commands the product document may send. Everything else is refused. */
++export const ALLOWED_DEVTOOLS_METHODS: ReadonlySet<string> = new Set([
++  'Input.dispatchMouseEvent', 'Input.dispatchKeyEvent', 'Input.insertText', 'Input.dispatchScrollEvent',
++  'Page.captureScreenshot', 'Page.getLayoutMetrics', 'Page.reload',
++  'Runtime.evaluate',
++  'DOM.getDocument', 'DOM.querySelector', 'DOM.querySelectorAll', 'DOM.getBoxModel', 'DOM.describeNode', 'DOM.scrollIntoViewIfNeeded', 'DOM.getOuterHTML',
++  'Accessibility.getFullAXTree',
++  'Network.getResponseBody',
++])
++
++/**
++ * Whether a page address is on this computer or the local network: http(s) to localhost, `.localhost`,
++ * `.test` or `.local` names, loopback, the unspecified address (`0.0.0.0`, which dev servers print and
++ * browsers reach as this computer), IPv6 unique-local, or a private IPv4 range.
++ * @param url - the page address.
++ * @returns whether DevTools may read the page.
++ */
++export function isLocalPageUrl(url: string): boolean {
++  let parsed: URL
++  try { parsed = new URL(url) } catch { return false }
++  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
++  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '')
++  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.test') || host.endsWith('.local')) return true
++  if (host === '::1' || host === '::' || host === '0.0.0.0' || /^f[cd][0-9a-f]{2}:/.test(host)) return true
++  const ip = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host)
++  if (ip === null) return false
++  const a = Number(ip[1])
++  const b = Number(ip[2])
++  return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
++}
++
++/**
++ * The pseudo-command that returns buffered events with a sequence number above `since`, optionally only the
++ * `kinds` named, with how many older events each group has dropped.
++ */
++export const EVENTS_METHOD = 'Harness.events'
++const MAX_TEXT = 2000
++
++/** The event kinds, in two groups: what the page reports, and its network activity. */
++export const DEVTOOLS_EVENT_KINDS = ['console', 'exception', 'log', 'request', 'response', 'failed'] as const
++export type DevtoolsEventKind = typeof DEVTOOLS_EVENT_KINDS[number]
++
++/**
++ * How many events of each kind a page keeps. Each kind has its own ring, so a busy page's network traffic
++ * cannot push its console errors and exceptions out.
++ */
++export const MAX_EVENTS_PER_KIND: Readonly<Record<DevtoolsEventKind, number>> = {
++  console: 300, exception: 300, log: 300, request: 500, response: 500, failed: 500,
++}
++
++const GROUP: Readonly<Record<DevtoolsEventKind, 'console' | 'network'>> = {
++  console: 'console', exception: 'console', log: 'console', request: 'network', response: 'network', failed: 'network',
++}
++
++/** One buffered event, reduced to the fields a reader needs. */
++export interface DevtoolsEvent {
++  readonly seq: number
++  readonly time: number
++  readonly kind: DevtoolsEventKind
++  readonly data: Record<string, unknown>
++}
++
++/** The {@link EVENTS_METHOD} reply. */
++export interface DevtoolsEventsReply {
++  readonly events: DevtoolsEvent[]
++  /** The highest sequence number so far; pass it as `since` next time. */
++  readonly latest: number
++  /** Events evicted from full rings since the debugger attached, per group. */
++  readonly dropped: { readonly console: number, readonly network: number }
++}
++
++interface Attached {
++  readonly events: Record<DevtoolsEventKind, DevtoolsEvent[]>
++  readonly dropped: { console: number, network: number }
++  seq: number
++  /** Request ids to their URL and method, so responses and failures can name them. */
++  readonly requests: Map<string, { url: string, method: string }>
++}
++
++function emptyBuffers(): Record<DevtoolsEventKind, DevtoolsEvent[]> {
++  return { console: [], exception: [], log: [], request: [], response: [], failed: [] }
++}
++
++const clip = (value: unknown): string => {
++  const text = typeof value === 'string' ? value : JSON.stringify(value) ?? String(value)
++  return text.length > MAX_TEXT ? `${text.slice(0, MAX_TEXT)}…` : text
++}
++
++function remoteObjectText(arg: { type?: string, value?: unknown, description?: string, unserializableValue?: string }): string {
++  if (arg.value !== undefined) return clip(arg.value)
++  return clip(arg.unserializableValue ?? arg.description ?? arg.type ?? '')
++}
++
++/**
++ * Reduce one protocol event to a buffered record, or undefined for events nobody reads.
++ * `any`: protocol event parameters are untyped JSON whose shape depends on the method.
++ */
++function record(state: Attached, method: string, params: Record<string, any>): Omit<DevtoolsEvent, 'seq' | 'time'> | undefined {
++  switch (method) {
++    case 'Runtime.consoleAPICalled':
++      return { kind: 'console', data: { level: params.type, text: (params.args ?? []).map(remoteObjectText).join(' '), url: params.stackTrace?.callFrames?.[0]?.url, line: params.stackTrace?.callFrames?.[0]?.lineNumber } }
++    case 'Runtime.exceptionThrown': {
++      const details = params.exceptionDetails ?? {}
++      const frames = (details.stackTrace?.callFrames ?? []).slice(0, 8).map((f: any) => `${f.functionName || '(anonymous)'} ${f.url}:${f.lineNumber + 1}:${f.columnNumber + 1}`)
++      return { kind: 'exception', data: { text: clip(details.exception?.description ?? details.text), url: details.url, line: details.lineNumber, stack: frames } }
++    }
++    case 'Log.entryAdded':
++      return { kind: 'log', data: { level: params.entry?.level, source: params.entry?.source, text: clip(params.entry?.text), url: params.entry?.url } }
++    case 'Network.requestWillBeSent':
++      state.requests.set(params.requestId, { url: params.request?.url, method: params.request?.method })
++      if (state.requests.size > MAX_EVENTS_PER_KIND.request * 2) state.requests.delete(state.requests.keys().next().value as string)
++      return { kind: 'request', data: { id: params.requestId, method: params.request?.method, url: clip(params.request?.url), type: params.type } }
++    case 'Network.responseReceived': {
++      const known = state.requests.get(params.requestId)
++      return { kind: 'response', data: { id: params.requestId, method: known?.method, url: clip(params.response?.url ?? known?.url), status: params.response?.status, mimeType: params.response?.mimeType, type: params.type } }
++    }
++    case 'Network.loadingFailed': {
++      const known = state.requests.get(params.requestId)
++      return { kind: 'failed', data: { id: params.requestId, method: known?.method, url: clip(known?.url), error: params.errorText, canceled: params.canceled, blockedReason: params.blockedReason } }
++    }
++    default:
++      return undefined
++  }
++}
++
++/** Per-page debugger attachment, command forwarding and event buffers. */
++export class BrowserDevtools {
++  private readonly attached = new WeakMap<WebContents, Attached>()
++  /** Pages whose debugger listeners are installed; they read the current state, so a re-attach reuses them. */
++  private readonly listening = new WeakSet<WebContents>()
++
++  /**
++   * @param guestFor - the guest page with this id that `owner` holds a lease for, or undefined.
++   */
++  constructor(private readonly guestFor: (owner: WebContents, guestId: number) => WebContents | undefined) {}
++
++  private async attach(guest: WebContents): Promise<Attached> {
++    const existing = this.attached.get(guest)
++    if (existing !== undefined && guest.debugger.isAttached()) return existing
++    const state: Attached = { events: emptyBuffers(), dropped: { console: 0, network: 0 }, seq: existing?.seq ?? 0, requests: new Map() }
++    if (!guest.debugger.isAttached()) guest.debugger.attach('1.3')
++    this.attached.set(guest, state)
++    if (!this.listening.has(guest)) {
++      this.listening.add(guest)
++      guest.debugger.on('message', (_event, method, params) => {
++        const current = this.attached.get(guest)
++        if (current === undefined) return
++        // Protocol event parameters are untyped JSON; record() reads only the fields it names.
++        const reduced = record(current, method, params as Record<string, any>)
++        if (reduced === undefined) return
++        const ring = current.events[reduced.kind]
++        ring.push({ ...reduced, seq: ++current.seq, time: Date.now() })
++        const over = ring.length - MAX_EVENTS_PER_KIND[reduced.kind]
++        if (over > 0) {
++          ring.splice(0, over)
++          current.dropped[GROUP[reduced.kind]] += over
++        }
++      })
++      guest.debugger.on('detach', () => { this.attached.delete(guest) })
++      guest.once('destroyed', () => { this.attached.delete(guest) })
++      // Leaving local addresses ends the attachment before the new page loads; a later command re-checks the address.
++      const leave = (details: { url?: string, isMainFrame?: boolean, isSameDocument?: boolean } | undefined, url: string, isSameDocument: boolean, isMainFrame: boolean): void => {
++        const target = details?.url ?? url
++        if ((details?.isMainFrame ?? isMainFrame) && !(details?.isSameDocument ?? isSameDocument) && !isLocalPageUrl(target)) this.detach(guest)
++      }
++      guest.on('did-start-navigation', leave)
++      guest.on('did-redirect-navigation', leave)
++      // A command that landed after a navigation started (and so re-attached while the old local address was
++      // still current) must not stay attached once the remote page commits.
++      const committed = (url: string, isMainFrame: boolean): void => {
++        if (isMainFrame && !isLocalPageUrl(url)) this.detach(guest)
++      }
++      guest.on('did-navigate', (_event: unknown, url: string) => { committed(url, true) })
++      guest.on('did-frame-navigate', (_event: unknown, url: string, _code: number, _status: string, isMainFrame: boolean) => { committed(url, isMainFrame) })
++    }
++    await Promise.all(['Runtime.enable', 'Log.enable', 'Network.enable', 'Page.enable'].map(m => guest.debugger.sendCommand(m)))
++    return state
++  }
++
++  /** End a page's debugger attachment and forget its buffer. */
++  private detach(guest: WebContents): void {
++    this.attached.delete(guest)
++    if (guest.isDestroyed() || !guest.debugger.isAttached()) return
++    try {
++      guest.debugger.detach()
++    } catch (error) {
++      // The page closed or detached between the check and the call; either way nothing stays attached.
++      console.warn('desktop browser devtools: detach failed', error)
++    }
++  }
++
++  /**
++   * Forward one command for a guest page the sender owns.
++   * @param owner - the product document making the request.
++   * @param request - `{ guest, method, params }`, where `guest` is the page's web contents id.
++   * @returns the command's result, or a {@link DevtoolsEventsReply} for {@link EVENTS_METHOD}.
++   */
++  async send(owner: WebContents, request: unknown): Promise<unknown> {
++    if (typeof request !== 'object' || request === null) throw new Error('desktop browser devtools: a request object is required')
++    const { guest: guestId, method, params } = request as { guest?: unknown, method?: unknown, params?: unknown }
++    if (typeof guestId !== 'number' || typeof method !== 'string') throw new Error('desktop browser devtools: guest and method are required')
++    if (method !== EVENTS_METHOD && !ALLOWED_DEVTOOLS_METHODS.has(method)) throw new Error(`desktop browser devtools: ${method} is not allowed`)
++    if (params !== undefined && (typeof params !== 'object' || params === null)) throw new Error('desktop browser devtools: params must be an object')
++    const guest = this.guestFor(owner, guestId)
++    if (guest === undefined || guest.isDestroyed()) throw new Error('desktop browser devtools: that page is not one of this window\'s Browser pane pages')
++    if (!isLocalPageUrl(guest.getURL())) throw new Error('desktop browser devtools: only pages on this computer or the local network can be read')
++    const kinds = eventKinds(method === EVENTS_METHOD ? (params as { kinds?: unknown } | undefined)?.kinds : undefined)
++    const state = await this.attach(guest)
++    // The page may have moved on while the debugger attached: check again, and let nothing stay attached to a remote page.
++    if (guest.isDestroyed() || !isLocalPageUrl(guest.getURL())) {
++      this.detach(guest)
++      throw new Error('desktop browser devtools: only pages on this computer or the local network can be read')
++    }
++    if (method === EVENTS_METHOD) {
++      const since = typeof (params as { since?: unknown } | undefined)?.since === 'number' ? (params as { since: number }).since : 0
++      const events = kinds.flatMap(kind => state.events[kind].filter(event => event.seq > since)).sort((a, b) => a.seq - b.seq)
++      return { events, latest: state.seq, dropped: { ...state.dropped } } satisfies DevtoolsEventsReply
++    }
++    return guest.debugger.sendCommand(method, params as Record<string, unknown> | undefined)
++  }
++}
++
++/**
++ * The kinds an {@link EVENTS_METHOD} request asks for: all of them when `kinds` is absent.
++ * @param kinds - the request's `kinds` parameter.
++ * @returns the kinds to return, in {@link DEVTOOLS_EVENT_KINDS} order.
++ */
++function eventKinds(kinds: unknown): readonly DevtoolsEventKind[] {
++  if (kinds === undefined) return DEVTOOLS_EVENT_KINDS
++  if (!Array.isArray(kinds) || kinds.some(kind => !(DEVTOOLS_EVENT_KINDS as readonly unknown[]).includes(kind))) {
++    throw new Error(`desktop browser devtools: kinds must be an array of ${DEVTOOLS_EVENT_KINDS.join(', ')}`)
++  }
++  return DEVTOOLS_EVENT_KINDS.filter(kind => kinds.includes(kind))
++}
+diff --git a/apps/desktop/src/browser-guests.ts b/apps/desktop/src/browser-guests.ts
+index 127843f2..1e2d9f93 100644
+--- a/apps/desktop/src/browser-guests.ts
++++ b/apps/desktop/src/browser-guests.ts
+@@ -50,6 +50,20 @@ export class DesktopBrowserGuests {
+    * @param workspace - workspace identity received over IPC.
+    * @returns opaque lease and the partition approved for it.
+    */
++  /**
++   * The attached guest page with this web contents id that `owner` holds a lease for (Harness Studio patch:
++   * DevTools access is limited to the requesting window's own Browser pane pages).
++   * @param owner - the product document asking.
++   * @param guestId - the page's web contents id.
++   * @returns the guest, or undefined when it is not one of the owner's pages.
++   */
++  guestFor(owner: WebContents, guestId: number): WebContents | undefined {
++    for (const lease of this.leases.values()) {
++      if (lease.owner === owner && lease.guest !== undefined && !lease.guest.isDestroyed() && lease.guest.id === guestId) return lease.guest
++    }
++    return undefined
++  }
++
+   acquire(owner: WebContents, workspace: unknown): DesktopBrowserReservation {
+     if (typeof workspace !== 'string' || workspace.length === 0 || workspace.length > 4096) {
+       throw new Error('desktop browser: a workspace storage identity is required')
+diff --git a/apps/desktop/src/ipc.ts b/apps/desktop/src/ipc.ts
+index 9f5b76ed..6d4e7a2a 100644
+--- a/apps/desktop/src/ipc.ts
++++ b/apps/desktop/src/ipc.ts
+@@ -20,6 +20,7 @@ export const DESKTOP_IPC = {
+   browserAcquire: 'dsh-desktop:browser-acquire',
+   browserRelease: 'dsh-desktop:browser-release',
+   browserOpenRequested: 'dsh-desktop:browser-open-requested',
++  browserDevtools: 'dsh-desktop:browser-devtools',
+   directoryPick: 'dsh-desktop:directory-pick',
+   deviceInfo: 'dsh-desktop:device-info',
+   settingsSectionTake: 'dsh-desktop:settings-section-take',
+@@ -74,6 +75,15 @@ export interface DesktopUpdatePresentation {
+ export interface DshDesktopProductApi {
+   readonly protocolVersion: 1
+   readonly browser: DesktopBrowserBridge
++  /**
++   * Send one allowed DevTools command to a Browser pane page this window owns (Harness Studio patch), or
++   * `Harness.events` with `{ since }` for its buffered console, exception and network events.
++   * @param guest - the page's web contents id (`<webview>.getWebContentsId()`).
++   * @param method - a DevTools Protocol method from the allowed list.
++   * @param params - the method's parameters.
++   * @returns the command's result.
++   */
++  browserDevtools(guest: number, method: string, params?: Record<string, unknown>): Promise<unknown>
+   readonly keyboard: DesktopKeyboardApi
+   readonly shortcuts: DesktopShortcutsApi
+   /**
+diff --git a/apps/desktop/src/main.ts b/apps/desktop/src/main.ts
+index 4e004adb..95f9742a 100644
+--- a/apps/desktop/src/main.ts
++++ b/apps/desktop/src/main.ts
+@@ -58,6 +58,7 @@ import { readBrowserSignInCompatibility, writeBrowserSignInCompatibility } from
+ import { DesktopUpdateDialog, type UpdateDialogOptions } from './update-dialog.ts'
+ import { readDesktopRuntime } from './runtime-tree.ts'
+ import { DesktopBrowserGuests } from './browser-guests.ts'
++import { BrowserDevtools } from './browser-devtools.ts'
+ import { installDesktopShortcuts } from './keyboard.ts'
+ import { DesktopUpdateOverlays } from './update-overlay.ts'
+ import { DesktopQuitConfirmation } from './quit-confirmation.ts'
+@@ -406,6 +407,7 @@ async function main(): Promise<void> {
+   let hostUrl: string | undefined
+   let hostCookie: string | undefined
+   const browserGuests = new DesktopBrowserGuests(() => hostUrl, browserSignIn)
++  const browserDevtools = new BrowserDevtools((owner, guestId) => browserGuests.guestFor(owner, guestId))
+   let injections: readonly unknown[] = []
+   let welcomeBackend: DesktopWelcomeBackend | undefined
+   let reportedLaunch = false
+@@ -714,6 +716,10 @@ async function main(): Promise<void> {
+     assertProductSender(event)
+     return browserGuests.release(event.sender, lease)
+   })
++  ipcMain.handle(DESKTOP_IPC.browserDevtools, (event, request: unknown) => {
++    assertProductSender(event)
++    return browserDevtools.send(event.sender, request)
++  })
+ 
+   session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ['ws://127.0.0.1/*', 'wss://127.0.0.1/*'] }, (details, callback) => {
+     if (hostUrl === undefined || hostCookie === undefined || details.webContentsId !== mainWindow?.webContents.id) {
+diff --git a/apps/desktop/src/preload-app.ts b/apps/desktop/src/preload-app.ts
+index 76736693..85e0b377 100644
+--- a/apps/desktop/src/preload-app.ts
++++ b/apps/desktop/src/preload-app.ts
+@@ -14,6 +14,7 @@ function createProductApi(): DshDesktopProductApi {
+   return {
+     protocolVersion: 1,
+     browser: createDesktopBrowserBridge(),
++    browserDevtools: (guest, method, params) => ipcRenderer.invoke(DESKTOP_IPC.browserDevtools, { guest, method, params }) as Promise<unknown>,
+     deviceInfo: () => ipcRenderer.invoke(DESKTOP_IPC.deviceInfo) as Promise<string>,
+     onOpenSettings: (listener) => {
+       const handle = (_event: Electron.IpcRendererEvent, section: string): void => { listener(section) }
+diff --git a/apps/desktop/tests/browser-devtools.spec.ts b/apps/desktop/tests/browser-devtools.spec.ts
+new file mode 100644
+index 00000000..e1fa9e70
+--- /dev/null
++++ b/apps/desktop/tests/browser-devtools.spec.ts
+@@ -0,0 +1,157 @@
++/** DevTools access to Browser pane pages: ownership, the allowed command list, local pages only, and buffered events. */
++
++import { EventEmitter } from 'node:events'
++import { describe, expect, it } from 'vitest'
++import type { WebContents } from 'electron'
++import { ALLOWED_DEVTOOLS_METHODS, BrowserDevtools, EVENTS_METHOD, MAX_EVENTS_PER_KIND, isLocalPageUrl, type DevtoolsEventsReply } from '../src/browser-devtools.ts'
++
++function fakeGuest(id: number, url = 'http://localhost:3000/', onCommand?: (method: string) => void) {
++  const debuggerEvents = new EventEmitter()
++  const sent: { method: string, params?: unknown }[] = []
++  let attached = false
++  let current = url
++  const guest = Object.assign(new EventEmitter(), {
++    id,
++    isDestroyed: () => false,
++    getURL: () => current,
++    debugger: Object.assign(debuggerEvents, {
++      isAttached: () => attached,
++      attach: () => { attached = true },
++      detach: () => { attached = false },
++      sendCommand: async (method: string, params?: unknown) => { sent.push({ method, params }); onCommand?.(method); return { ok: method } },
++    }),
++  })
++  return {
++    guest: guest as unknown as WebContents,
++    sent,
++    isAttached: () => attached,
++    emit: (method: string, params: unknown) => debuggerEvents.emit('message', {}, method, params),
++    /** Start a main-frame navigation the way Electron reports it. */
++    navigate: (next: string, event = 'did-start-navigation') => {
++      guest.emit(event, { url: next, isMainFrame: true, isSameDocument: false }, next, false, true)
++      current = next
++    },
++    /** Start a main-frame navigation without committing it: the old address stays current. */
++    start: (next: string) => { guest.emit('did-start-navigation', { url: next, isMainFrame: true, isSameDocument: false }, next, false, true) },
++    /** Commit a main-frame navigation, as `did-navigate` and `did-frame-navigate` report it. */
++    commit: (next: string, event: 'did-navigate' | 'did-frame-navigate' = 'did-navigate') => {
++      current = next
++      if (event === 'did-navigate') guest.emit(event, {}, next, 200, 'OK')
++      else guest.emit(event, {}, next, 200, 'OK', true, 1, 1)
++    },
++    setURL: (next: string) => { current = next },
++  }
++}
++
++describe('BrowserDevtools', () => {
++  const owner = {} as WebContents
++  const other = {} as WebContents
++
++  it('forwards allowed commands only for the owner\'s own pages, attaching on first use', async () => {
++    const page = fakeGuest(7)
++    const devtools = new BrowserDevtools((who, id) => (who === owner && id === 7 ? page.guest : undefined))
++    await expect(devtools.send(owner, { guest: 7, method: 'Page.captureScreenshot', params: { format: 'png' } })).resolves.toEqual({ ok: 'Page.captureScreenshot' })
++    expect(page.sent.map(s => s.method)).toEqual(['Runtime.enable', 'Log.enable', 'Network.enable', 'Page.enable', 'Page.captureScreenshot'])
++    await expect(devtools.send(other, { guest: 7, method: 'Page.captureScreenshot' })).rejects.toThrow('not one of this window')
++    await expect(devtools.send(owner, { guest: 7, method: 'Page.navigate', params: { url: 'https://example.com' } })).rejects.toThrow('Page.navigate is not allowed')
++    await expect(devtools.send(owner, { guest: 7, method: 'Browser.close' })).rejects.toThrow('not allowed')
++    await expect(devtools.send(owner, { guest: '7', method: 'Page.reload' })).rejects.toThrow('guest and method are required')
++    expect(ALLOWED_DEVTOOLS_METHODS.has('Network.getResponseBody')).toBe(true)
++  })
++
++  it('reads only pages on this computer or the local network, and detaches when a page leaves them', async () => {
++    const page = fakeGuest(5, 'https://mail.example.com/')
++    const devtools = new BrowserDevtools(() => page.guest)
++    await expect(devtools.send(owner, { guest: 5, method: EVENTS_METHOD })).rejects.toThrow('only pages on this computer or the local network')
++    expect(page.isAttached()).toBe(false)
++    page.navigate('http://localhost:5173/')
++    await devtools.send(owner, { guest: 5, method: EVENTS_METHOD })
++    expect(page.isAttached()).toBe(true)
++    page.navigate('https://accounts.example.com/login')
++    expect(page.isAttached()).toBe(false)
++    await expect(devtools.send(owner, { guest: 5, method: 'Network.getResponseBody', params: { requestId: '1' } })).rejects.toThrow('only pages')
++    page.navigate('http://127.0.0.1:4000/')
++    await devtools.send(owner, { guest: 5, method: EVENTS_METHOD })
++    page.navigate('https://tracker.example.net/', 'did-redirect-navigation')
++    expect(page.isAttached()).toBe(false)
++  })
++
++  it('detaches when a remote page commits after a command re-attached mid-navigation', async () => {
++    for (const event of ['did-navigate', 'did-frame-navigate'] as const) {
++      const page = fakeGuest(6)
++      const devtools = new BrowserDevtools(() => page.guest)
++      await devtools.send(owner, { guest: 6, method: EVENTS_METHOD })
++      page.start('https://mail.example.com/')
++      expect(page.isAttached()).toBe(false)
++      // The old local address is still current, so a command now re-attaches...
++      await devtools.send(owner, { guest: 6, method: 'Page.getLayoutMetrics' })
++      expect(page.isAttached()).toBe(true)
++      // ...and the commit of the remote page ends it.
++      page.commit('https://mail.example.com/inbox', event)
++      expect(page.isAttached()).toBe(false)
++    }
++  })
++
++  it('re-checks the address after attaching, and refuses a command if the page left meanwhile', async () => {
++    const page = fakeGuest(8, 'http://localhost:3000/', (method) => { if (method === 'Page.enable') page.setURL('https://mail.example.com/') })
++    const devtools = new BrowserDevtools(() => page.guest)
++    await expect(devtools.send(owner, { guest: 8, method: 'Page.captureScreenshot' })).rejects.toThrow('only pages on this computer')
++    expect(page.isAttached()).toBe(false)
++    expect(page.sent.map(s => s.method)).not.toContain('Page.captureScreenshot')
++  })
++
++  it('treats loopback, .localhost, .test, .local and private addresses as local, and nothing else', () => {
++    for (const url of ['http://localhost:3000/', 'http://127.0.0.1/', 'http://0.0.0.0:5173/', 'http://[::1]:8080/', 'https://app.localhost/', 'http://shop.test/', 'http://mac.local/', 'http://10.1.2.3/', 'http://172.16.0.1/', 'http://192.168.1.9/']) expect(isLocalPageUrl(url)).toBe(true)
++    for (const url of ['https://example.com/', 'http://localhost.example.com/', 'http://172.32.0.1/', 'http://127.0.0.1.nip.io/', 'file:///etc/hosts', 'about:blank', '']) expect(isLocalPageUrl(url)).toBe(false)
++  })
++
++  it('buffers console messages, uncaught errors and network activity, and returns those after a sequence number', async () => {
++    const page = fakeGuest(3)
++    const devtools = new BrowserDevtools(() => page.guest)
++    await devtools.send(owner, { guest: 3, method: EVENTS_METHOD })
++    page.emit('Runtime.consoleAPICalled', { type: 'error', args: [{ type: 'string', value: 'boom' }, { type: 'number', value: 42 }] })
++    page.emit('Network.requestWillBeSent', { requestId: 'r1', request: { url: 'http://localhost:3000/api/items', method: 'GET' }, type: 'Fetch' })
++    page.emit('Network.responseReceived', { requestId: 'r1', response: { url: 'http://localhost:3000/api/items', status: 500, mimeType: 'application/json' }, type: 'Fetch' })
++    page.emit('Network.loadingFailed', { requestId: 'r2', errorText: 'net::ERR_CONNECTION_REFUSED' })
++    page.emit('Runtime.exceptionThrown', { exceptionDetails: { exception: { description: 'TypeError: x is undefined' }, stackTrace: { callFrames: [{ functionName: 'render', url: 'app.js', lineNumber: 9, columnNumber: 4 }] } } })
++    page.emit('Page.frameNavigated', { frame: {} })
++    const all = await devtools.send(owner, { guest: 3, method: EVENTS_METHOD, params: { since: 0 } }) as { events: { seq: number, kind: string, data: Record<string, unknown> }[], latest: number, dropped: { console: number, network: number } }
++    expect(all.events.map(e => e.kind)).toEqual(['console', 'request', 'response', 'failed', 'exception'])
++    expect(all.events[0]!.data.text).toBe('boom 42')
++    expect(all.events[2]!.data).toMatchObject({ id: 'r1', method: 'GET', status: 500 })
++    expect(all.events[4]!.data.stack).toEqual(['render app.js:10:5'])
++    const later = await devtools.send(owner, { guest: 3, method: EVENTS_METHOD, params: { since: all.events[2]!.seq } }) as { events: unknown[] }
++    expect(later.events).toHaveLength(2)
++    expect(all.dropped).toEqual({ console: 0, network: 0 })
++  })
++
++  it('keeps console errors and exceptions through heavy network traffic, counts what each group dropped, and filters by kind', async () => {
++    const page = fakeGuest(4)
++    const devtools = new BrowserDevtools(() => page.guest)
++    await devtools.send(owner, { guest: 4, method: EVENTS_METHOD })
++    page.emit('Runtime.consoleAPICalled', { type: 'error', args: [{ type: 'string', value: 'early error' }] })
++    page.emit('Runtime.exceptionThrown', { exceptionDetails: { text: 'Uncaught', exception: { description: 'Error: early' } } })
++    for (let i = 0; i < 2000; i += 1) {
++      page.emit('Network.requestWillBeSent', { requestId: `r${i}`, request: { url: `http://localhost:3000/poll/${i}`, method: 'GET' }, type: 'XHR' })
++      page.emit('Network.responseReceived', { requestId: `r${i}`, response: { url: `http://localhost:3000/poll/${i}`, status: 200 }, type: 'XHR' })
++    }
++    const reply = await devtools.send(owner, { guest: 4, method: EVENTS_METHOD }) as DevtoolsEventsReply
++    expect(reply.events.filter(e => e.kind === 'console').map(e => e.data.text)).toEqual(['early error'])
++    expect(reply.events.filter(e => e.kind === 'exception')).toHaveLength(1)
++    expect(reply.events.filter(e => e.kind === 'request')).toHaveLength(MAX_EVENTS_PER_KIND.request)
++    expect(reply.events.filter(e => e.kind === 'response')).toHaveLength(MAX_EVENTS_PER_KIND.response)
++    expect(reply.dropped).toEqual({ console: 0, network: 2 * (2000 - 500) })
++    expect(reply.events.map(e => e.seq)).toEqual([...reply.events.map(e => e.seq)].sort((a, b) => a - b))
++    expect(reply.latest).toBe(2 + 4000)
++
++    const errors = await devtools.send(owner, { guest: 4, method: EVENTS_METHOD, params: { kinds: ['console', 'exception'] } }) as DevtoolsEventsReply
++    expect(errors.events.map(e => e.kind)).toEqual(['console', 'exception'])
++    expect(errors.dropped).toEqual(reply.dropped)
++    for (let i = 0; i < 301; i += 1) page.emit('Log.entryAdded', { entry: { level: 'info', source: 'other', text: `log ${i}` } })
++    const logs = await devtools.send(owner, { guest: 4, method: EVENTS_METHOD, params: { kinds: ['log'] } }) as DevtoolsEventsReply
++    expect(logs.events).toHaveLength(MAX_EVENTS_PER_KIND.log)
++    expect(logs.dropped.console).toBe(1)
++    await expect(devtools.send(owner, { guest: 4, method: EVENTS_METHOD, params: { kinds: 'console' } })).rejects.toThrow('kinds must be an array')
++    await expect(devtools.send(owner, { guest: 4, method: EVENTS_METHOD, params: { kinds: ['console', 'cookies'] } })).rejects.toThrow('kinds must be an array')
++  })
++})

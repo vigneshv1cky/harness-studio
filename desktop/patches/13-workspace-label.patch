@@ -1,0 +1,77 @@
+diff --git a/packages/client/ui-workspace/src/client/locales.ts b/packages/client/ui-workspace/src/client/locales.ts
+--- a/packages/client/ui-workspace/src/client/locales.ts
++++ b/packages/client/ui-workspace/src/client/locales.ts
+@@ -147,7 +147,7 @@
+   'section.sessions': 'Sessions',
+   'viewOptions.label': 'View options',
+   'groupBy.label': 'Group by',
+-  'groupBy.workspace': 'WorkSpace',
++  'groupBy.workspace': 'Workspace',
+   'groupBy.workspaceTree': 'Workspace Tree',
+   'groupBy.flat': 'In one list',
+   'orderBy.label': 'Order by',
+diff --git a/packages/client/ui-workspace/README.md b/packages/client/ui-workspace/README.md
+--- a/packages/client/ui-workspace/README.md
++++ b/packages/client/ui-workspace/README.md
+@@ -41,7 +41,7 @@
+ 
+ ### Workspace hierarchy
+ 
+-Choose **Add workspace** and select a directory to register it and open a Session. **View options → Group by** defaults to **WorkSpace**, which lists Workspaces as sibling sections. Select **Workspace Tree** to nest each Workspace under its nearest registered ancestor, including Workspaces added later. Each Workspace keeps its own Sessions and row actions. Child Workspaces appear before the parent's own Sessions. Ancestors start expanded unless a saved collapsed state exists. A saved collapse also hides the current Session; ancestor folder icons stay highlighted when a descendant Workspace contains it. Row fills and hit targets span the same width at every level; only the contents indent. Workspace dragging reorders siblings; dropping on a descendant targets the nearest compatible ancestor, so an expanded parent can be moved past without collapsing it. Search-result navigation expands every ancestor. Grouping and expansion are saved in the current browser; switching modes preserves each Workspace's expansion preference, and the single-list view stays flat.
++Choose **Add workspace** and select a directory to register it and open a Session. **View options → Group by** defaults to **Workspace**, which lists Workspaces as sibling sections. Select **Workspace Tree** to nest each Workspace under its nearest registered ancestor, including Workspaces added later. Each Workspace keeps its own Sessions and row actions. Child Workspaces appear before the parent's own Sessions. Ancestors start expanded unless a saved collapsed state exists. A saved collapse also hides the current Session; ancestor folder icons stay highlighted when a descendant Workspace contains it. Row fills and hit targets span the same width at every level; only the contents indent. Workspace dragging reorders siblings; dropping on a descendant targets the nearest compatible ancestor, so an expanded parent can be moved past without collapsing it. Search-result navigation expands every ancestor. Grouping and expansion are saved in the current browser; switching modes preserves each Workspace's expansion preference, and the single-list view stays flat.
+ 
+ Hierarchy uses registered canonical paths only. It does not scan for projects or resolve symlink aliases. Nesting does not change Session working directories, logs, or Workspace membership. Deleting a parent Workspace leaves its child Workspaces registered and places them under their next registered ancestor, or at the root.
+ 
+diff --git a/apps/web/tests/expected/workspace-management/grouping-options.expected.md b/apps/web/tests/expected/workspace-management/grouping-options.expected.md
+--- a/apps/web/tests/expected/workspace-management/grouping-options.expected.md
++++ b/apps/web/tests/expected/workspace-management/grouping-options.expected.md
+@@ -1,6 +1,6 @@
+ - menu:
+   - text: Group by
+-  - menuitem "WorkSpace"
++  - menuitem "Workspace"
+   - menuitem "Workspace Tree"
+   - menuitem "In one list"
+   - separator
+diff --git a/apps/web/tests/workspace-management.e2e.ts b/apps/web/tests/workspace-management.e2e.ts
+--- a/apps/web/tests/workspace-management.e2e.ts
++++ b/apps/web/tests/workspace-management.e2e.ts
+@@ -430,7 +430,7 @@
+     acknowledgeReloadConnectionLoss(tripwire, warningStart)
+     await expect.poll(() => page.getByText('Ungrouped', { exact: true }).count(), { timeout: 15_000 }).toBe(0)
+     await page.getByRole('button', { name: 'View options' }).click()
+-    await page.getByRole('menuitem', { name: 'WorkSpace', exact: true }).click()
++    await page.getByRole('menuitem', { name: 'Workspace', exact: true }).click()
+     await expect.poll(() => page.getByText('Ungrouped', { exact: true }).count(), { timeout: 10_000 }).toBeGreaterThanOrEqual(1)
+     expect(tripwire.pageErrors).toEqual([])
+   }, 90_000)
+@@ -973,7 +973,7 @@
+     await parent.click()
+     await section.getByText('project-two', { exact: true }).waitFor()
+     await page.getByRole('button', { name: 'View options', exact: true }).click()
+-    await page.getByRole('menuitem', { name: 'WorkSpace', exact: true }).click()
++    await page.getByRole('menuitem', { name: 'Workspace', exact: true }).click()
+     await page.getByRole('tree', { name: 'Sessions', exact: true }).getByText('project-two', { exact: true }).waitFor()
+     expect(await section.getByText('project-two', { exact: true }).count()).toBe(0)
+     await page.getByRole('button', { name: 'View options', exact: true }).click()
+diff --git a/apps/web/tests/workspace-recency.e2e.ts b/apps/web/tests/workspace-recency.e2e.ts
+--- a/apps/web/tests/workspace-recency.e2e.ts
++++ b/apps/web/tests/workspace-recency.e2e.ts
+@@ -123,7 +123,7 @@
+     await pick('Manual')
+     await expect.poll(titles).toEqual(TITLES)
+     await pick('Last updated')
+-    await pick('WorkSpace')
++    await pick('Workspace')
+     await pick('Manual')
+     const reconnectWarningStart = tripwire.warnings.length
+     holdWorkspace = true
+@@ -145,7 +145,7 @@
+     })).toBe(true)
+     holdWorkspace = false
+     releaseWorkspace!()
+-    await pick('WorkSpace')
++    await pick('Workspace')
+     acknowledgeReloadConnectionLoss(tripwire, reconnectWarningStart)
+     await expect.poll(titles).toEqual(['New Session', ...TITLES])
+     await compareOrRefreshGolden(

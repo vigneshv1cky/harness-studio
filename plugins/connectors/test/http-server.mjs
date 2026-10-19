@@ -7,6 +7,8 @@ const clients = new Map(), codes = new Map(), tokens = new Map(), refresh = new 
 const log = (...a) => console.log('[http-server]', ...a)
 // Test switches for the token endpoint: 'up', 'down' (drops the connection: a network error) or 'revoked' (invalid_grant).
 let tokenMode = 'up'
+// Counters the test reads from /test/stats: refreshes granted, refresh tokens refused, session-end (DELETE) requests.
+const stats = { refreshes: 0, refused: 0, deletes: 0 }
 const b64u = b => b.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 const json = (res, status, body, headers = {}) => { res.writeHead(status, { 'content-type': 'application/json', ...headers }); res.end(JSON.stringify(body)) }
 const body = req => new Promise(r => { let s = ''; req.on('data', c => s += c); req.on('end', () => r(s)) })
@@ -24,6 +26,7 @@ createServer(async (req, res) => {
     log('authorize ok, scope=', p.get('scope'))
     res.writeHead(302, { location: `${p.get('redirect_uri')}?code=${code}&state=${encodeURIComponent(p.get('state'))}` }); return res.end()
   }
+  if (url.pathname === '/test/stats') return json(res, 200, stats)
   if (url.pathname === '/test/token-mode') { tokenMode = url.searchParams.get('mode') ?? 'up'; log('token endpoint', tokenMode); return json(res, 200, { tokenMode }) }
   if (url.pathname === '/token') {
     const p = new URLSearchParams(await body(req))
@@ -34,10 +37,12 @@ createServer(async (req, res) => {
       if (!c || b64u(createHash('sha256').update(p.get('code_verifier') ?? '').digest()) !== c.challenge || c.redirect !== p.get('redirect_uri')) return json(res, 400, { error: 'invalid_grant' })
       log('token issued via code'); return json(res, 200, issue())
     }
-    if (p.get('grant_type') === 'refresh_token' && refresh.has(p.get('refresh_token'))) { refresh.delete(p.get('refresh_token')); log('token refreshed'); return json(res, 200, issue()) }
+    if (p.get('grant_type') === 'refresh_token' && refresh.has(p.get('refresh_token'))) { refresh.delete(p.get('refresh_token')); stats.refreshes++; log('token refreshed'); return json(res, 200, issue()) }
+    if (p.get('grant_type') === 'refresh_token') { stats.refused++; log('refresh token refused (already used or unknown)') }
     return json(res, 400, { error: 'invalid_grant' })
   }
   if (url.pathname === '/mcp') {
+    if (req.method === 'DELETE') stats.deletes++
     const auth = (req.headers.authorization ?? '').replace(/^Bearer /, '')
     const exp = tokens.get(auth)
     if (!exp || exp < Date.now()) { log('401 for', auth ? 'expired/unknown token' : 'no token'); return json(res, 401, { error: 'unauthorized' }, { 'www-authenticate': `Bearer resource_metadata="${ORIGIN}/.well-known/oauth-protected-resource/mcp", scope="tools"` }) }

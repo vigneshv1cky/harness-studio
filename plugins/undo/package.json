@@ -1,0 +1,51 @@
+{
+  "name": "@harness-studio/undo",
+  "version": "0.1.0",
+  "description": "Undo for Harness Studio, like Claude Code's rewind for file edits: a copy of each file is kept before the agent first changes it in a turn, and an Undo row under the turn puts the files back.",
+  "license": "MIT",
+  "author": "Vignesh Murugan",
+  "homepage": "https://github.com/vigneshv1cky/harness-studio/tree/main/plugins/undo#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vigneshv1cky/harness-studio.git",
+    "directory": "plugins/undo"
+  },
+  "bugs": "https://github.com/vigneshv1cky/harness-studio/issues",
+  "type": "module",
+  "keywords": [
+    "harness-plugin",
+    "harness-studio",
+    "undo",
+    "checkpoints"
+  ],
+  "engines": {
+    "dsh": ">=0.2.1-alpha.3 <0.3.0"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js"
+  },
+  "files": [
+    "index.js",
+    "store.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": false,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-chat"
+      ]
+    }
+  }
+}

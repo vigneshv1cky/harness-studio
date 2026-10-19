@@ -1,0 +1,53 @@
+{
+  "name": "@harness-studio/watch",
+  "version": "0.1.0",
+  "description": "Watches for Harness Studio: cheap checks on a command's output, a port or files that run on your computer without the model and wake the agent with a short notice only when the result changes.",
+  "license": "MIT",
+  "author": "Vignesh Murugan",
+  "homepage": "https://github.com/vigneshv1cky/harness-studio/tree/main/plugins/watch#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vigneshv1cky/harness-studio.git",
+    "directory": "plugins/watch"
+  },
+  "bugs": "https://github.com/vigneshv1cky/harness-studio/issues",
+  "type": "module",
+  "keywords": [
+    "harness-plugin",
+    "harness-studio",
+    "watch",
+    "monitor"
+  ],
+  "engines": {
+    "dsh": ">=0.2.1-alpha.3 <0.3.0"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js"
+  },
+  "files": [
+    "index.js",
+    "logic.js",
+    "run.js",
+    "store.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": false,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}

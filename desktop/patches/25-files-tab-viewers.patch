@@ -1,0 +1,501 @@
+diff --git a/packages/client/ui-sidebar-documentpreview/README.md b/packages/client/ui-sidebar-documentpreview/README.md
+index abab41ee..9122e7c4 100644
+--- a/packages/client/ui-sidebar-documentpreview/README.md
++++ b/packages/client/ui-sidebar-documentpreview/README.md
+@@ -29,7 +29,8 @@ Preview files in the right Sidebar and choose among registered renderers. Markdo
+ ## What it registers
+ 
+ - **The type** — `ctx.sidebarRightTabs.register(...)` with id `@deepseek-ai/dsh-client-ui-sidebar-documentpreview` (this implementation's identity in the tab system, and the key its body registers under), kind `text`, a whole-address file-resource pattern, band `fallback`. `canOpen` accepts only Session addresses, whose paths may be relative or absolute; bare `absolute` addresses are not claimed. A type registered at the `extension` or `builtin` band for a narrower pattern (say `*.png`) takes those addresses; other supported files land here. The whole address is the content identity, so two files with one name in different directories, or one path under two sessions, are two tabs; the decoded basename is the tab title, and the keyed `sidebar.right.pane.tab.title` seat places its extension-specific `FileTypeIcon` before that title.
+-- **The body** — the keyed `sidebar.right.pane.tab` seat under the type's id. Its fixed header shows the Host's absolute path when available, otherwise the requested path; the shared [`PathLabel`](../ui-primitives/README.md#component-catalog) subdues directories, preserves a clipped path’s trailing characters with a left-edge fade, and exposes the full value on hover. A dropdown appears when multiple supported renderers are available. A Markdown file whose top-ranked renderer is the builtin Markdown one shows a Rendered / Source switch in place of that dropdown; Source is the code renderer, or plain text without it. A tab with no manual choice opens in the view last chosen, remembered in browser storage under `harness-studio.markdown-view`, which Harness Studio's Files tab shares. Plain text is offered only for text-compatible sources; a single renderer shows no viewer control. A known binary container suffix without a registered renderer shows the file-type icon and an unsupported-preview message under the path header, without issuing a read. Two Session-scoped list child slots hand the previewed file to other plugins once its metadata reports a Host path, both with `absolutePath` as the owner prop: `sidebar.right.tab.document.actions` renders after the header's own controls in every state that shows the header, and `sidebar.right.tab.document.unpreviewable` renders in the unsupported empty state and in the empty state of a readable file the preview cannot render (`not-text`, `too-large`), where Retry would otherwise stand; a carrier or unclassified read failure keeps Retry, and a missing or non-regular path offers only its explanation. The shipped occupant of both is [`ui-open-in-app`](../ui-open-in-app/README.md). A wrap toggle appears only when the selected renderer declares `wrap: true`; its glyph describes the mode the click selects, and the per-tab preference starts on. Reload stays in this header, not the Sidebar's tab strip. Automatic refresh defaults to enabled; its separate toggle is hidden, with state, labels, styles, and toggle logic retained. The body reaches every pane edge; each renderer owns its content inset and may own an inner scrollport. This intentionally differs from the Files tab's 2px right-side scrollbar offset: previews keep the full pane width so edge-to-edge HTML and code scrollports end at the pane edge.
++- **The preview Factory** — `sidebar.right.document.preview`, registered with the shared store, the read face and the document child slots. Its caller passes `useTabInfo`, a reader of the shown file's tab information. The type's body below shows it for its own tab; another tab's body, such as a Files tab beside its tree, can show it for the file it selects by passing its own tab's information with the shown file's `id`, `contentId`, `title`, `navigation`, `signal` and command binding. The `id` keys the per-file state, which ends when `signal` aborts.
++- **The body** — the keyed `sidebar.right.pane.tab` seat under the type's id, which shows the preview Factory for its tab. Its fixed header shows the Host's absolute path when available, otherwise the requested path; the shared [`PathLabel`](../ui-primitives/README.md#component-catalog) subdues directories, preserves a clipped path’s trailing characters with a left-edge fade, and exposes the full value on hover. A dropdown appears when multiple supported renderers are available. A Markdown file whose top-ranked renderer is the builtin Markdown one shows a Rendered / Source switch in place of that dropdown; Source is the code renderer, or plain text without it. A tab with no manual choice opens in the view last chosen, remembered in browser storage under `harness-studio.markdown-view`, which Harness Studio's Files tab shares. Plain text is offered only for text-compatible sources; a single renderer shows no viewer control. A known binary container suffix without a registered renderer shows the file-type icon and an unsupported-preview message under the path header, without issuing a read. Two Session-scoped list child slots hand the previewed file to other plugins once its metadata reports a Host path, both with `absolutePath` as the owner prop: `sidebar.right.tab.document.actions` renders after the header's own controls in every state that shows the header, and `sidebar.right.tab.document.unpreviewable` renders in the unsupported empty state and in the empty state of a readable file the preview cannot render (`not-text`, `too-large`), where Retry would otherwise stand; a carrier or unclassified read failure keeps Retry, and a missing or non-regular path offers only its explanation. The shipped occupant of both is [`ui-open-in-app`](../ui-open-in-app/README.md). A wrap toggle appears only when the selected renderer declares `wrap: true`; its glyph describes the mode the click selects, and the per-tab preference starts on. Reload stays in this header, not the Sidebar's tab strip. Automatic refresh defaults to enabled; its separate toggle is hidden, with state, labels, styles, and toggle logic retained. The body reaches every pane edge; each renderer owns its content inset and may own an inner scrollport. This intentionally differs from the Files tab's 2px right-side scrollbar offset: previews keep the full pane width so edge-to-edge HTML and code scrollports end at the pane edge.
+ - **Shared loading and view state**, session-scoped and bucketed by tab id. The store holds accumulated pages or complete bytes, read and observed versions, pending Resource changes, automatic-refresh state, loading/failure state, renderer choice, scroll offset, wrap, and the answered navigation revision. The ordinary inject face calls Remote readers and writes through declared store actions. Reloads and loading-mode changes retire older requests; the tab's abort signal forgets its state.
+ 
+ Document implementations register metadata with `ctx.documentPreviews.register({ id, extensions, binaryExtensions?, priority, title, loading, wrap? })` and a body under the same `id` in the keyed, Session-scoped `sidebar.right.tab.document` child slot. `binaryExtensions` lists suffixes in `extensions` that cannot be read as text and omit the plain-text option. Own both registrations with effects and wait for the child slot through `ctx.slots.inject`. Bodies receive `resourceAddress`, `content`, `wrap`, `scrollportRef`, `addResource`, `setResources`, and the standard `useTabInfo`/`useResource` hooks. Dependency membership belongs to a tab-owned `ResourceGroup`; replacing dependencies always retains the root Resource. An inner scrolling element attaches `scrollportRef`; unmounting restores the shared body as scroll owner. The registry retains all matching alternatives: `extension` (the default) ranks above `builtin`, then longer suffixes rank first, then registration order. The dropdown preserves a selected implementation while it remains available. HTML, SVG, and unmatched extensions retain the plain-text fallback independently of loading mode.
+diff --git a/packages/client/ui-sidebar-documentpreview/src/client/TextPreview.tsx b/packages/client/ui-sidebar-documentpreview/src/client/TextPreview.tsx
+index 1c26e3a7..8c69775e 100644
+--- a/packages/client/ui-sidebar-documentpreview/src/client/TextPreview.tsx
++++ b/packages/client/ui-sidebar-documentpreview/src/client/TextPreview.tsx
+@@ -13,7 +13,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+ import type { ReactNode } from 'react'
+ import clsx from 'clsx'
+ import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
+-import type { InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
++import type { FactoryComponentPropsOf, PropsRenderFactories, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
++import type { UseSidebarRightTabInfo } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
+ import {
+   FileTypeIcon, IconNowrapFillRegular, IconPauseOutlineRegular, IconPlayOutlineRegular,
+   IconRefreshOutlineRegular, IconWrapFillRegular, Menu, PathLabel, Tooltip, classifyFileType,
+@@ -23,7 +24,6 @@ import type { TextInjected } from './face.ts'
+ import { emptyFailureRecourse, failureLine } from './failure-line.ts'
+ import { LoadingIndicator } from './LoadingIndicator.tsx'
+ import { hostFileOf } from './rpc.ts'
+-import type { TextStore } from './store.ts'
+ import type { DocumentContent } from './document/contract.ts'
+ import { binaryDocumentPath, matchingDocumentPreviews } from './document/registry.ts'
+ import type { DocumentPreviewDefinition } from './document/registry.ts'
+@@ -61,23 +61,40 @@ export interface TextPreviewInjected extends TextInjected {
+   readonly hooks: { readonly documentPreviews: ObservableSnapshot<readonly DocumentPreviewDefinition[]> }
+ }
+ 
++/** The preview Factory's caller input: tab information for the file shown. */
++export interface DocumentPreviewInput {
++  /**
++   * Read the shown file's tab information. The right Sidebar passes its own tab's reader; a host that embeds the
++   * preview passes its tab's information with the shown file's `id`, `contentId`, `title`, `navigation`, `signal`
++   * and command binding. The `id` keys the preview's per-file state, which ends when `signal` aborts.
++   */
++  readonly useTabInfo: UseSidebarRightTabInfo
++  /** Path the header shows in place of the Host's absolute path, such as one relative to the host's own folder. */
++  readonly displayPath?: string | undefined
++}
++
+ /** The body's composed props: the tab, its navigation, the shared store and face, and copy. */
+-export type TextPreviewProps =
+-  & PropsRuntime<'sidebar.right.pane.tab'>
+-  & PropsRenderSlots<'sidebar.right.tab.document' | 'sidebar.right.tab.document.action' | 'sidebar.right.tab.document.actions' | 'sidebar.right.tab.document.unpreviewable'>
+-  & PropsStore<TextStore>
+-  & InjectFace<TextPreviewInjected>
+-  & PropsLocale<'sidebarDocumentPreview'>
++export type TextPreviewProps = FactoryComponentPropsOf<'sidebar.right.document.preview'>
++
++/**
++ * The text type's tab body: the preview Factory for this tab's own file.
++ * @param props - the tab's runtime props.
++ * @returns the preview occurrence.
++ */
++export function TextPreviewTab({ useTabInfo, renderFactorySlot }: PropsRuntime<'sidebar.right.pane.tab'> & PropsRenderFactories): ReactNode {
++  return renderFactorySlot('sidebar.right.document.preview', { useTabInfo })
++}
+ 
+ /**
+- * The text type's body, registered under `sidebar.right.pane.tab` as `text`.
++ * The file preview: the `sidebar.right.document.preview` Factory, shown by the text type's tab body and by hosts
++ * that embed a file preview.
+  * @param props - composed slot props.
+  * @returns the content read so far with its controls, or a progress line.
+  */
+ export function TextPreview({
+   useTabInfo, useResource, useStore, actions, loadPage, reloadPages,
+   loadAll, reloadAll, prepareRenderer, useDocumentPreviews, renderSlot, t,
+-  addResource, setResources,
++  addResource, setResources, displayPath: shownPath,
+ }: TextPreviewProps): ReactNode {
+   const { tab } = useTabInfo()
+   const { navigation, signal } = tab
+@@ -121,7 +138,7 @@ export function TextPreview({
+   const storedScrollTopRef = useRef(0)
+   const [menuOpen, setMenuOpen] = useState(false)
+   const absolutePath = meta.value?.absolutePath ?? current?.complete?.absolutePath
+-  const displayPath = absolutePath ?? file.path
++  const displayPath = shownPath ?? absolutePath ?? file.path
+   // Contributions that hand the file to the Host wait for its Host path.
+   const fileOwner = absolutePath === undefined ? undefined : { absolutePath }
+   // Every tab of this type is a `file` resource address, so its params are the
+diff --git a/packages/client/ui-sidebar-documentpreview/src/client/excel/ExcelBody.module.css b/packages/client/ui-sidebar-documentpreview/src/client/excel/ExcelBody.module.css
+index 69f5a58c..79a07ec5 100644
+--- a/packages/client/ui-sidebar-documentpreview/src/client/excel/ExcelBody.module.css
++++ b/packages/client/ui-sidebar-documentpreview/src/client/excel/ExcelBody.module.css
+@@ -69,6 +69,69 @@
+   scrollbar-width: none;
+ }
+ 
++/* The spreadsheet's own controls in the app's type: 12px text in the app's font, thin dividers, the active sheet
++   underlined like a file tab, and a light selection. The workbook stays in the light scheme (see .workbook), so
++   these colours are fixed rather than theme tokens. */
++.workbook :global(.fortune-fx-editor) {
++  height: 30px;
++  border-bottom: 0.5px solid rgb(0 0 0 / 10%);
++  font-family: var(--dsw-font, sans-serif);
++  font-size: 12px;
++}
++
++.workbook :global(.fortune-name-box),
++.workbook :global(.fortune-fx-input) {
++  font-family: var(--dsw-font, sans-serif);
++  font-size: 12px;
++  color: rgb(0 0 0 / 80%);
++}
++
++.workbook :global(.fortune-name-box-container) {
++  border-right: 0.5px solid rgb(0 0 0 / 10%);
++}
++
++.workbook :global(.fortune-fx-icon) {
++  color: rgb(0 0 0 / 45%);
++}
++
++.workbook :global(.luckysheet-sheet-area) {
++  height: 32px;
++  border-top: 0.5px solid rgb(0 0 0 / 10%);
++  background: #fff;
++  font-family: var(--dsw-font, sans-serif);
++}
++
++.workbook :global(.luckysheet-sheet-area div.luckysheet-sheets-item) {
++  height: 32px;
++  padding: 0 12px;
++  border: none;
++  background: transparent;
++  color: rgb(0 0 0 / 55%);
++  font-size: 12px;
++  line-height: 32px;
++}
++
++.workbook :global(.luckysheet-sheet-area div.luckysheet-sheets-item:hover) {
++  background: rgb(0 0 0 / 4%);
++}
++
++.workbook :global(.luckysheet-sheet-area div.luckysheet-sheets-item-active) {
++  color: rgb(0 0 0 / 88%);
++  background: transparent;
++  box-shadow: inset 0 -2px 0 var(--dsw-alias-button-info-fill, #2f6feb);
++}
++
++.workbook :global(.fortune-zoom-container) {
++  font-family: var(--dsw-font, sans-serif);
++  font-size: 12px;
++  color: rgb(0 0 0 / 55%);
++}
++
++.workbook :global(.luckysheet-cell-selected) {
++  border-color: var(--dsw-alias-button-info-fill, #2f6feb) !important;
++  background: color-mix(in srgb, var(--dsw-alias-button-info-fill, #2f6feb) 6%, transparent) !important;
++}
++
+ .notice {
+   display: flex;
+   flex: none;
+diff --git a/packages/client/ui-sidebar-documentpreview/src/client/excel/excel.tsx b/packages/client/ui-sidebar-documentpreview/src/client/excel/excel.tsx
+index ca3fcb84..1d493f0b 100644
+--- a/packages/client/ui-sidebar-documentpreview/src/client/excel/excel.tsx
++++ b/packages/client/ui-sidebar-documentpreview/src/client/excel/excel.tsx
+@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
+ import { Workbook } from '@fortune-sheet/react'
+ import { Button, IconWarningTriangleOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
+ import fortuneCss from '@fortune-sheet/react/dist/index.css?inline'
++import type { Cell } from '@fortune-sheet/core'
+ import type { ExcelFormat } from './format.ts'
+ import type { ExcelPreview } from './model.ts'
+ import type { LoadedExcelBodyProps } from './LazyExcelBody.tsx'
+@@ -10,6 +11,39 @@ import { parseExcel } from './parse.ts'
+ import css from './ExcelBody.module.css'
+ 
+ type State = { data: Uint8Array<ArrayBuffer>; format: ExcelFormat } & ({ value: ExcelPreview } | { error: string })
++
++/**
++ * Font for cells that name none. FortuneSheet would draw them in Times New Roman; spreadsheet applications show
++ * their sans-serif default, and plain cells usually inherit it without naming it.
++ */
++const DEFAULT_CELL_FONT = 'system-ui'
++
++/** One rich-text run of a cell. */
++type InlineRun = NonNullable<NonNullable<Cell['ct']>['s']>[number]
++
++/**
++ * Prepare cells for display: every cell is centred horizontally and vertically, whatever alignment the workbook
++ * stores, and every cell and rich-text run without a font name gets the default sans-serif font.
++ * @param preview - parsed workbook.
++ * @returns the same workbook with alignment and font names set.
++ */
++function withDefaultFont(preview: ExcelPreview): ExcelPreview {
++  return {
++    ...preview,
++    sheets: preview.sheets.map(sheet => (sheet.celldata === undefined ? sheet : {
++      ...sheet,
++      celldata: sheet.celldata.map((item) => {
++        const v = item.v
++        if (v === null || v === undefined) return item
++        const runs = v.ct?.s?.map((run: InlineRun) => (run.ff === undefined ? { ...run, ff: DEFAULT_CELL_FONT } : run))
++        return {
++          ...item,
++          v: { ...v, ht: 0, vt: 0, ...(v.ff === undefined ? { ff: DEFAULT_CELL_FONT } : {}), ...(runs === undefined || v.ct === undefined ? {} : { ct: { ...v.ct, s: runs } }) },
++        }
++      }),
++    })),
++  }
++}
+ const scopedStyles = `@scope ([data-excel-preview]) { ${fortuneCss} }`
+ 
+ /**
+@@ -28,7 +62,7 @@ export function ExcelBody({ content, format, limits, t, loading }: LoadedExcelBo
+     const controller = new AbortController()
+     setState(undefined)
+     void parseExcel(data, format, limits, controller.signal).then(
+-      (value) => { if (!controller.signal.aborted) setState({ data, format, value }) },
++      (value) => { if (!controller.signal.aborted) setState({ data, format, value: withDefaultFont(value) }) },
+       (error: unknown) => { if (!controller.signal.aborted) setState({ data, format, error: error instanceof Error ? error.message : 'invalid' }) },
+     )
+     return () => { controller.abort() }
+diff --git a/packages/client/ui-sidebar-documentpreview/src/client/index.ts b/packages/client/ui-sidebar-documentpreview/src/client/index.ts
+index 72a26771..87e755b3 100644
+--- a/packages/client/ui-sidebar-documentpreview/src/client/index.ts
++++ b/packages/client/ui-sidebar-documentpreview/src/client/index.ts
+@@ -20,8 +20,11 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
+ import type {} from '@deepseek-ai/dsh-api-gateway/client'
+ import type {} from '@deepseek-ai/dsh-api-workspace-files/remote'
+ import type { WorkspaceFileParams } from '@deepseek-ai/dsh-api-workspace-files/client'
+-import { TextPreview } from './TextPreview.tsx'
+-import type { TextPreviewInjected } from './TextPreview.tsx'
++import type { SlotHookFactory } from '@deepseek-ai/dsh-client-ui-slots'
++import type { UseSidebarRightTabInfo } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
++import type { TextStore } from './store.ts'
++import { TextPreview, TextPreviewTab } from './TextPreview.tsx'
++import type { DocumentPreviewInput, TextPreviewInjected } from './TextPreview.tsx'
+ import { TextTitle } from './TextTitle.tsx'
+ import { TEXTPREVIEW_ID, textDefinition } from './definition.ts'
+ import { textFace } from './face.ts'
+@@ -44,7 +47,7 @@ import { Config } from '../config.ts'
+ // surface is `apply`, `inject`, and the store factory another registration may
+ // share, plus the types a consumer of the seat or the store names.
+ export type { SidebarDocumentPreviewKey } from './locales.ts'
+-export type { TextPreviewProps } from './TextPreview.tsx'
++export type { DocumentPreviewInput, TextPreviewProps } from './TextPreview.tsx'
+ export type { TextInjected } from './face.ts'
+ export type { ReadDocumentBytes, DocumentFileBytes, ReadWorkspaceFilePage, SessionFile, WorkspaceFilesReadRemote } from './rpc.ts'
+ export type { TextPage, TextState, TextStore, TextTabState } from './store.ts'
+@@ -69,6 +72,27 @@ declare module '@deepseek-ai/dsh-client-ui-sidebar-right/client' {
+ }
+ 
+ declare module '@deepseek-ai/dsh-client-ui-slots' {
++  interface SlotFactoryMap {
++    /**
++     * One file's preview: its path header, viewer choice and controls, and the selected document body. The text
++     * type's tab body shows it for its own tab; another tab's body, such as a Files tab beside its tree, can show it
++     * for the file it selects (see {@link DocumentPreviewInput}).
++     */
++    'sidebar.right.document.preview': {
++      scope: 'session'
++      props: DocumentPreviewInput
++      children: {
++        'sidebar.right.tab.document': { kind: 'keyed'; scope: 'session'; inject: { hooks: { tabInfo: SlotHookFactory<'sidebar.right.tab.document', UseSidebarRightTabInfo> } } }
++        'sidebar.right.tab.document.actions': { kind: 'list'; scope: 'session' }
++        'sidebar.right.tab.document.unpreviewable': { kind: 'list'; scope: 'session' }
++        'sidebar.right.tab.document.action': { kind: 'keyed'; scope: 'session'; inject: { hooks: { tabInfo: SlotHookFactory<'sidebar.right.tab.document', UseSidebarRightTabInfo> } } }
++      }
++      store: TextStore
++      inject: TextPreviewInjected
++      locale: 'sidebarDocumentPreview'
++    }
++  }
++
+   interface LocaleNamespaceMap {
+     /** Text-preview progress, paging, change, control, and failure lines. */
+     sidebarDocumentPreview: import('./locales.ts').SidebarDocumentPreviewKey
+@@ -100,20 +124,21 @@ export function apply(ctx: ClientContext): void {
+     ctx.resources,
+   )
+   const source = { getSnapshot: previews.getSnapshot, subscribe: previews.subscribe }
+-  ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
+-    {
+-      name: 'sidebar.right.pane.tab', key: TEXTPREVIEW_ID, locale: NS, store,
+-      children: {
+-        'sidebar.right.tab.document': { kind: 'keyed', scope: 'session', inject: { hooks: { tabInfo: documentTabInfoFactory } } },
+-        'sidebar.right.tab.document.actions': { kind: 'list', scope: 'session' },
+-        'sidebar.right.tab.document.unpreviewable': { kind: 'list', scope: 'session' },
+-        'sidebar.right.tab.document.action': { kind: 'keyed', scope: 'session', inject: { hooks: { tabInfo: documentTabInfoFactory } } },
+-      },
+-      inject: (sessionId, actions): TextPreviewInjected => ({
+-        ...face(sessionId, actions), hooks: { documentPreviews: source },
+-      }),
++  ctx.effect(() => ctx.slots.registerFactory({
++    name: 'sidebar.right.document.preview', scope: 'session', locale: NS, store,
++    children: {
++      'sidebar.right.tab.document': { kind: 'keyed', scope: 'session', inject: { hooks: { tabInfo: documentTabInfoFactory } } },
++      'sidebar.right.tab.document.actions': { kind: 'list', scope: 'session' },
++      'sidebar.right.tab.document.unpreviewable': { kind: 'list', scope: 'session' },
++      'sidebar.right.tab.document.action': { kind: 'keyed', scope: 'session', inject: { hooks: { tabInfo: documentTabInfoFactory } } },
+     },
+-    TextPreview,
++    inject: (sessionId, actions): TextPreviewInjected => ({
++      ...face(sessionId, actions), hooks: { documentPreviews: source },
++    }),
++  }, TextPreview), 'ui-sidebar-documentpreview: preview factory')
++  ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
++    { name: 'sidebar.right.pane.tab', key: TEXTPREVIEW_ID },
++    TextPreviewTab,
+   )), 'ui-sidebar-documentpreview: text body')
+   ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register(
+     { name: 'sidebar.right.pane.tab.title', key: TEXTPREVIEW_ID },
+diff --git a/packages/client/ui-sidebar-documentpreview/tests/apply.client.spec.ts b/packages/client/ui-sidebar-documentpreview/tests/apply.client.spec.ts
+index 124acfe7..0b746130 100644
+--- a/packages/client/ui-sidebar-documentpreview/tests/apply.client.spec.ts
++++ b/packages/client/ui-sidebar-documentpreview/tests/apply.client.spec.ts
+@@ -17,7 +17,7 @@ import { TEXTPREVIEW_ID, TEXTPREVIEW_KIND } from '../src/client/definition.ts'
+ import { apply, inject } from '../src/client/index.ts'
+ import { OfficeFontAction } from '../src/client/office/OfficeFontAction.tsx'
+ import { OfficeBody } from '../src/client/office/OfficeBody.tsx'
+-import { TextPreview } from '../src/client/TextPreview.tsx'
++import { TextPreview, TextPreviewTab } from '../src/client/TextPreview.tsx'
+ import { TextTitle } from '../src/client/TextTitle.tsx'
+ import { TextBody } from '../src/client/text/TextBody.tsx'
+ import { PLAIN_BODY_ID } from '../src/client/text/index.ts'
+@@ -38,7 +38,7 @@ import { FILE, SESSION, TAB_ID, byteResult, createResources, page } from './fixt
+ 
+ interface Recorded {
+   name: string
+-  key: string
++  key?: string
+   locale?: string
+   store?: unknown
+   inject?: unknown
+@@ -58,6 +58,11 @@ async function boot() {
+       registered.push(entry)
+       return () => { registered.splice(registered.indexOf(entry), 1) }
+     }),
++    registerFactory: vi.fn((options: Omit<Recorded, 'component'>, component: unknown) => {
++      const entry: Recorded = { ...options, component }
++      registered.push(entry)
++      return () => { registered.splice(registered.indexOf(entry), 1) }
++    }),
+   }
+   const dictionaries = new Map<string, unknown>()
+   const locale = {
+@@ -81,7 +86,7 @@ async function boot() {
+ }
+ 
+ describe('ui-sidebar-documentpreview apply', () => {
+-  it('registers the type, its dictionaries, and the body and title seats under the type\'s id, the body with a store and a face', async () => {
++  it('registers the type, its dictionaries, the preview Factory with a store and a face, and the body and title seats under the type\'s id', async () => {
+     const { tabs, registered, dictionaries } = await boot()
+     expect(tabs.get(TEXTPREVIEW_KIND)?.priority).toBe('fallback')
+     expect(tabs.get(TEXTPREVIEW_KIND)?.id).toBe(TEXTPREVIEW_ID)
+@@ -89,7 +94,8 @@ describe('ui-sidebar-documentpreview apply', () => {
+     // The seat key is the implementation's id, not the kind: an extension may
+     // take the kind over, and the seat must still find this body.
+     expect(registered.map(entry => [entry.name, entry.key, entry.locale, entry.component])).toEqual([
+-      ['sidebar.right.pane.tab', TEXTPREVIEW_ID, 'sidebarDocumentPreview', TextPreview],
++      ['sidebar.right.document.preview', undefined, 'sidebarDocumentPreview', TextPreview],
++      ['sidebar.right.pane.tab', TEXTPREVIEW_ID, undefined, TextPreviewTab],
+       ['sidebar.right.pane.tab.title', TEXTPREVIEW_ID, undefined, TextTitle],
+       ['sidebar.right.tab.document', PLAIN_BODY_ID, undefined, TextBody],
+       ['sidebar.right.tab.document', MARKDOWN_BODY_ID, 'documentMarkdown', MarkdownBody],
+diff --git a/packages/client/ui-sidebar-right/README.md b/packages/client/ui-sidebar-right/README.md
+index 350dedd8..92c5df0d 100644
+--- a/packages/client/ui-sidebar-right/README.md
++++ b/packages/client/ui-sidebar-right/README.md
+@@ -105,7 +105,7 @@ The Tab domain retains a branded occurrence id, navigation, an abort signal, and
+ 
+ A type's `keepMounted: true` retains visited bodies across tab and Session changes, collapse, and docking. Each View supplies its stable hold callback through owner props, so rebuilding Session injection bindings does not release a body. Unvisited bodies are not mounted eagerly.
+ 
+-Tab owners register `registerCloseHandler(kind, handler)` through an effect. A handler synchronously retains any background cleanup before allowing explicit close or replacement. The resource owner tracks completion and retry; the sidebar does not wait. A thrown handler preserves the tab. Collapse, presentation changes and plugin disposal do not invoke close handlers; the tab abort signal identifies occurrence disposal, not an explicit close.
++A plugin can take over resource opens with `registerResourceHandler(handler)`, registered through an effect: every `openResource` without `kind`, from the controller or a tab's actions, is offered to the handlers in registration order before a tab type claims the address, and the first handler that returns `true` has opened it, usually as a page through the request's `openTab`; no tab is placed for the address. Tab owners register `registerCloseHandler(kind, handler)` through an effect. A handler synchronously retains any background cleanup before allowing explicit close or replacement. The resource owner tracks completion and retry; the sidebar does not wait. A thrown handler preserves the tab. Collapse, presentation changes and plugin disposal do not invoke close handlers; the tab abort signal identifies occurrence disposal, not an explicit close.
+ 
+ Close and refresh commands resolve the focused pane and tab occurrence. Page bodies bind their refresh operation through `tab.actions.bindCommands()` and release it on unmount; ended occurrences cannot regain capabilities. Refresh never reloads the application. Shortcut page opens, sidebar expansion, and all splits focus the selected dock or floating pane after its DOM commits, including singleton reveals and guide replacements. Sidebar expansion focuses the active dock pane; collapse preserves focus inside floating panes. Pane focus preserves existing text selections. If a focused page input or iframe is replaced, focus returns to its visible pane only while no other element owns focus; an outside pointer gesture or explicit blur cancels this restoration. Close checks the captured identity again and uses resource cleanup. After a keyboard or native-menu close, focus moves to a surviving visible pane in the same Session so consecutive close commands continue there. Stale targets and cleanup failures never fall back to closing a window. Modal restrictions follow the [shortcut service](../shortcuts/README.md). The close command first requests the foreground modal’s close action; a modal that declines dismissal, a menu, or an unregistered dialog blocks closing the sidebar or window behind it. Closing the sole docked guide with a shortcut or native menu collapses the sidebar and retains the guide. Desktop requests window closure through the shortcut service only when no modal is open and no sidebar page owns focus; Web leaves the browser open.
+ 
+diff --git a/packages/client/ui-sidebar-right/src/client/index.ts b/packages/client/ui-sidebar-right/src/client/index.ts
+index 5974b817..ae6cd9ac 100644
+--- a/packages/client/ui-sidebar-right/src/client/index.ts
++++ b/packages/client/ui-sidebar-right/src/client/index.ts
+@@ -55,7 +55,7 @@ export type { ExpandButtonProps } from './shell/ExpandButton.tsx'
+ export type { SidebarRightState, SurfaceState } from './stores.ts'
+ export type {
+   ISidebarRight, SidebarRightOpenResourceOptions, SidebarRightOpenTabOptions,
+-  SidebarRightPlacement, SidebarRightCloseHandler, SurfaceActions,
++  SidebarRightPlacement, SidebarRightCloseHandler, SidebarRightResourceHandler, SidebarRightResourceRequest, SurfaceActions,
+ } from './service.ts'
+ export type {
+   SidebarRightGuideBox, SidebarRightGuideEntry, SidebarRightTabClaim, SidebarRightTabDefinition,
+diff --git a/packages/client/ui-sidebar-right/src/client/service.ts b/packages/client/ui-sidebar-right/src/client/service.ts
+index f3d90e75..36a8d989 100644
+--- a/packages/client/ui-sidebar-right/src/client/service.ts
++++ b/packages/client/ui-sidebar-right/src/client/service.ts
+@@ -179,6 +179,28 @@ export interface SidebarRightOpenTabOptions<K extends string = string> extends S
+ /** The scheme every resource address carries; anything else is not a resource this face opens. */
+ const RESOURCE_SCHEME = 'dsh-resource://'
+ 
++/** One resource open offered to a {@link SidebarRightResourceHandler}. */
++export interface SidebarRightResourceRequest {
++  /** The Session the resource opens in. */
++  readonly sessionId: SessionId
++  /** The `dsh-resource://` address being opened. */
++  readonly address: string
++  /** The opener's navigation parameters for the resource. */
++  readonly params: SidebarRightResourceParams | undefined
++  /**
++   * Open a page type in the request's Session instead; see `ISidebarRight.openTab`.
++   * @param kind - the page type's kind.
++   * @param options - placement and that kind's navigation parameters.
++   */
++  openTab<K extends string>(kind: K, options?: SidebarRightOpenTabOptions<K>): void
++}
++
++/**
++ * Take over opening a resource, such as a Files tab that shows a file beside its tree instead of a tab of the type
++ * that claims the address. Returns `true` when it opened the resource; no tab is then placed for the address.
++ */
++export type SidebarRightResourceHandler = (request: SidebarRightResourceRequest) => boolean
++
+ /** Synchronous close/replacement hook; resource owners retain any background cleanup. */
+ export type SidebarRightCloseHandler = (sessionId: SessionId, tab: TabRecord) => void
+ 
+@@ -267,6 +289,18 @@ export class SidebarRightController implements ISidebarRight {
+   private readonly adopted: ReadonlyMap<SessionId, Adoption>
+   private readonly rooms: ReadonlyMap<SessionId, RoomRule>
+   private readonly closeHandlers = new Map<string, SidebarRightCloseHandler>()
++  private readonly resourceHandlers = new Set<SidebarRightResourceHandler>()
++
++  /**
++   * Offer resource opens without an explicit `kind` to a handler before a tab type claims them. Handlers are asked
++   * in registration order; the first to return `true` ends the open. An open that names `kind` skips handlers.
++   * @param handler - decides synchronously and opens what it takes.
++   * @returns an effect-scoped unregister callback.
++   */
++  registerResourceHandler(handler: SidebarRightResourceHandler): () => void {
++    this.resourceHandlers.add(handler)
++    return () => { this.resourceHandlers.delete(handler) }
++  }
+ 
+   /**
+    * Register resource cleanup before explicit removal. Failure preserves the tab.
+@@ -391,6 +425,14 @@ export class SidebarRightController implements ISidebarRight {
+     if (!address.startsWith(RESOURCE_SCHEME)) {
+       throw new Error(`sidebarRight: no registered tab type claims "${address}"`)
+     }
++    if (options.kind === undefined) {
++      const openTab = <K extends string>(kind: K, tabOptions: SidebarRightOpenTabOptions<K> = {}): void => {
++        this.placeTab(sessionId, actions, kind, tabOptions)
++      }
++      for (const handler of this.resourceHandlers) {
++        if (handler({ sessionId, address, params: options.params, openTab })) return
++      }
++    }
+     this.place(sessionId, actions, this.tabs.claim(address, options.kind), address, options, options.params)
+   }
+ 
+diff --git a/packages/client/ui-sidebar-right/tests/service.client.spec.ts b/packages/client/ui-sidebar-right/tests/service.client.spec.ts
+index 9dd8979c..b59fee55 100644
+--- a/packages/client/ui-sidebar-right/tests/service.client.spec.ts
++++ b/packages/client/ui-sidebar-right/tests/service.client.spec.ts
+@@ -179,6 +179,31 @@ describe('SidebarRightController — opening', () => {
+     expect(titles()).toContain('hex view')
+   })
+ 
++  it('lets a resource handler open an address as a page instead, unless the caller names a kind', () => {
++    const { controller, tabs, publish, titles } = harness()
++    tabs.register({ id: 'test/browse', kind: 'browse', patterns: [], title: () => 'browse' })
++    const seen: unknown[] = []
++    const off = controller.registerResourceHandler((request) => {
++      if (!request.address.startsWith('dsh-resource://file/')) return false
++      seen.push([request.sessionId, request.address, request.params])
++      request.openTab('browse')
++      return true
++    })
++    publish()
++    controller.openResource('dsh-resource://file/session/s-test/notes/readme.txt', { params: { line: 3 } })
++    expect(seen).toEqual([[SESSION, 'dsh-resource://file/session/s-test/notes/readme.txt', { line: 3 }]])
++    expect(titles()).toEqual(['browse'])
++    publish()
++    controller.openResource('dsh-resource://file/session/s-test/notes/readme.txt', { kind: 'text' })
++    expect(titles()).toContain('readme.txt')
++    expect(seen).toHaveLength(1)
++    off()
++    publish()
++    controller.openResource('dsh-resource://file/session/s-test/notes/other.txt')
++    expect(titles()).toContain('other.txt')
++    expect(seen).toHaveLength(1)
++  })
++
+   it('lands a new tab in the pane the caller names', () => {
+     const { controller, instance, publish, layout, tabOf, expand } = harness()
+     expand()

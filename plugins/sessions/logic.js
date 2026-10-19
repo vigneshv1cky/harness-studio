@@ -19,6 +19,11 @@ export const START_QUESTION_ID = 'harness-studio/start-session'
 export const START = 'Start'
 export const DO_IT_HERE = 'Do it here'
 
+/** The question asked before a Session starts outside the parent's working folder; Harness's generic form draws it. */
+export const FOLDER_QUESTION_ID = 'harness-studio/start-session-folder'
+export const START_THERE = 'Start in that folder'
+export const DONT_START = 'Do not start'
+
 /** Message-source kinds this plugin writes into Session logs. */
 export const BRIEF_SOURCE = 'harness-studio-brief'
 export const REPORT_SOURCE = 'harness-studio-report'
@@ -101,6 +106,31 @@ export function cleanStartArgs(args) {
     throw new Error('branch_name only applies with worktree: true')
   }
   return { title, prompt, ...(background ? { background } : {}), ...(folder ? { folder } : {}), worktree, ...(slug ? { slug } : {}), initiation: args.initiation }
+}
+
+/** Whether `folder` is `base` or below it (both absolute, resolved paths). */
+export function isWithin(base, folder) {
+  const rel = path.relative(base, folder)
+  return rel === '' || (rel.split(path.sep)[0] !== '..' && !path.isAbsolute(rel))
+}
+
+/**
+ * Where a requested folder sits relative to the parent's working folder; all paths absolute and resolved.
+ *   - `inside`: the parent's working folder or below it; the start goes ahead as asked.
+ *   - `refused`: the user's home folder itself, the filesystem root, or the Harness home folder or anything in it, unless it is
+ *     the parent's own working folder: a session there could reach everything below it.
+ *   - `outside`: anywhere else; the user is asked on a card first, whatever the initiation.
+ * @param {{ folder: string, parentFolder: string, userHome: string, harnessHome: string }} input
+ * @returns {'inside' | 'refused' | 'outside'}
+ */
+export function folderScope({ folder, parentFolder, userHome, harnessHome }) {
+  if (folder === parentFolder) return 'inside'
+  if (folder === path.parse(folder).root || folder === userHome) return 'refused'
+  // The Harness home holds keys, settings and every session's log; only this plugin's own worktrees there may
+  // host a session (or anything, when the parent already works inside it).
+  const worktrees = path.join(harnessHome, 'harness-studio', 'worktrees')
+  if (isWithin(harnessHome, folder) && !isWithin(worktrees, folder) && !isWithin(harnessHome, parentFolder)) return 'refused'
+  return isWithin(parentFolder, folder) ? 'inside' : 'outside'
 }
 
 /**

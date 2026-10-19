@@ -1,0 +1,870 @@
+diff --git a/packages/client/ui-conversation/src/client/input/facade.ts b/packages/client/ui-conversation/src/client/input/facade.ts
+index 9f4a264e..3dc345b9 100644
+--- a/packages/client/ui-conversation/src/client/input/facade.ts
++++ b/packages/client/ui-conversation/src/client/input/facade.ts
+@@ -56,6 +56,12 @@ export interface SessionInputDeps {
+    * order (the empty-draft accelerated-Enter gesture); absent = unsupported.
+    */
+   steerQueue?: (() => void) | undefined
++  /**
++   * Receives the text of a plain send cut off by this shell's release (its Session scope torn down, as when
++   * the Session is re-created while a message is on its way) before the Host accepted it, so the text can be
++   * given back instead of vanishing with the cleared composer. Not called for a send the Host accepted.
++   */
++  orphaned?: ((text: string) => void) | undefined
+   /** The plain-message sink (send choreography / materialize fork — the hub owns it). */
+   defaultSink(
+     text: string,
+@@ -254,6 +260,19 @@ export class SessionInputShell implements SessionInput {
+     return 'applied'
+   }
+ 
++  /**
++   * Put back the text of a message another shell could not send: into an empty composer as it was, else
++   * above what is there, so nothing typed since is lost.
++   * @param text - the unsent message.
++   * @returns false after disposal or while a submission is pending.
++   */
++  restoreUnsent(text: string): boolean {
++    if (this.draftInitializationBlocked()) return false
++    const current = this.snapshot.draft
++    this.setDraft(current.trim() === '' ? text : `${text}\n\n${current}`)
++    return true
++  }
++
+   private draftInitializationBlocked(): boolean {
+     const { phase } = this.core.state
+     return this.disposed || phase === 'adjudicating' || phase === 'submitting'
+@@ -700,7 +719,7 @@ export class SessionInputShell implements SessionInput {
+       this.failedRestoreRev = undefined
+     }
+     if (occurrences.length === 0) {
+-      this.settleSink(attempt, this.deps.defaultSink(draft.trim(), attachmentIds, mode, attempt.signal))
++      this.settleSink(attempt, draft, this.deps.defaultSink(draft.trim(), attachmentIds, mode, attempt.signal))
+       return
+     }
+     const inputTriggers = this.deps.inputTriggers?.()
+@@ -713,7 +732,10 @@ export class SessionInputShell implements SessionInput {
+       }
+     })).then(
+       (parts) => {
+-        if (this.disposed) return
++        if (this.disposed) {
++          this.orphan(draft)
++          return
++        }
+         // Splice model forms over their clipboard ranges (offsets are
+         // clipboard-projection; parts arrive offset-sorted since chips walk in
+         // document order).
+@@ -724,16 +746,25 @@ export class SessionInputShell implements SessionInput {
+           cursor = part.offset + part.length
+         }
+         out += draft.slice(cursor)
+-        this.settleSink(attempt, this.deps.defaultSink(out.trim(), attachmentIds, mode, attempt.signal))
++        this.settleSink(attempt, draft, this.deps.defaultSink(out.trim(), attachmentIds, mode, attempt.signal))
+       },
+       (error: unknown) => {
+-        if (this.dead(attempt)) return
++        if (this.dead(attempt)) {
++          this.orphan(draft)
++          return
++        }
+         const message = error instanceof Error ? error.message : String(error)
+         this.settleDetachedFailure(attempt, message)
+       },
+     )
+   }
+ 
++  /** Hand a cut-off send's text to the owner; a failing owner cannot break settlement. */
++  private orphan(draft: string): void {
++    if (draft.trim() === '') return
++    try { this.deps.orphaned?.(draft) } catch (_error) { /* The text stays lost rather than throwing into a settled promise. */ }
++  }
++
+   private notifySubmission(submission: MessageSubmission | undefined): void {
+     if (submission === undefined) return
+     try { this.deps.messageSubmitted?.(submission) } catch (_error) { /* Notification consumers cannot interrupt submission. */ }
+@@ -742,11 +773,16 @@ export class SessionInputShell implements SessionInput {
+   /** Settle one detached default send independently of other sends. */
+   private settleSink(
+     attempt: SubmitAttempt,
++    draft: string,
+     pending: Promise<SubmitOutcome>,
+   ): void {
+     pending.then(
+       (outcome) => {
+-        if (this.dead(attempt)) return
++        if (this.dead(attempt)) {
++          // Released before the Host accepted it: the composer was already cleared, so give the text back.
++          if (outcome.kind !== 'success') this.orphan(draft)
++          return
++        }
+         if (outcome.kind !== 'success') {
+           this.settleDetachedFailure(attempt, outcome.text)
+           return
+@@ -755,7 +791,10 @@ export class SessionInputShell implements SessionInput {
+         this.dispatchRun(({ type: 'sink-settled', attempt, ok: true, outcome }))
+       },
+       (error: unknown) => {
+-        if (this.dead(attempt)) return
++        if (this.dead(attempt)) {
++          this.orphan(draft)
++          return
++        }
+         this.settleDetachedFailure(attempt, error instanceof Error ? error.message : String(error))
+       },
+     )
+diff --git a/packages/client/ui-conversation/src/client/input/hub.ts b/packages/client/ui-conversation/src/client/input/hub.ts
+index fb8d8a73..94d0fe8c 100644
+--- a/packages/client/ui-conversation/src/client/input/hub.ts
++++ b/packages/client/ui-conversation/src/client/input/hub.ts
+@@ -51,9 +51,16 @@ interface ConversationAttachmentFace {
+   releaseDraftAttachment(id: DraftAttachmentId): void
+ }
+ 
++/** How long unsent text from a replaced Session waits for a composer of another Session. */
++const UNSENT_ADOPTION_MS = 60_000
++
+ /** Session-addressed input facade registry (SessionInputResolver face + composer-layer extras). */
+ export class InputHub implements SessionInputResolver {
+   private readonly shells = new WeakMap<SessionBinding, SessionInputShell>()
++  /** The newest live shell per Session id, where text a released shell could not send is given back. */
++  private readonly latest = new Map<SessionId, SessionInputShell>()
++  /** Unsent text waiting for a composer: a message sent while its Session was being replaced. */
++  private readonly unsent: { sessionId: SessionId; text: string; at: number }[] = []
+ 
+   /**
+    * @param ctx - client root context (services resolved lazily per call — boot order stays free).
+@@ -120,6 +127,7 @@ export class InputHub implements SessionInputResolver {
+       popup: () => this.popup(actx),
+       inbox: session.projections.faceOf('inbox') as ObservableSnapshot<InboxState | undefined>,
+       defaultSink: (text, attachmentIds, mode, signal) => this.sink(session, text, attachmentIds, mode, signal),
++      orphaned: (text) => { this.giveBack(binding.sessionId, text, shell) },
+       steerQueue: () => { void this.steerQueue(session, shell) },
+       commandAttachments: {
+         serialize: async (ids) => {
+@@ -157,6 +165,7 @@ export class InputHub implements SessionInputResolver {
+         for (const off of offs) off()
+         const drafts = shell.dispose()
+         this.shells.delete(binding)
++        if (this.latest.get(binding.sessionId) === shell) this.latest.delete(binding.sessionId)
+         const conversation = this.rootCtx.get('conversation') as ConversationAttachmentFace | undefined
+         for (const attachmentId of drafts) conversation?.releaseDraftAttachment(attachmentId)
+       }
+@@ -168,9 +177,48 @@ export class InputHub implements SessionInputResolver {
+       }, 'conversation.input: reference catalogs')
+     })
+     shell.setDraft(readConversationDraft(binding.sessionId))
++    this.latest.set(binding.sessionId, shell)
++    this.adoptUnsent(binding.sessionId, shell)
+     return shell
+   }
+ 
++  /**
++   * Give a cut-off message back: to the Session's newest live composer, or, when none is open yet (the
++   * Session is still being created or replaced), to the next composer that opens for it.
++   */
++  private giveBack(sessionId: SessionId, text: string, from: SessionInputShell): void {
++    const target = this.latest.get(sessionId)
++    if (target !== undefined && target !== from && this.restoreInto(target, text)) return
++    this.unsent.push({ sessionId, text, at: Date.now() })
++  }
++
++  /**
++   * Hand waiting unsent text to a new composer: its own Session's first, then, within a minute, text whose
++   * Session was replaced by a new one, which is the composer the person is looking at.
++   */
++  private adoptUnsent(sessionId: SessionId, shell: SessionInputShell): void {
++    const now = Date.now()
++    for (let index = 0; index < this.unsent.length;) {
++      const entry = this.unsent[index]!
++      const stale = now - entry.at > UNSENT_ADOPTION_MS
++      if (entry.sessionId !== sessionId && stale) {
++        this.unsent.splice(index, 1)
++        continue
++      }
++      if ((entry.sessionId === sessionId || !stale) && this.restoreInto(shell, entry.text)) {
++        this.unsent.splice(index, 1)
++        continue
++      }
++      index += 1
++    }
++  }
++
++  private restoreInto(shell: SessionInputShell, text: string): boolean {
++    if (!shell.restoreUnsent(text)) return false
++    shell.notify('error', this.t('input.unsentRestored'))
++    return true
++  }
++
+   /**
+    * Resident shell by session id (service-face path; the provide channel has
+    * normally created it already — this covers direct id-addressed access).
+diff --git a/packages/client/ui-conversation/src/client/locales.ts b/packages/client/ui-conversation/src/client/locales.ts
+index 360fa7ac..1482d97a 100644
+--- a/packages/client/ui-conversation/src/client/locales.ts
++++ b/packages/client/ui-conversation/src/client/locales.ts
+@@ -369,6 +369,7 @@ export const zh = {
+   'queue.editFailed': '编辑失败：这条消息可能已经开始发送。',
+   'queue.removeFailed': '删除失败：这条消息可能已经开始发送。',
+   'queue.steerFailed': '插话发送失败，请重试。',
++  'input.unsentRestored': '会话仍在创建时发送的消息未能发出，已放回输入框，请再次发送。',
+   'terminal.signal': '信号 {signal}',
+   'terminal.exitCode': '退出码 {code}',
+   'terminal.noExitCode': '未正常退出',
+@@ -749,6 +750,7 @@ export const en = {
+   'queue.editFailed': 'Edit failed: this message may have already started sending.',
+   'queue.removeFailed': 'Removal failed: this message may have already started sending.',
+   'queue.steerFailed': 'Steering failed. Try again.',
++  'input.unsentRestored': 'Your message was not sent because the session was still being set up. It is back in the box; send it again.',
+   'terminal.signal': 'signal {signal}',
+   'terminal.exitCode': 'exit code {code}',
+   'terminal.noExitCode': 'no exit code',
+diff --git a/packages/client/ui-conversation/tests/unsent-on-release.client.spec.ts b/packages/client/ui-conversation/tests/unsent-on-release.client.spec.ts
+new file mode 100644
+index 00000000..80b9c52b
+--- /dev/null
++++ b/packages/client/ui-conversation/tests/unsent-on-release.client.spec.ts
+@@ -0,0 +1,66 @@
++/**
++ * A message sent while its Session scope is being torn down (a new Session replacing the blank one the
++ * composer belonged to) is given back, never silently dropped with the cleared composer.
++ */
++import { Context } from '@deepseek-ai/cordis'
++import { expect, it, vi } from 'vitest'
++import { SessionInputShell, type SessionInputDeps } from '../src/client/input/facade.ts'
++import type { SubmitOutcome } from '../src/client/contract/input.ts'
++
++function shell(deps: Partial<SessionInputDeps>): SessionInputShell {
++  return new SessionInputShell({
++    actx: new Context(),
++    defaultSink: vi.fn(),
++    commandAttachments: { serialize: async () => [], release: () => {}, unsupportedNotice: () => '' },
++    ...deps,
++  })
++}
++
++/** A sink that waits for its signal and then fails the way an aborted prompt does. */
++function abortableSink(): SessionInputDeps['defaultSink'] {
++  return (_text, _ids, _mode, signal) => new Promise<SubmitOutcome>((resolve) => {
++    signal.addEventListener('abort', () => { resolve({ kind: 'error' }) })
++  })
++}
++
++it('gives the text of a send cut off by release back to its owner', async () => {
++  const orphaned = vi.fn()
++  const input = shell({ defaultSink: abortableSink(), orphaned })
++  input.setDraft('build the login page')
++  input.submit('queue')
++  await vi.waitFor(() => { expect(input.state.getSnapshot().draft).toBe('') })
++  input.dispose()
++  await vi.waitFor(() => { expect(orphaned).toHaveBeenCalledWith('build the login page') })
++})
++
++it('gives back a send whose sink rejects after release, but not one the Host accepted', async () => {
++  const orphaned = vi.fn()
++  let accept!: (outcome: SubmitOutcome) => void
++  const accepted = shell({ defaultSink: () => new Promise<SubmitOutcome>((resolve) => { accept = resolve }), orphaned })
++  accepted.setDraft('delivered')
++  accepted.submit('queue')
++  await vi.waitFor(() => { expect(accepted.state.getSnapshot().draft).toBe('') })
++  accepted.dispose()
++  accept({ kind: 'success' })
++  await new Promise(resolve => setTimeout(resolve, 10))
++  expect(orphaned).not.toHaveBeenCalled()
++
++  const rejecting = shell({ defaultSink: (_t, _i, _m, signal) => new Promise((_resolve, reject) => { signal.addEventListener('abort', () => { reject(new Error('aborted')) }) }), orphaned })
++  rejecting.setDraft('not delivered')
++  rejecting.submit('queue')
++  await vi.waitFor(() => { expect(rejecting.state.getSnapshot().draft).toBe('') })
++  rejecting.dispose()
++  await vi.waitFor(() => { expect(orphaned).toHaveBeenCalledWith('not delivered') })
++})
++
++it('restores unsent text into a composer, keeping anything typed there since', () => {
++  const input = shell({})
++  try {
++    expect(input.restoreUnsent('first message')).toBe(true)
++    expect(input.state.getSnapshot().draft).toBe('first message')
++    input.setDraft('typed since')
++    expect(input.restoreUnsent('first message')).toBe(true)
++    expect(input.state.getSnapshot().draft).toBe('first message\n\ntyped since')
++  } finally { input.dispose() }
++  expect(input.restoreUnsent('too late')).toBe(false)
++})
+diff --git a/packages/jobs/jobs-local/src/index.ts b/packages/jobs/jobs-local/src/index.ts
+index daa4ce0d..61d95c69 100644
+--- a/packages/jobs/jobs-local/src/index.ts
++++ b/packages/jobs/jobs-local/src/index.ts
+@@ -11,6 +11,8 @@
+  */
+ 
+ import { randomUUID } from 'node:crypto'
++import { rmSync } from 'node:fs'
++import { basename } from 'node:path'
+ import { Context } from '@deepseek-ai/cordis'
+ import z from '@deepseek-ai/schemastery'
+ import type { Agent } from '@deepseek-ai/dsh-agent'
+@@ -659,11 +661,16 @@ export class LocalJobRegistry extends JobRegistry {
+     this.drop(owned)
+   }
+ 
+-  /** Drop settled records and announce each removal, the one visible-set change no per-job record carries. */
++  /**
++   * Drop settled records and announce each removal, the one visible-set change no per-job record carries. A
++   * dropped job's output logs go with it: they can be tens of megabytes of command output that nothing can
++   * name any more.
++   */
+   private drop(jobs: readonly TrackedJob[]): void {
+     for (const job of jobs) {
+       this.store.delete(job.id)
+       this.emit({ type: 'removed', job: this.view(job) }, job.owner)
++      removeOutputLogs(job.spillPaths)
+     }
+   }
+ 
+@@ -715,3 +722,19 @@ export class LocalJobRegistry extends JobRegistry {
+ }
+ 
+ export default LocalJobRegistry
++
++/**
++ * Remove a discarded job's output logs. Only the subprocess provider's own spill files are removed (named
++ * `dsh-subprocess-*.log`), so a source that reported some other path cannot get it deleted.
++ * @param paths - the spill paths the job's sources reported.
++ */
++export function removeOutputLogs(paths: readonly (string | undefined)[]): void {
++  for (const path of new Set(paths)) {
++    if (path === undefined || !/^dsh-subprocess-.*\.log$/.test(basename(path))) continue
++    try {
++      rmSync(path, { force: true })
++    } catch {
++      // Best effort: the process-exit cleanup and temp hygiene remove what is left.
++    }
++  }
++}
+diff --git a/packages/jobs/jobs-local/tests/jobs.spec.ts b/packages/jobs/jobs-local/tests/jobs.spec.ts
+index 538c9561..01d40325 100644
+--- a/packages/jobs/jobs-local/tests/jobs.spec.ts
++++ b/packages/jobs/jobs-local/tests/jobs.spec.ts
+@@ -1,3 +1,6 @@
++import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
+ import { randomUUID } from 'node:crypto'
+ import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
+ import { Context } from '@deepseek-ai/cordis'
+@@ -1329,6 +1332,25 @@ describe('LocalJobRegistry output ring', () => {
+     await tick()
+   })
+ 
++  it('removes a job\'s output log when the job is removed', async () => {
++    const dir = mkdtempSync(join(tmpdir(), 'dsh-job-spill-'))
++    try {
++      const spill = join(dir, 'dsh-subprocess-1-1-aaaaaa-stdout.log')
++      writeFileSync(spill, 'x'.repeat(4096))
++      const ctx = await harness({ retainBytes: 4, pumpPollMs: 5 })
++      const out: JobOutputSource = { channel: 'stdout', read: from => ({ text: from === 0 ? 'abcdefgh' : '', nextOffset: 8, lossy: false, spillPath: spill }) }
++      const p = producer({ output: [out] })
++      const id = ctx.jobs.start(p.spec)
++      p.settle({ status: 'completed' })
++      await tick()
++      expect(existsSync(spill)).toBe(true)
++      ctx.jobs.remove(id)
++      expect(existsSync(spill)).toBe(false)
++    } finally {
++      rmSync(dir, { recursive: true, force: true })
++    }
++  })
++
+   it('announces registration before the pump drains a source that is readable at once', async () => {
+     const ctx = await harness({ pumpPollMs: 5 })
+     const events = collect(ctx)
+diff --git a/packages/jobs/jobs-local/tests/output-logs.spec.ts b/packages/jobs/jobs-local/tests/output-logs.spec.ts
+new file mode 100644
+index 00000000..040cbb0e
+--- /dev/null
++++ b/packages/jobs/jobs-local/tests/output-logs.spec.ts
+@@ -0,0 +1,23 @@
++/** A discarded job's output logs are removed with it, and only the subprocess provider's own spill files. */
++import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
++import { tmpdir } from 'node:os'
++import { join } from 'node:path'
++import { afterEach, describe, expect, it } from 'vitest'
++import { removeOutputLogs } from '../src/index.ts'
++
++const dirs: string[] = []
++afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }) })
++
++describe('removeOutputLogs', () => {
++  it('removes spill files and leaves any other path alone', () => {
++    const dir = mkdtempSync(join(tmpdir(), 'dsh-job-logs-'))
++    dirs.push(dir)
++    const spill = join(dir, 'dsh-subprocess-1-2-abcdef-stdout.log')
++    const other = join(dir, 'notes.txt')
++    writeFileSync(spill, 'x'.repeat(1024))
++    writeFileSync(other, 'keep')
++    removeOutputLogs([spill, undefined, other, spill, join(dir, 'dsh-subprocess-missing.log')])
++    expect(existsSync(spill)).toBe(false)
++    expect(existsSync(other)).toBe(true)
++  })
++})
+diff --git a/packages/shell/bash-local/README.md b/packages/shell/bash-local/README.md
+index 123451f3..fc55a6ce 100644
+--- a/packages/shell/bash-local/README.md
++++ b/packages/shell/bash-local/README.md
+@@ -45,7 +45,7 @@ Load the executor with the budgets you want; every field has a default, so the s
+ | `timeoutMs` | `120,000` | Default foreground timeout, in milliseconds |
+ | `maxTimeoutMs` | `600,000` | Cap for per-call timeout overrides |
+ | `maxOutputBytes` | `64,000` | Per-stream in-memory output cap; overflow spills to a temp file |
+-| `maxSpillBytes` | `67,108,864` | Per-stream full-output spill cap |
++| `maxSpillBytes` | `67,108,864` | Per-stream full-output spill cap; a longer stream keeps its first and last 32 MiB in the file, with a line naming the bytes left out between them. Output logs are removed when their job is discarded and when the process exits |
+ | `graceMs` | `3,000` | Grace period for kill escalation and post-exit pipe draining |
+ 
+ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-bash-local) is the exhaustive source for every accepted field and its JSDoc.
+diff --git a/packages/shell/bash-local/src/index.ts b/packages/shell/bash-local/src/index.ts
+index 373c7397..c0b1e2f5 100644
+--- a/packages/shell/bash-local/src/index.ts
++++ b/packages/shell/bash-local/src/index.ts
+@@ -47,7 +47,7 @@ export interface Config {
+   maxTimeoutMs: Volatile<number>
+   /** Per-stream in-memory output cap; overflow spills to a temp file. */
+   maxOutputBytes: Volatile<number>
+-  /** Per-stream spill-file cap; larger streams retain only their in-memory tail. */
++  /** Per-stream spill-file cap; a larger stream keeps its first and last halves in the file, with the bytes between left out. */
+   maxSpillBytes: Volatile<number>
+   /** Grace period for kill escalation and inherited pipes; at most `MAX_TIMER_DELAY_MS`. */
+   graceMs: Volatile<number>
+@@ -60,6 +60,7 @@ function finalOutput(reader: SubprocessOutputReader): CollectedOutput {
+     text: read.text,
+     truncated: read.lossy,
+     ...read.spillPath !== undefined ? { spillPath: read.spillPath } : {},
++    ...read.spillOmittedBytes !== undefined ? { spillOmittedBytes: read.spillOmittedBytes } : {},
+   }
+ }
+ 
+diff --git a/packages/shell/tool-bash/src/render.ts b/packages/shell/tool-bash/src/render.ts
+index 55e76091..cf79499f 100644
+--- a/packages/shell/tool-bash/src/render.ts
++++ b/packages/shell/tool-bash/src/render.ts
+@@ -11,7 +11,10 @@ import { escalationHintMarker, sandboxDenialMarker } from '@deepseek-ai/dsh-sand
+ /** Append the truncation notice (with the full-output spill path) to a stream's text. */
+ function streamText(output: CollectedOutput): string {
+   if (!output.truncated) return output.text
+-  return `${output.text}\n[output truncated; full output: ${output.spillPath ?? '(unavailable)'}]`
++  const omitted = output.spillPath !== undefined && output.spillOmittedBytes !== undefined
++    ? ` (its middle ${output.spillOmittedBytes} bytes were dropped to keep the file within its cap; the file holds the start and the end)`
++    : ''
++  return `${output.text}\n[output truncated; full output: ${output.spillPath ?? '(unavailable)'}${omitted}]`
+ }
+ 
+ /**
+diff --git a/packages/shell/tool-bash/tests/tools.spec.ts b/packages/shell/tool-bash/tests/tools.spec.ts
+index 0b01d7c8..27736b8e 100644
+--- a/packages/shell/tool-bash/tests/tools.spec.ts
++++ b/packages/shell/tool-bash/tests/tools.spec.ts
+@@ -1116,6 +1116,11 @@ describe('renderResult', () => {
+       .toBe('(no output)\n[stopped: cancelled by the user]\n[killed by signal: SIGTERM]')
+   })
+ 
++  it('says how much of a capped spill file was left out', () => {
++    expect(renderResult({ ...base, stdout: { text: 'tail', truncated: true, spillPath: '/tmp/out.log', spillOmittedBytes: 1234 } }))
++      .toBe('tail\n[output truncated; full output: /tmp/out.log (its middle 1234 bytes were dropped to keep the file within its cap; the file holds the start and the end)]')
++  })
++
+   it('notes truncation with a fallback when the spill path is missing', () => {
+     expect(renderResult({ ...base, stdout: { text: 'tail', truncated: true } }))
+       .toBe('tail\n[output truncated; full output: (unavailable)]')
+diff --git a/packages/shell/tool-pwsh/src/render.ts b/packages/shell/tool-pwsh/src/render.ts
+index f15bd1ab..eb9fd172 100644
+--- a/packages/shell/tool-pwsh/src/render.ts
++++ b/packages/shell/tool-pwsh/src/render.ts
+@@ -19,7 +19,10 @@ import { escalationHintMarker, sandboxDenialMarker } from '@deepseek-ai/dsh-sand
+ /** Append the truncation notice (with the full-output spill path) to a stream's text. */
+ function streamText(output: CollectedOutput): string {
+   if (!output.truncated) return output.text
+-  return `${output.text}\n[output truncated; full output: ${output.spillPath ?? '(unavailable)'}]`
++  const omitted = output.spillPath !== undefined && output.spillOmittedBytes !== undefined
++    ? ` (its middle ${output.spillOmittedBytes} bytes were dropped to keep the file within its cap; the file holds the start and the end)`
++    : ''
++  return `${output.text}\n[output truncated; full output: ${output.spillPath ?? '(unavailable)'}${omitted}]`
+ }
+ 
+ /** The renderable foreground result shape (the schema-derived value, no `kind`). */
+diff --git a/packages/subprocess/subprocess-local/src/output.ts b/packages/subprocess/subprocess-local/src/output.ts
+index 837d9e1e..83554001 100644
+--- a/packages/subprocess/subprocess-local/src/output.ts
++++ b/packages/subprocess/subprocess-local/src/output.ts
+@@ -1,6 +1,6 @@
+ /** Bounded output tails and private spill files shared by process providers. */
+ import { randomBytes } from 'node:crypto'
+-import { closeSync, mkdtempSync, openSync, rmdirSync, unlinkSync, writeSync } from 'node:fs'
++import { closeSync, mkdtempSync, openSync, readSync, renameSync, rmdirSync, unlinkSync, writeSync } from 'node:fs'
+ import { join } from 'node:path'
+ import { tmpdir } from 'node:os'
+ import type { CollectedOutput } from '@deepseek-ai/dsh-subprocess'
+@@ -17,7 +17,10 @@ export type SpillFailureReporter = (error: unknown, label: string) => void
+ 
+ /** Spill storage for one collected stream; `undefined` means tail-only collection. */
+ export interface SpillOptions {
+-  /** Whole-stream byte cap beyond which an incomplete spill is discarded. */
++  /**
++   * Spill file byte cap. A longer stream keeps its first half and its last half in the file, with a line
++   * saying how many bytes between them were left out.
++   */
+   maxBytes: number
+   /** Private directory receiving the spill file. */
+   dir: string
+@@ -44,13 +47,28 @@ function privateSpillDir(): string {
+   return defaultSpillDir
+ }
+ 
+-// The per-process spill directory is removed at process exit when it holds no
+-// completed spill file: a directory that never spilled is empty and is safe to
+-// remove, while a directory holding completed spill files keeps them (their
+-// content is retained until an external cleanup). A SIGKILLed process cannot
+-// run this at all; its residue is left to OS temp hygiene.
+-/* v8 ignore next 4 -- exit listeners run after the coverage dump; removal is verified by the CI /tmp residue measurement. */
++/** Spill files this process created that still exist; removed when the process exits. */
++const liveSpillFiles = new Set<string>()
++
++/**
++ * Remove spill files. Output logs hold command output, which can be large (tens of megabytes) and can hold
++ * whatever a command printed, so they do not outlive the process that made them, nor a discarded job.
++ * @param files - the spill paths to remove; omitted removes every one this process created.
++ */
++export function removeSpillFiles(files: Iterable<string> = [...liveSpillFiles]): void {
++  for (const file of files) {
++    if (!liveSpillFiles.has(file)) continue
++    liveSpillFiles.delete(file)
++    try { unlinkSync(file) } catch { /* already gone */ }
++  }
++}
++
++// At a JavaScript-observable process exit every spill file this process created is removed, then the
++// per-process directory, which is empty by then. A SIGKILLed process cannot run this at all; its residue is
++// left to OS temp hygiene.
++/* v8 ignore next 5 -- exit listeners run after the coverage dump; removal is verified by the CI /tmp residue measurement. */
+ process.once('exit', () => {
++  removeSpillFiles()
+   if (defaultSpillDir === undefined) return
+   try { rmdirSync(defaultSpillDir) } catch { /* best-effort: ENOENT/ENOTEMPTY/EBUSY/EPERM must not change the exit code. */ }
+ })
+@@ -135,6 +153,10 @@ export class OutputCollector {
+   private spillDisabled: boolean
+   /** Total bytes ever pushed (not just retained). */
+   private total = 0
++  /** Stream bytes written to the spill file so far (its first `min(total, cap)` positions, then the tail ring). */
++  private spilled = 0
++  /** Set once the seal rearranged a wrapped spill into head, omission line and tail. */
++  private sealed = false
+ 
+   /**
+    * @param maxBytes - in-memory tail cap in bytes.
+@@ -189,7 +211,8 @@ export class OutputCollector {
+    * continues with the in-memory tail alone.
+    */
+   private spillAll(spill: SpillOptions, chunk: Buffer): void {
+-    if (this.total > spill.maxBytes) {
++    // Below two bytes there is no room for both a head and a tail: keep the old discard.
++    if (this.total > spill.maxBytes && spill.maxBytes < 2) {
+       this.discardSpill()
+       return
+     }
+@@ -208,9 +231,10 @@ export class OutputCollector {
+         const fd = openSync(file, 'wx', 0o600)
+         this.spillFile = file
+         this.spillFd = fd
+-        for (const prior of this.chunks) writeSync(fd, prior)
++        liveSpillFiles.add(file)
++        for (const prior of this.chunks) this.spillWrite(spill.maxBytes, prior)
+       }
+-      writeSync(this.spillFd, chunk)
++      this.spillWrite(spill.maxBytes, chunk)
+     } catch (error) {
+       // ENOENT (spill directory removed by a temp cleaner), EACCES/EPERM,
+       // EMFILE, or ENOSPC: the spill file is a recovery aid, not a
+@@ -226,6 +250,80 @@ export class OutputCollector {
+     }
+   }
+ 
++  /**
++   * Append stream bytes to the spill file within its cap. The first half of the cap holds the stream's head;
++   * the second half is a ring holding its tail: stream byte `p` past the head lands at
++   * `head + (p - head) % tail`, which is `p` itself until the stream outgrows the cap, so a stream within the
++   * cap is written exactly as before. {@link seal} puts a wrapped ring back in order.
++   */
++  private spillWrite(cap: number, chunk: Buffer): void {
++    const fd = this.spillFd as number
++    const head = Math.floor(cap / 2)
++    const tail = cap - head
++    let data = chunk
++    let position = this.spilled
++    this.spilled += chunk.length
++    // Bytes that will be overwritten within this same chunk need not be written.
++    if (position >= head && data.length > tail) {
++      position += data.length - tail
++      data = data.subarray(data.length - tail)
++    }
++    while (data.length > 0) {
++      const offset = position < head ? position : head + ((position - head) % tail)
++      const room = position < head ? head - position : head + tail - offset
++      const piece = data.subarray(0, Math.min(room, data.length))
++      writeSync(fd, piece, 0, piece.length, offset)
++      position += piece.length
++      data = data.subarray(piece.length)
++    }
++  }
++
++  /** Bytes the spill file leaves out between its head and tail: zero while the stream fits its cap. */
++  private omittedBytes(): number {
++    const cap = this.spill?.maxBytes ?? 0
++    return this.spillFile === undefined || this.spilled <= cap ? 0 : this.spilled - cap
++  }
++
++  /**
++   * Rewrite a wrapped spill as head, one line naming how many bytes were left out, then the tail in order,
++   * through a sibling file renamed over it, copying in bounded pieces.
++   */
++  private rearrangeSpill(cap: number): void {
++    const file = this.spillFile as string
++    const head = Math.floor(cap / 2)
++    const tail = cap - head
++    const start = head + ((this.spilled - head) % tail)
++    const omitted = this.spilled - cap
++    const ordered = `${file}.${randomBytes(4).toString('hex')}.tmp`
++    const source = openSync(file, 'r')
++    let target: number | undefined
++    try {
++      target = openSync(ordered, 'wx', 0o600)
++      const piece = Buffer.allocUnsafe(Math.min(1024 * 1024, cap))
++      const copy = (from: number, length: number): void => {
++        for (let done = 0; done < length;) {
++          const read = readSync(source, piece, 0, Math.min(piece.length, length - done), from + done)
++          if (read === 0) throw new Error('spill file ended early')
++          writeSync(target as number, piece, 0, read)
++          done += read
++        }
++      }
++      copy(0, head)
++      writeSync(target, `\n[... ${omitted} bytes of output omitted: the output was ${this.spilled} bytes, more than the ${cap}-byte log keeps; this file holds its first ${head} and last ${tail} bytes ...]\n`)
++      copy(start, head + tail - start)
++      copy(head, start - head)
++      closeSync(target)
++      target = undefined
++      renameSync(ordered, file)
++    } catch (error) {
++      if (target !== undefined) try { closeSync(target) } catch { /* reported below */ }
++      try { unlinkSync(ordered) } catch { /* never created */ }
++      throw error
++    } finally {
++      closeSync(source)
++    }
++  }
++
+   /** Stop spilling and remove the file once it can no longer hold the complete stream. */
+   private discardSpill(): void {
+     const fd = this.spillFd
+@@ -242,6 +340,7 @@ export class OutputCollector {
+       }
+     }
+     if (file !== undefined) {
++      liveSpillFiles.delete(file)
+       try {
+         unlinkSync(file)
+       } catch {
+@@ -258,16 +357,20 @@ export class OutputCollector {
+    * @param fromByte - whole-stream offset to resume from (a prior read's `nextOffset`; 0 for the first read).
+    * @returns the delta text, the offset for the next read, the `lossy` flag, and the spill path when one was created.
+    */
+-  readFrom(fromByte: number): { text: string; nextOffset: number; lossy: boolean; spillPath?: string } {
++  readFrom(fromByte: number): { text: string; nextOffset: number; lossy: boolean; spillPath?: string; spillOmittedBytes?: number } {
+     const windowStart = this.total - this.bytes
+     const buffer = Buffer.concat(this.chunks)
+     const lossy = fromByte < windowStart
+     const slice = lossy ? buffer : buffer.subarray(fromByte - windowStart)
++    const omitted = this.omittedBytes()
++    // A spill that outgrew its cap is a ring until the seal puts it in order: not worth reading before then.
++    const spillPath = omitted === 0 || this.sealed ? this.spillFile : undefined
+     return {
+       text: slice.toString('utf8'),
+       nextOffset: this.total,
+       lossy,
+-      ...this.spillFile !== undefined ? { spillPath: this.spillFile } : {},
++      ...spillPath !== undefined ? { spillPath } : {},
++      ...spillPath !== undefined && omitted > 0 ? { spillOmittedBytes: omitted } : {},
+     }
+   }
+ 
+@@ -296,6 +399,18 @@ export class OutputCollector {
+       this.spillFile = undefined
+     }
+     this.spillFd = undefined
++    if (this.spillFile !== undefined && this.spill !== undefined && this.spilled > this.spill.maxBytes) {
++      try {
++        this.rearrangeSpill(this.spill.maxBytes)
++      } catch (error) {
++        const file = this.spillFile
++        this.spillFile = undefined
++        liveSpillFiles.delete(file)
++        try { unlinkSync(file) } catch { /* reported below */ }
++        try { this.spill.onFailure(error, this.label) } catch { /* contained, as in spillAll */ }
++      }
++    }
++    this.sealed = true
+   }
+ 
+   /**
+@@ -304,10 +419,20 @@ export class OutputCollector {
+    */
+   finalize(): CollectedOutput {
+     this.seal()
++    const omitted = this.omittedBytes()
+     return {
+       text: Buffer.concat(this.chunks).toString('utf8'),
+       truncated: this.dropped,
+       ...this.spillFile !== undefined ? { spillPath: this.spillFile } : {},
++      ...this.spillFile !== undefined && omitted > 0 ? { spillOmittedBytes: omitted } : {},
+     }
+   }
++
++  /** Remove this stream's spill file now, as when its job is discarded. */
++  removeSpill(): void {
++    this.seal()
++    const file = this.spillFile
++    this.spillFile = undefined
++    if (file !== undefined) removeSpillFiles([file])
++  }
+ }
+diff --git a/packages/subprocess/subprocess-local/tests/spawn.spec.ts b/packages/subprocess/subprocess-local/tests/spawn.spec.ts
+index dc77e0b4..409c742c 100644
+--- a/packages/subprocess/subprocess-local/tests/spawn.spec.ts
++++ b/packages/subprocess/subprocess-local/tests/spawn.spec.ts
+@@ -1,6 +1,6 @@
+-import { logSpillFailure, OutputCollector, type SpillOptions } from '../src/output.ts'
++import { logSpillFailure, OutputCollector, removeSpillFiles, type SpillOptions } from '../src/output.ts'
+ import { spawn as nodeSpawn, spawnSync as nodeSpawnSync } from 'node:child_process'
+-import { mkdtempSync, readFileSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
++import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+ import { tmpdir } from 'node:os'
+ import { dirname, join } from 'node:path'
+ import { afterAll, describe, expect, it, vi } from 'vitest'
+@@ -598,7 +598,7 @@ describe('OutputCollector', () => {
+     expect(out!.spillPath).toBeUndefined()
+   })
+ 
+-  it('discards a spill that exceeds its configured cap', () => {
++  it('keeps the head and the tail of a stream that outgrows its spill cap, and says how much was left out', () => {
+     const collector = new OutputCollector(4, 'bounded', spillOptions(8).options)
+     collector.push(Buffer.from('aaaa'))
+     collector.push(Buffer.from('bbbb'))
+@@ -607,35 +607,55 @@ describe('OutputCollector', () => {
+ 
+     collector.push(Buffer.from('c'))
+     collector.push(Buffer.from('dddd'))
++    // While the stream runs past the cap the file is a ring, so it is not offered for reading.
++    expect(collector.readFrom(0).spillPath).toBeUndefined()
+     const out = collector.finalize()
+     expect(out.text).toBe('dddd')
+     expect(out.truncated).toBe(true)
+-    expect(out.spillPath).toBeUndefined()
+-    expect(() => readFileSync(spillPath)).toThrow()
++    expect(out.spillPath).toBe(spillPath)
++    expect(out.spillOmittedBytes).toBe(5)
++    expect(readFileSync(spillPath, 'utf8')).toBe('aaaa\n[... 5 bytes of output omitted: the output was 13 bytes, more than the 8-byte log keeps; this file holds its first 4 and last 4 bytes ...]\ndddd')
++    expect(collector.readFrom(0)).toMatchObject({ spillPath, spillOmittedBytes: 5 })
++    collector.removeSpill()
++    expect(existsSync(spillPath)).toBe(false)
+   })
+ 
+-  it('does not create a spill when the first overflowing chunk exceeds the cap', () => {
+-    const collector = new OutputCollector(4, 'no-spill', spillOptions(4).options)
++  it('keeps the head and the tail when one chunk is larger than the whole cap', () => {
++    const collector = new OutputCollector(4, 'one-chunk', spillOptions(4).options)
+     collector.push(Buffer.from('abcdefgh'))
++    collector.push(Buffer.from('ijk'))
+     const out = collector.finalize()
+-    expect(out.text).toBe('efgh')
+-    expect(out.truncated).toBe(true)
+-    expect(out.spillPath).toBeUndefined()
++    expect(out.text).toBe('hijk')
++    expect(out.spillOmittedBytes).toBe(7)
++    expect(readFileSync(out.spillPath!, 'utf8')).toBe('ab\n[... 7 bytes of output omitted: the output was 11 bytes, more than the 4-byte log keeps; this file holds its first 2 and last 2 bytes ...]\njk')
++    removeSpillFiles([out.spillPath!])
++    expect(existsSync(out.spillPath!)).toBe(false)
+   })
+ 
+-  it('contains cleanup failures while disabling an oversize spill', () => {
+-    const collector = new OutputCollector(4, 'cleanup-fail', spillOptions(8).options)
+-    collector.push(Buffer.from('aaaa'))
+-    collector.push(Buffer.from('bbbb'))
+-    const spillPath = collector.readFrom(0).spillPath!
+-
+-    failNextClose.value = true
+-    failNextUnlink.value = true
+-    expect(() => { collector.push(Buffer.from('c')) }).not.toThrow()
+-    expect(failNextClose.value).toBe(false)
+-    expect(failNextUnlink.value).toBe(false)
+-    expect(collector.finalize().spillPath).toBeUndefined()
+-    unlinkSync(spillPath)
++  it('keeps the tail in order across many wraps of the ring', () => {
++    const collector = new OutputCollector(16, 'wraps', spillOptions(64).options)
++    const lines = Array.from({ length: 500 }, (_, i) => `line-${String(i).padStart(4, '0')}\n`)
++    for (const line of lines) collector.push(Buffer.from(line))
++    const out = collector.finalize()
++    const all = lines.join('')
++    const file = readFileSync(out.spillPath!, 'utf8')
++    expect(file.startsWith(all.slice(0, 32))).toBe(true)
++    expect(file.endsWith(all.slice(-32))).toBe(true)
++    expect(out.spillOmittedBytes).toBe(all.length - 64)
++    collector.removeSpill()
++  })
++
++  it('removes the spill and reports it when putting a wrapped spill in order fails', () => {
++    const { options, failures } = spillOptions(8)
++    const collector = new OutputCollector(4, 'rearrange-fail', options)
++    for (const chunk of ['aaaa', 'bbbb', 'cccc']) collector.push(Buffer.from(chunk))
++    const spillPath = (collector as unknown as { spillFile: string }).spillFile
++    failNextWrite.value = true
++    const out = collector.finalize()
++    expect(out.spillPath).toBeUndefined()
++    expect(out.text).toBe('cccc')
++    expect(failures).toHaveLength(1)
++    expect(existsSync(spillPath)).toBe(false)
+   })
+ 
+   it('keeps collecting when the spill directory has been removed (ENOENT on open)', () => {
+diff --git a/packages/subprocess/subprocess/src/types.ts b/packages/subprocess/subprocess/src/types.ts
+index a005330f..a41530c1 100644
+--- a/packages/subprocess/subprocess/src/types.ts
++++ b/packages/subprocess/subprocess/src/types.ts
+@@ -26,6 +26,11 @@ export interface CollectedOutput {
+   truncated: boolean
+   /** Path to a file holding the COMPLETE stream, when truncated and available. */
+   spillPath?: string
++  /**
++   * Bytes the spill file leaves out: a stream longer than the spill cap keeps its first and last halves there,
++   * with a line in between naming this count. Absent when the file holds the whole stream.
++   */
++  spillOmittedBytes?: number
+ }
+ 
+ /**
+@@ -46,7 +51,7 @@ export interface SubprocessCollect {
+   maxBytes: number
+   /** Full-stream spill file; absent disables spilling entirely. */
+   spill?: {
+-    /** Whole-stream byte cap; a larger stream discards its now-incomplete spill. */
++    /** Spill file byte cap; a larger stream keeps its first and last halves there, with the bytes between left out. */
+     maxBytes: number
+   }
+ }
+@@ -130,6 +135,8 @@ export interface SubprocessOutputRead {
+   lossy: boolean
+   /** Path to the full-stream spill file, when one was created and remains intact. */
+   spillPath?: string
++  /** Bytes the spill file leaves out between its head and tail (see {@link CollectedOutput.spillOmittedBytes}). */
++  spillOmittedBytes?: number
+ }
+ 
+ /**

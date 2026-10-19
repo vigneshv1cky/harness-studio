@@ -130,7 +130,9 @@ window.__ModuleLoader__.load({
       .hsc-page-heading { flex: 1 1 0; min-width: 0; max-width: 100%; }
       .hsc-page-title { margin: 0; font-size: 20px; font-weight: 500; line-height: 28px; }
       .hsc-page-intro { margin: 4px 0 0; font-size: 13px; line-height: 20px; color: var(--dsw-alias-label-secondary); }
-      .hsc-page > .hsc { border-top: 0.5px solid var(--dsw-alias-border-l2); }
+      /* On the page the connector list is one bordered section, rows divided inside it. */
+      .hsc-page > .hsc { box-sizing: border-box; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: 12px; padding: 0 16px; }
+      .hsc-page .hsc-row:not(:has(~ .hsc-row)) { border-bottom: none; }
       .hsc-desc { font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
       .hsc-row { border-bottom: 0.5px solid var(--dsw-alias-border-l2); }
       .hsc-head { display: flex; align-items: center; gap: 12px; padding: 14px 0; cursor: pointer; }
@@ -155,11 +157,16 @@ window.__ModuleLoader__.load({
       .hsc-kv { display: grid; grid-template-columns: 96px 1fr; gap: 4px 12px; font-size: 12px; line-height: 18px; }
       .hsc-kv dt { color: var(--dsw-alias-label-tertiary); }
       .hsc-kv dd { margin: 0; word-break: break-all; font-family: var(--dsw-font-markdown-code-font-family, ui-monospace, monospace); }
-      .hsc-tools { display: flex; flex-direction: column; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: 10px; overflow: hidden; }
-      .hsc-tool { padding: 8px 12px; border-top: 0.5px solid var(--dsw-alias-border-l2); font-size: 12px; line-height: 18px; }
-      .hsc-tool:first-child { border-top: none; }
-      .hsc-tool b { font-weight: 500; font-family: var(--dsw-font-markdown-code-font-family, ui-monospace, monospace); }
-      .hsc-tool span { display: block; color: var(--dsw-alias-label-tertiary); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+      /* The tool list is drawn like the app's Markdown tables: a 1px rounded border and row lines at 10% of the text
+         colour, a header on a 5% fill, and cells padded 6px by 11px with 13px text on 20px lines. */
+      .hsc-tools { width: 100%; border-collapse: separate; border-spacing: 0; border: 1px solid color-mix(in srgb, var(--dsw-alias-label-primary) 10%, transparent); border-radius: 8px; }
+      .hsc-tools :is(th, td) { padding: 6px 11px; font-size: 13px; line-height: 20px; font-weight: 400; text-align: left; vertical-align: top; color: var(--dsw-alias-label-primary); border-bottom: 1px solid color-mix(in srgb, var(--dsw-alias-label-primary) 10%, transparent); }
+      .hsc-tools th { background: color-mix(in srgb, var(--dsw-alias-label-primary) 5%, transparent); }
+      .hsc-tools tr:first-child th:first-child { border-top-left-radius: 7px; }
+      .hsc-tools tr:first-child th:last-child { border-top-right-radius: 7px; }
+      .hsc-tools tr:last-child td { border-bottom: none; }
+      .hsc-tools td:first-child { width: 1%; white-space: nowrap; font-family: var(--dsw-font-markdown-code-font-family, ui-monospace, monospace); font-size: 12.5px; }
+      .hsc-tool-desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--dsw-alias-label-secondary); }
       .hsc-error { font-size: 12px; line-height: 18px; color: var(--dsw-alias-state-error-primary); white-space: pre-wrap; word-break: break-word; }
       .hsc-code { margin: 0 0 14px 15px; padding: 10px 12px; border-radius: 10px; background: var(--dsw-alias-state-business-tertiary); display: flex; flex-direction: column; gap: 6px; }
       .hsc-code-row { display: flex; align-items: center; gap: 12px; }
@@ -204,6 +211,9 @@ window.__ModuleLoader__.load({
       return out
     }
 
+    /** When a connector's tool calls wait for the user's approval (store.js, ASK_MODES). */
+    const ASK_LABELS = { never: 'Never', changes: 'Before calls that can change things', always: 'Before every call' }
+
     /** Servers that sign in with an OAuth app built into the plugin. */
     const PRESETS = [{ name: 'GitHub', url: 'https://api.githubcopilot.com/mcp/' }]
 
@@ -224,6 +234,7 @@ window.__ModuleLoader__.load({
         args: (initial?.args ?? []).join('\n'),
         env: pairsToText(initial?.env, '='),
         cwd: initial?.cwd ?? '',
+        ask: initial?.ask ?? 'never',
       }))
       const [busy, setBusy] = useState(false)
       const [error, setError] = useState()
@@ -233,8 +244,8 @@ window.__ModuleLoader__.load({
         setBusy(true)
         setError(undefined)
         const body = kind === 'http'
-          ? { name: fields.name, transport: 'http', url: fields.url, headers: textToPairs(fields.headers, ':'), clientId: fields.clientId, clientSecret: fields.clientSecret, ...(clearSecret ? { clearClientSecret: true } : {}) }
-          : { name: fields.name, transport: 'stdio', command: fields.command, args: fields.args.split('\n').map(s => s.trim()).filter(Boolean), env: textToPairs(fields.env, '='), cwd: fields.cwd }
+          ? { name: fields.name, transport: 'http', url: fields.url, headers: textToPairs(fields.headers, ':'), clientId: fields.clientId, clientSecret: fields.clientSecret, ask: fields.ask, ...(clearSecret ? { clearClientSecret: true } : {}) }
+          : { name: fields.name, transport: 'stdio', command: fields.command, args: fields.args.split('\n').map(s => s.trim()).filter(Boolean), env: textToPairs(fields.env, '='), cwd: fields.cwd, ask: fields.ask }
         try {
           const saved = editing ? await api('PUT', `/connectors/${encodeURIComponent(initial.id)}`, body) : await api('POST', '/connectors', body)
           onDone(saved)
@@ -272,6 +283,9 @@ window.__ModuleLoader__.load({
           field('Environment (optional)', h('textarea', { key: 'env', className: 'hsc-input', value: fields.env, onChange: set('env'), placeholder: 'API_KEY=…', rows: 2 }), editing ? 'One per line, as NAME=value. Saved values show as ••••••••; leave them to keep them.' : 'One per line, as NAME=value.'),
           field('Working folder (optional)', h('input', { key: 'cwd', className: 'hsc-input', value: fields.cwd, onChange: set('cwd'), placeholder: '/absolute/path' })),
         ],
+        field('Ask before calls', h('select', { className: 'hsc-input', value: fields.ask, onChange: set('ask'), 'aria-label': 'Ask before calls' },
+          Object.entries(ASK_LABELS).map(([value, label]) => h('option', { key: value, value }, label))),
+          'The call waits for your approval in the conversation. "Before calls that can change things" relies on the server\'s own read-only labels, which MCP treats as hints: a tool counts as unable to change things only when its server marks it read-only, and for a server not on this computer only when its name also starts with get, list, read, search, fetch, find, query, describe, show or view.'),
         error ? h('div', { className: 'hsc-error', role: 'alert' }, error) : null,
         h('div', { className: 'hsc-form-actions' },
           h('button', { type: 'button', className: 'hsc-btn', onClick: onCancel }, 'Cancel'),
@@ -322,12 +336,17 @@ window.__ModuleLoader__.load({
         h('dl', { className: 'hsc-kv' },
           h('dt', null, c.transport === 'http' ? 'URL' : 'Command'), h('dd', null, c.transport === 'http' ? c.url : where(c)),
           c.server ? [h('dt', { key: 'st' }, 'Server'), h('dd', { key: 'sd' }, `${c.server.name ?? ''} ${c.server.version ?? ''}`.trim())] : null,
-          c.transport === 'http' ? [h('dt', { key: 'at' }, 'Account'), h('dd', { key: 'ad' }, c.signedIn ? 'Signed in' : Object.keys(c.headers ?? {}).length ? 'Headers' : 'None')] : null),
+          c.transport === 'http' ? [h('dt', { key: 'at' }, 'Account'), h('dd', { key: 'ad' }, c.signedIn ? 'Signed in' : Object.keys(c.headers ?? {}).length ? 'Headers' : 'None')] : null,
+          h('dt', null, 'Asks first'), h('dd', null, ASK_LABELS[c.ask ?? 'never'])),
         c.status === 'failed' && c.error ? h('div', { className: 'hsc-error' }, c.error) : null,
         error ? h('div', { className: 'hsc-error', role: 'alert' }, error) : null,
-        c.tools.length ? h('div', { className: 'hsc-tools' }, c.tools.map(t => h('div', { key: t.name, className: 'hsc-tool' },
-          h('b', null, t.title || t.name), t.description ? h('span', null, t.description) : null,
-          c.toolErrors?.[t.publicName] ? h('div', { className: 'hsc-error' }, 'Not available to the agent: ' + c.toolErrors[t.publicName]) : null))) : null,
+        c.tools.length ? h('table', { className: 'hsc-tools' },
+          h('thead', null, h('tr', null, h('th', null, 'Tool'), h('th', null, 'What it does'))),
+          h('tbody', null, c.tools.map(t => h('tr', { key: t.name },
+            h('td', null, t.title || t.name),
+            h('td', null,
+              t.description ? h('div', { className: 'hsc-tool-desc', title: t.description }, t.description) : null,
+              c.toolErrors?.[t.publicName] ? h('div', { className: 'hsc-error' }, 'Not available to the agent: ' + c.toolErrors[t.publicName]) : null))))) : null,
         h('div', { className: 'hsc-actions' },
           h('button', { type: 'button', className: 'hsc-btn', disabled: busy, onClick: run(() => api('POST', `/connectors/${c.id}/reconnect`, {})) }, 'Reconnect'),
           c.signedIn ? h('button', { type: 'button', className: 'hsc-btn', disabled: busy, onClick: run(() => api('POST', `/connectors/${c.id}/logout`, {})) }, 'Sign out') : null,
@@ -346,11 +365,14 @@ window.__ModuleLoader__.load({
       useCss()
       const [state, refresh] = useConnectors(undefined)
       const [form, setForm] = useState(null) // null | 'add' | connector
-      const done = () => { setForm(null); refresh() }
+      // An edit's answer can carry a notice, such as saved secrets not carried over to a new server.
+      const [notice, setNotice] = useState(undefined)
+      const done = (saved) => { setForm(null); setNotice(saved?.notice); refresh() }
       const description = 'Give the agent tools from MCP servers. Every connector is on in new sessions; turn one off for a session from the + menu in the message box.'
       const addButton = form === 'add' ? null : h('button', { type: 'button', className: 'hsc-btn', onClick: () => setForm('add'), 'data-testid': 'hsc-add' }, 'Add connector')
       const body = [
         form === 'add' ? h(ConnectorForm, { key: 'add', onDone: done, onCancel: () => setForm(null) }) : null,
+        notice ? h('div', { key: 'notice', className: 'hsc-desc', role: 'status', style: { padding: '8px 0' } }, notice) : null,
         state.error ? h('div', { key: 'error', className: 'hsc-error', style: { padding: '14px 0' } }, state.error) : null,
         !state.loading && !state.error && state.connectors.length === 0 && !form
           ? h('div', { key: 'empty', className: 'hsc-empty hsc-desc' }, 'No connectors yet. Add a remote MCP server by its URL, or a local one by the command that starts it.')
@@ -421,6 +443,14 @@ window.__ModuleLoader__.load({
         connection = ctx.connection
         helper = undefined
         ctx.effect(() => () => { if (connection === ctx.connection) { connection = undefined; helper = undefined } }, 'connectors helper connection')
+        // The Chrome bridge's link key, for the Dev Preview plugin's pick polling: read by this plugin's Host half
+        // over the bridge's stdio pipe and handed over here, inside this window, never over the network.
+        ctx.effect(() => {
+          const shared = (window.__harnessStudio ??= {})
+          const link = () => api('GET', '/chrome-bridge-link')
+          shared.chromeBridgeLink = link
+          return () => { if (shared.chromeBridgeLink === link) delete shared.chromeBridgeLink }
+        }, 'Chrome bridge link for Dev Preview')
         ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section', id: 'connectors', order: 12, label: () => 'Connectors', inject: () => ({}),
         }, ConnectorsSection)), 'connectors settings page')

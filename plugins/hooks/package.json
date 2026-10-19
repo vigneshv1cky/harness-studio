@@ -1,0 +1,43 @@
+{
+  "name": "@harness-studio/hooks",
+  "version": "0.1.0",
+  "description": "Hooks for Harness Studio, like Claude Code's: your own commands that run before a tool call (and can block it or ask first), after one (and can send the agent feedback), and when the agent is about to finish (and can send it back to work).",
+  "license": "MIT",
+  "author": "Vignesh Murugan",
+  "homepage": "https://github.com/vigneshv1cky/harness-studio/tree/main/plugins/hooks#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vigneshv1cky/harness-studio.git",
+    "directory": "plugins/hooks"
+  },
+  "bugs": "https://github.com/vigneshv1cky/harness-studio/issues",
+  "type": "module",
+  "keywords": [
+    "harness-plugin",
+    "harness-studio",
+    "hooks"
+  ],
+  "engines": {
+    "dsh": ">=0.2.1-alpha.3 <0.3.0"
+  },
+  "exports": {
+    ".": "./index.js"
+  },
+  "files": [
+    "index.js",
+    "logic.js",
+    "run.js",
+    "rules.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

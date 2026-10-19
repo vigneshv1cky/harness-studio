@@ -1,0 +1,1317 @@
+diff --git a/packages/bundle/base/cordis.patch.yml b/packages/bundle/base/cordis.patch.yml
+index 2eacd599..8c57cbe1 100644
+--- a/packages/bundle/base/cordis.patch.yml
++++ b/packages/bundle/base/cordis.patch.yml
+@@ -248,6 +248,11 @@
+       config:
+         mode: !!js process.env.DSH_PERMISSION_MODE ?? 'workspace-write'
+         workspaceRoot: !!js process.cwd()
++        # Network for confined commands: on, off or allowlist. A settings page saves the person's choice
++        # in this file, which replaces the two values below when present.
++        network: 'on'
++        allowedHosts: []
++        networkFile: !!js dshHomePath('harness-studio', 'network.json')
+ 
+     - id: bash-sandbox
+       name: '@deepseek-ai/dsh-bash-sandbox'
+diff --git a/packages/sandbox/sandbox-local/README.md b/packages/sandbox/sandbox-local/README.md
+index 537d22f0..40f32c2e 100644
+--- a/packages/sandbox/sandbox-local/README.md
++++ b/packages/sandbox/sandbox-local/README.md
+@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
+ 
+ ## Summary
+ 
+-`dsh-sandbox-local` confines commands and their descendants on Linux, macOS, and Windows while sharing the host kernel and filesystem. It chooses a supported platform runner automatically and fails with `SANDBOX_UNAVAILABLE` when none is usable, so commands never silently run without confinement. Each execution reports `full` or `partial` enforcement plus denial and runner-failure signatures, allowing callers to distinguish an unavailable or broken sandbox from a policy denial. Choose it for host-local bash or pwsh execution; use a container or remote executor when the process needs an isolated environment.
++`dsh-sandbox-local` confines commands and their descendants on Linux, macOS, and Windows while sharing the host kernel and filesystem. It chooses a supported platform runner automatically and fails with `SANDBOX_UNAVAILABLE` when none is usable, so commands never silently run without confinement. Each execution reports `full` or `partial` enforcement plus denial and runner-failure signatures, allowing callers to distinguish an unavailable or broken sandbox from a policy denial. It also limits network access when the policy asks: `off` blocks direct connections to other hosts, and `allowlist` routes HTTP and HTTPS through a proxy it runs that admits only the listed hosts. Choose it for host-local bash or pwsh execution; use a container or remote executor when the process needs an isolated environment.
+ 
+ ## Table of Contents
+ 
+@@ -52,6 +52,10 @@ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-a
+ 
+ With the provider mounted, a command runs under the mode you resolve per call. Enforcement is a reported fact, not a promise: `full` means the backend governs every promised file effect, while `partial` means it governs only a subset — the Windows ACL rung (hard-link, unconfined-read, and AppContainer-ACL boundaries) and older Landlock ABIs are the current partial cases, so a consumer that requires an absolute boundary can reject or surface them. Denied file effects surface through the backend's denial dialect, and a runner that fails before executing the command reports a structured runner-failure signature.
+ 
++### Network policy
++
++With `network: { mode: 'off' }` a confined command cannot open direct connections to other hosts. With `{ mode: 'allowlist', hosts }` it cannot either, except through a proxy the provider starts on first use (one per host list, closed with the provider): the command's environment points `HTTP_PROXY`, `HTTPS_PROXY` and their lower-case forms at it, and `NODE_USE_ENV_PROXY=1` makes Node honor them. The proxy opens `CONNECT` tunnels and forwards plain HTTP only to listed hosts; any other host gets HTTP 403 with a sentence naming the host. The proxy canonicalizes every target before checking it (IP literals in any spelling match only an exact IP entry, never a name or wildcard; a host containing `%`, such as an IPv6 zone suffix, is refused), rewrites `Host` on plain HTTP to the checked host, and is closed as soon as the policy stops naming its host list. A program that ignores the proxy variables cannot connect directly. Neither mode is a complete barrier: see [Limitations](#limitations). `on`, or no network field, changes nothing. Landlock and the Windows runner cannot limit network access, so a limited policy there fails closed with `SandboxNetworkUnavailableError` (`SANDBOX_UNAVAILABLE`) instead of running with unrestricted network.
++
+ ### Failures and recovery
+ 
+ An unsupported platform or an unusable runner fails closed: `confine()` rejects with `SANDBOX_UNAVAILABLE` and names the runner options for the platform, and the consumer surfaces that error rather than running the command unconfined. A runner that starts but refuses its profile is identified by its fatal stderr signature and exit code, so a broken sandbox is not mistaken for a denied command. The `runnerCommand` override is an operator assertion: it skips functional probes and assumes the configured runner implements the bwrap-compatible profile honestly.
+@@ -78,6 +82,8 @@ The `@deepseek-ai/node-addon-system/landlock-run` API supplies the platform laun
+ 
+ The Seatbelt profile is allow-default with `(deny file-write*)` plus write allow-lists derived from the shared `writableRoots` helper, so exactly the mode's promised file effects are governed; every root is canonicalized because Seatbelt matches resolved paths (`/tmp` IS `/private/tmp`).
+ 
++Network limits: Seatbelt adds `(deny network-outbound (remote ip "*:*"))` then `(allow network-outbound (remote ip "localhost:*"))`, so loopback stays reachable (the `allowlist` proxy listens there) and Unix-domain sockets, including name resolution, are unaffected. bwrap adds `--unshare-net`, giving the command a network namespace with only its own loopback. Under `allowlist` the proxy listens on a Unix socket outside `/tmp` (in `$XDG_RUNTIME_DIR`, else `~/.cache`), which the read-only root exposes inside the namespace; the command runs under a small bridge, the host's Node run with `-e` (`ELECTRON_RUN_AS_NODE=1` for Electron), that listens on loopback port 3128 inside the namespace, forwards each connection to that socket, and then runs the command with the proxy variables set. Source: [`src/network-proxy.ts`](src/network-proxy.ts).
++
+ The Windows rung keeps one deterministic write SID and standing ACE per workspace, while every live session/workspace pair gets a random private temp directory with a distinct SID and revocable ACE — sessions sharing a workspace share its intended write authority without inheriting one another's temp authority. A fresh provider always chooses a new temp path and SID, so crash residue cannot block or authorize a resumed session. The rung reports `partial` enforcement because NTFS hard links alias one file object across paths, reads stay unconfined, and a tree another AppContainer tool has ACL'd with a package SID is unreadable to the Low-integrity child.
+ 
+ With the built-in Windows runner and a skill registry, this provider registers the [ACL diagnosis skill](../sandbox-windows-acl/README.md#failures-and-recovery). An operator-supplied `runnerCommand` does not register it; provider disposal removes the skill and its extracted resources.
+@@ -131,6 +137,10 @@ These limits define when the provider is a poor fit or needs special operational
+ - **Windows ACL enforcement is partial** — NTFS hard links alias one file object across workspace and external paths, reads stay unconfined, and a tree another AppContainer tool has ACL'd with a package SID is unreadable to the Low-integrity child. The provider reports `enforcement: 'partial'` rather than overstating that boundary as full.
+ - **Landlock may be partial** — older supported kernel ABIs confine only the access classes they expose, reported as `enforcement: 'partial'` rather than overstated as full.
+ - **Seatbelt depends on deprecated `sandbox-exec`** — macOS still ships it, but this provider cannot replace or probe that private policy engine if Apple removes it.
++- **Network limits need bwrap or Seatbelt** — Landlock-only Linux hosts and Windows fail closed when a policy limits network access.
++- **`off` and `allowlist` block direct connections only** — Seatbelt keeps every loopback port reachable (local dev servers and databases need it), so a local proxy or SSH tunnel on this computer (Clash on `127.0.0.1:7890`, `ssh -D`, a corporate proxy) still carries traffic out on macOS; bwrap's own namespace hides host loopback, but Unix sockets stay reachable, so the Docker socket, D-Bus (and `systemd-run` through it) or a proxy listening on a socket do on Linux. macOS `open URL` and launchd jobs run outside the sandbox altogether.
++- **The `allowlist` proxy covers HTTP and HTTPS** — other protocols (ssh, raw TCP, UDP) cannot connect at all under `allowlist`; the proxy sees host names and ports, not encrypted content, and does not re-check the addresses a name resolves to.
++- **The bwrap bridge needs the host's Node** — it runs `process.execPath`, which must be executable inside the read-only root; when it lies under `/tmp` (an AppImage mounts itself at `/tmp/.mount_*`), its directory, or the whole AppImage mount, is bound back read-only over workspace-write's empty `/tmp`.
+ - **Runner selection is cached for the provider lifetime** — installing, removing, or repairing a runner requires reloading the plugin before selection changes.
+ - **`runnerCommand` is an operator assertion** — a configured custom runner skips functional probes and is assumed to implement the bwrap-compatible profile honestly; if it is itself a Bash script, its interpreter startup runs before that script applies confinement.
+ 
+diff --git a/packages/sandbox/sandbox-local/src/index.ts b/packages/sandbox/sandbox-local/src/index.ts
+index 45028746..93254360 100644
+--- a/packages/sandbox/sandbox-local/src/index.ts
++++ b/packages/sandbox/sandbox-local/src/index.ts
+@@ -22,9 +22,10 @@
+  */
+ 
+ import { spawnSync } from 'node:child_process'
+-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+-import { tmpdir } from 'node:os'
+-import { join } from 'node:path'
++import { randomBytes } from 'node:crypto'
++import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
++import { homedir, tmpdir } from 'node:os'
++import { dirname, join, sep } from 'node:path'
+ import { fileURLToPath } from 'node:url'
+ import {
+   LAUNCHER_BIN,
+@@ -34,12 +35,18 @@ import {
+ } from '@deepseek-ai/node-addon-system/landlock-run'
+ import { Context } from '@deepseek-ai/cordis'
+ import z from '@deepseek-ai/schemastery'
+-import { SandboxProvider, SandboxUnavailableError, canonicalPath } from '@deepseek-ai/dsh-sandbox'
++import { SandboxNetworkUnavailableError, SandboxProvider, SandboxUnavailableError, canonicalPath } from '@deepseek-ai/dsh-sandbox'
+ import type { ConfinedArgv, ConfinedSandboxMode, RunnerFailureRule, SandboxEnforcement, SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
+ import type { SessionId } from '@deepseek-ai/dsh-session'
+ import { AclWriteGrant, assertTempRootOutsideWorkspace, registerAclDiagnosisSkill, tempWriteSid, workspaceWriteSid } from '@deepseek-ai/dsh-sandbox-windows-acl'
+ import { assertNever } from '@deepseek-ai/dsh-util-values'
+-import { bwrapProfileArgs, landlockProfileArgs, seatbeltProfileArgs } from './profiles.ts'
++import { BRIDGE_SOURCE, proxyEnvironment, startNetworkProxy, type NetworkProxy } from './network-proxy.ts'
++import { bwrapProfileArgs, landlockProfileArgs, limitsNetwork, seatbeltProfileArgs } from './profiles.ts'
++
++export { hostAllowed } from './network-proxy.ts'
++
++/** The loopback port the Linux bridge listens on inside each command's own network namespace. */
++const BRIDGE_PORT = 3128
+ 
+ /** Plugin config. All optional — `static Config` supplies the defaults. */
+ export interface Config {
+@@ -274,6 +281,8 @@ export class LocalSandboxProvider extends SandboxProvider {
+    */
+   private readonly workspaceGrants = new Map<string, AclWriteGrant>()
+   private readonly tempCapabilities = new Map<string, AclTempCapability>()
++  /** Running `allowlist` proxies, one per listening kind and host list. */
++  private readonly proxies = new Map<string, Promise<NetworkProxy>>()
+ 
+   constructor(ctx: Context, config: Config) {
+     super(ctx)
+@@ -308,6 +317,90 @@ export class LocalSandboxProvider extends SandboxProvider {
+     ctx.effect(() => () => {
+       this.revokeAclGrants()
+     })
++    ctx.effect(() => () => {
++      const running = [...this.proxies.values()]
++      this.proxies.clear()
++      for (const proxy of running) {
++        void proxy.then(p => p.close()).catch(() => undefined)
++      }
++    }, 'sandbox-local: close network proxies')
++  }
++
++  /** The map key of the proxy for one listening kind and host list. */
++  private static proxyKey(hosts: readonly string[], kind: 'tcp' | 'unix'): string {
++    return `${kind}\n${hosts.join(',')}`
++  }
++
++  /**
++   * Close every running proxy except the one `keep` names (none when undefined). Called on each confined
++   * call with the proxy the current policy needs, so a host list the person has since changed or switched
++   * off stops admitting connections at once instead of lingering until shutdown.
++   */
++  private closeProxiesExcept(keep: string | undefined): void {
++    for (const [key, proxy] of this.proxies) {
++      if (key === keep) continue
++      this.proxies.delete(key)
++      void proxy.then(p => p.close()).catch(() => undefined)
++    }
++  }
++
++  /** Start, or reuse, the proxy for one host list, on loopback TCP or on a Unix socket. */
++  private proxyFor(hosts: readonly string[], kind: 'tcp' | 'unix'): Promise<NetworkProxy> {
++    const key = LocalSandboxProvider.proxyKey(hosts, kind)
++    this.closeProxiesExcept(key)
++    let proxy = this.proxies.get(key)
++    if (proxy === undefined) {
++      let listen: { port: 0 } | { socketPath: string } = { port: 0 }
++      if (kind === 'unix') {
++        // Outside /tmp, which bwrap replaces with an empty tmpfs under workspace-write. A random name, so a
++        // new proxy never collides with one still closing.
++        const dir = process.env.XDG_RUNTIME_DIR ?? join(homedir(), '.cache')
++        mkdirSync(dir, { recursive: true })
++        const socketPath = join(dir, `dsh-net-${randomBytes(8).toString('hex')}.sock`)
++        rmSync(socketPath, { force: true })
++        listen = { socketPath }
++      }
++      const started = startNetworkProxy(hosts, listen)
++      proxy = started
++      started.catch(() => { if (this.proxies.get(key) === started) this.proxies.delete(key) })
++      this.proxies.set(key, started)
++    }
++    return proxy
++  }
++
++  /**
++   * Extra bwrap mounts the `allowlist` bridge needs: the running executable is the bridge's interpreter, and
++   * when it lies under /tmp (an AppImage mounts itself at /tmp/.mount_*), workspace-write's empty /tmp would
++   * hide it, so its directory (the whole AppImage mount when there is one) is bound back read-only.
++   */
++  private static bridgeMounts(policy: SandboxPolicy): string[] {
++    if (policy.network?.mode !== 'allowlist' || policy.mode !== 'workspace-write') return []
++    let executable = process.execPath
++    try {
++      executable = realpathSync(executable)
++    } catch {
++      // Keep the path as given.
++    }
++    const appDir = process.env.APPDIR
++    const dir = appDir !== undefined && appDir !== '' && executable.startsWith(appDir.endsWith(sep) ? appDir : appDir + sep) ? appDir : dirname(executable)
++    return dir === '/tmp' || dir.startsWith('/tmp/') ? ['--ro-bind', dir, dir] : []
++  }
++
++  /**
++   * The command argv with the network policy applied inside the runner: unchanged unless the policy is
++   * `allowlist`, which points the command at the proxy (and, under bwrap, runs it under the bridge).
++   */
++  private async networkArgv(argv: readonly string[], policy: SandboxPolicy, runner: 'bwrap' | 'seatbelt'): Promise<readonly string[]> {
++    const network = policy.network
++    if (network?.mode !== 'allowlist') return argv
++    if (runner === 'seatbelt') {
++      const proxy = await this.proxyFor(network.hosts, 'tcp')
++      if (!('port' in proxy.address)) throw new Error('sandbox-local: expected a loopback proxy')
++      return ['/usr/bin/env', ...proxyEnvironment(proxy.address.port), ...argv]
++    }
++    const proxy = await this.proxyFor(network.hosts, 'unix')
++    if (!('socketPath' in proxy.address)) throw new Error('sandbox-local: expected a Unix-socket proxy')
++    return ['/usr/bin/env', 'ELECTRON_RUN_AS_NODE=1', ...proxyEnvironment(BRIDGE_PORT), process.execPath, '-e', BRIDGE_SOURCE, proxy.address.socketPath, String(BRIDGE_PORT), ...argv]
+   }
+ 
+   /**
+@@ -325,18 +418,31 @@ export class LocalSandboxProvider extends SandboxProvider {
+   async confine(argv: readonly string[], policy: SandboxPolicy, signal?: AbortSignal): Promise<ConfinedArgv> {
+     signal?.throwIfAborted()
+     policy = { ...policy, workspaceRoot: canonicalPath(policy.workspaceRoot) }
++    // Only `allowlist` needs a proxy; any other policy closes the ones a previous policy started.
++    if (policy.network?.mode !== 'allowlist') this.closeProxiesExcept(undefined)
+     if (this.runnerCommand !== undefined) {
+-      return Promise.resolve<ConfinedArgv>({
+-        argv: [...this.runnerCommand, ...bwrapProfileArgs(policy), '--', ...argv],
++      return {
++        argv: [...this.runnerCommand, ...bwrapProfileArgs(policy), ...LocalSandboxProvider.bridgeMounts(policy), '--', ...await this.networkArgv(argv, policy, 'bwrap')],
+         enforcement: 'full',
+         denialSignatures: DENIAL_SIGNATURES.runnerCommand,
+         runnerFailureRules: [{ fatalSignatures: this.configuredRunnerFailureSignatures }],
+-      })
++      }
+     }
+     const selected = this.selectRunner(policy.mode)
++    let commandArgv = argv
++    if (limitsNetwork(policy)) {
++      const runner = selected.runner
++      if (runner !== 'bwrap' && runner !== 'seatbelt') {
++        throw new SandboxNetworkUnavailableError(policy.network?.mode ?? 'off', runner === 'landlock'
++          ? 'Install bubblewrap (the bwrap command), which can give each command a network of its own; Landlock alone cannot.'
++          : 'The Windows sandbox cannot limit network access.')
++      }
++      commandArgv = await this.networkArgv(argv, policy, runner)
++    }
+     const runnerArgv = this.runnerArgv(selected.runner, policy)
++    if (selected.runner === 'bwrap') runnerArgv.push(...LocalSandboxProvider.bridgeMounts(policy))
+     return Promise.resolve<ConfinedArgv>({
+-      argv: [...runnerArgv, '--', ...argv],
++      argv: [...runnerArgv, '--', ...commandArgv],
+       enforcement: selected.enforcement,
+       denialSignatures: DENIAL_SIGNATURES[selected.runner],
+       runnerFailureRules: RUNNER_FAILURE_RULES[selected.runner],
+diff --git a/packages/sandbox/sandbox-local/src/network-proxy.ts b/packages/sandbox/sandbox-local/src/network-proxy.ts
+new file mode 100644
+index 00000000..70c26bae
+--- /dev/null
++++ b/packages/sandbox/sandbox-local/src/network-proxy.ts
+@@ -0,0 +1,260 @@
++/**
++ * The HTTP proxy behind the `allowlist` network policy. Confined processes cannot open connections of their
++ * own; their HTTP and HTTPS traffic reaches this proxy through the standard proxy variables, and the proxy
++ * connects only to allowed hosts. HTTPS goes through `CONNECT` tunnels, so the proxy sees the host name and
++ * port but never the encrypted content. Refused requests get HTTP 403 with a reason a person or model can
++ * read.
++ *
++ * @module @deepseek-ai/dsh-sandbox-local/network-proxy
++ */
++
++import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
++import { connect, isIP, type Socket } from 'node:net'
++
++/** A DNS name after canonicalization: non-empty labels of letters, digits, `-` and `_`. */
++const DNS_NAME = /^[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?(\.[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?)*$/
++
++/** A host as the proxy compares and connects to it. */
++export interface CanonicalHost {
++  /** The canonical spelling: a lower-case DNS name without a trailing dot, a dotted IPv4 address, or an IPv6 address without brackets. */
++  readonly host: string
++  /** 0 for a DNS name, else the IP version. An IPv4-mapped IPv6 address is reported as its IPv4 address. */
++  readonly ip: 0 | 4 | 6
++}
++
++/**
++ * Canonicalize one host the way the connection will see it, or undefined when it is not a plain DNS name or
++ * IP literal. WHATWG host parsing turns every IPv4 spelling (`127.1`, `0x7f.0.0.1`) into dotted form, IDN
++ * names into punycode, and IPv6 into its compressed form; an IPv4-mapped IPv6 address becomes the IPv4
++ * address it reaches. Anything with `%` (a zone suffix such as `[::1%.github.com]`, or percent-encoding) is
++ * refused outright, so the text checked is always the address connected to.
++ * @param raw - the host as a request names it, with or without IPv6 brackets.
++ * @returns the canonical host, or undefined when it is malformed.
++ */
++export function canonicalHost(raw: string): CanonicalHost | undefined {
++  if (raw === '' || /[%\s/\\@?#]/.test(raw)) return undefined
++  const bracketed = raw.startsWith('[') || raw.endsWith(']')
++  if (bracketed && !(raw.startsWith('[') && raw.endsWith(']'))) return undefined
++  const inner = bracketed ? raw.slice(1, -1) : raw
++  if (!bracketed && inner.includes(':')) {
++    // A bare IPv6 address, as an allowlist entry or `URL.hostname` may spell it.
++    if (isIP(inner) !== 6) return undefined
++  } else if (bracketed && isIP(inner) !== 6) {
++    return undefined
++  }
++  let hostname: string
++  try {
++    hostname = new URL(`http://${isIP(inner) === 6 ? `[${inner}]` : inner}/`).hostname
++  } catch {
++    return undefined
++  }
++  if (hostname.startsWith('[')) {
++    const v6 = hostname.slice(1, -1)
++    const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(v6)
++    if (mapped !== null) {
++      const hi = Number.parseInt(mapped[1] ?? '0', 16)
++      const lo = Number.parseInt(mapped[2] ?? '0', 16)
++      return { host: [hi >> 8, hi & 255, lo >> 8, lo & 255].join('.'), ip: 4 }
++    }
++    return { host: v6, ip: 6 }
++  }
++  if (isIP(hostname) === 4) return { host: hostname, ip: 4 }
++  const name = hostname.endsWith('.') ? hostname.slice(0, -1) : hostname
++  return DNS_NAME.test(name) ? { host: name, ip: 0 } : undefined
++}
++
++/**
++ * Whether an allowlist admits a host. `example.com` admits exactly that name; `*.example.com` admits its
++ * subdomains (not the bare name). Both sides are canonicalized ({@link canonicalHost}), so case, a trailing
++ * dot, IDN spellings and IPv6 brackets do not matter. An IP literal (IPv4, IPv6, or IPv4-mapped IPv6) matches
++ * only an entry naming the same address, never a name or a wildcard; a malformed host matches nothing.
++ * @param host - the host a request names.
++ * @param hosts - normalized allowlist entries.
++ * @returns whether the proxy may connect.
++ */
++export function hostAllowed(host: string, hosts: readonly string[]): boolean {
++  const target = canonicalHost(host)
++  if (target === undefined) return false
++  return hosts.some((entry) => {
++    if (target.ip === 0 && entry.startsWith('*.')) {
++      const suffix = canonicalHost(entry.slice(2))
++      return suffix !== undefined && suffix.ip === 0 && target.host.endsWith(`.${suffix.host}`)
++    }
++    const exact = canonicalHost(entry)
++    return exact !== undefined && exact.ip === target.ip && exact.host === target.host
++  })
++}
++
++/** A checked connection target: the canonical host to connect to, and its port. */
++export interface ProxyTarget extends CanonicalHost {
++  readonly port: number
++}
++
++/**
++ * Split `host:port` (with an optional bracketed IPv6 host) into a canonical target, or undefined when the
++ * host is malformed ({@link canonicalHost}) or the port is empty, zero or above 65535.
++ * @param authority - the `CONNECT` request target, such as `example.com:443` or `[::1]:80`.
++ * @param defaultPort - the port when the authority names none.
++ * @returns the target, or undefined.
++ */
++export function splitAuthority(authority: string, defaultPort: number): ProxyTarget | undefined {
++  const match = /^(\[[^\]]*\]|[^:[\]]+)(?::(\d{1,5}))?$/.exec(authority)
++  if (match === null) return undefined
++  const port = match[2] === undefined ? defaultPort : Number(match[2])
++  if (!(port > 0 && port < 65536)) return undefined
++  const host = canonicalHost(match[1] ?? '')
++  return host === undefined ? undefined : { ...host, port }
++}
++
++/** The `Host` header value for a target: brackets around IPv6, and the port unless it is the default. */
++function hostHeader(target: ProxyTarget, defaultPort: number): string {
++  const host = target.ip === 6 ? `[${target.host}]` : target.host
++  return target.port === defaultPort ? host : `${host}:${target.port}`
++}
++
++const refusal = (host: string): string =>
++  `Harness Studio blocked network access to ${host}: it is not in the allowed sites for commands. `
++  + 'Add it in Settings → General → Network for commands, or ask the user to approve this command with full access.\n'
++
++/** A running proxy and how confined processes reach it. */
++export interface NetworkProxy {
++  /** Where it listens: a loopback TCP port, or a Unix socket path. */
++  readonly address: { readonly port: number } | { readonly socketPath: string }
++  /** Stop accepting connections and end the open ones. */
++  close(): Promise<void>
++}
++
++/**
++ * Start a proxy for one allowlist.
++ * @param hosts - normalized allowlist entries.
++ * @param listen - `{ port: 0 }` for a loopback TCP port chosen by the system, or `{ socketPath }`.
++ * @returns the running proxy.
++ */
++export async function startNetworkProxy(hosts: readonly string[], listen: { port: 0 } | { socketPath: string }): Promise<NetworkProxy> {
++  const sockets = new Set<Socket>()
++  const track = (socket: Socket): Socket => {
++    sockets.add(socket)
++    socket.once('close', () => sockets.delete(socket))
++    return socket
++  }
++
++  const server: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
++    // A plain-HTTP proxy request carries an absolute URL.
++    let target: URL
++    try {
++      target = new URL(req.url ?? '')
++    } catch {
++      res.writeHead(400, { 'content-type': 'text/plain' }).end('Expected an absolute http:// URL.\n')
++      return
++    }
++    if (target.protocol !== 'http:') {
++      res.writeHead(400, { 'content-type': 'text/plain' }).end('Only http:// requests are proxied directly; HTTPS uses CONNECT.\n')
++      return
++    }
++    const checked = splitAuthority(target.host, 80)
++    if (checked === undefined) {
++      res.writeHead(400, { 'content-type': 'text/plain' }).end('Expected an absolute http:// URL with a valid host and port.\n')
++      return
++    }
++    if (!hostAllowed(checked.host, hosts)) {
++      res.writeHead(403, { 'content-type': 'text/plain' }).end(refusal(checked.host))
++      return
++    }
++    const headers = { ...req.headers }
++    delete headers['proxy-connection']
++    delete headers['proxy-authorization']
++    // The Host header names the checked target, never what the client sent: a request to an allowed host
++    // must not carry another site's name for a shared front end (CDN domain fronting) to route by.
++    headers.host = hostHeader(checked, 80)
++    const upstream = httpRequest({
++      host: checked.host,
++      port: checked.port,
++      method: req.method,
++      path: `${target.pathname}${target.search}`,
++      headers,
++    }, (response) => {
++      res.writeHead(response.statusCode ?? 502, response.headers)
++      response.pipe(res)
++    })
++    upstream.on('error', (error) => {
++      if (!res.headersSent) res.writeHead(502, { 'content-type': 'text/plain' })
++      res.end(`Could not reach ${checked.host}: ${error.message}\n`)
++    })
++    req.pipe(upstream)
++  })
++
++  server.on('connect', (req: IncomingMessage, client: Socket, head: Buffer) => {
++    track(client)
++    client.on('error', () => client.destroy())
++    const authority = splitAuthority(req.url ?? '', 443)
++    if (authority === undefined) {
++      client.end('HTTP/1.1 400 Bad Request\r\ncontent-type: text/plain\r\n\r\nExpected host:port with a valid host and port.\n')
++      return
++    }
++    if (!hostAllowed(authority.host, hosts)) {
++      const body = refusal(authority.host)
++      client.end(`HTTP/1.1 403 Forbidden\r\ncontent-type: text/plain\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body}`)
++      return
++    }
++    const upstream = track(connect(authority.port, authority.host, () => {
++      client.write('HTTP/1.1 200 Connection Established\r\n\r\n')
++      if (head.length > 0) upstream.write(head)
++      upstream.pipe(client)
++      client.pipe(upstream)
++    }))
++    upstream.on('error', (error) => {
++      if (!client.destroyed) client.end(`HTTP/1.1 502 Bad Gateway\r\ncontent-type: text/plain\r\n\r\nCould not reach ${authority.host}: ${error.message}\n`)
++    })
++  })
++  server.on('connection', socket => { track(socket) })
++
++  await new Promise<void>((resolve, reject) => {
++    server.once('error', reject)
++    if ('socketPath' in listen) server.listen(listen.socketPath, resolve)
++    else server.listen(0, '127.0.0.1', resolve)
++  })
++  const bound = server.address()
++  const address = typeof bound === 'string' ? { socketPath: bound } : { port: bound?.port ?? 0 }
++  return {
++    address,
++    close: () => new Promise<void>((resolve) => {
++      for (const socket of sockets) socket.destroy()
++      server.close(() => resolve())
++    }),
++  }
++}
++
++/**
++ * Environment assignments that send a process's HTTP and HTTPS traffic to a proxy on the loopback
++ * interface, in the spellings common tools read (curl reads only the lower-case `http_proxy`; Node reads
++ * the variables when `NODE_USE_ENV_PROXY` is set).
++ * @param port - the proxy's loopback port as the process sees it.
++ * @returns `NAME=value` strings.
++ */
++export function proxyEnvironment(port: number): string[] {
++  const url = `http://127.0.0.1:${port}`
++  return [
++    `HTTP_PROXY=${url}`, `HTTPS_PROXY=${url}`, `http_proxy=${url}`, `https_proxy=${url}`,
++    'NO_PROXY=localhost,127.0.0.1,::1', 'no_proxy=localhost,127.0.0.1,::1', 'NODE_USE_ENV_PROXY=1',
++  ]
++}
++
++/**
++ * Source of the bridge a bwrap-confined process runs under for `allowlist` (Node's `-e`): inside the
++ * process's own network namespace it listens on loopback at the given port and forwards each connection to
++ * the proxy's Unix socket, which is the only way out of the namespace; then it runs the command with the
++ * proxy variables set and exits with its status. Arguments: socket path, port, then the command argv.
++ */
++export const BRIDGE_SOURCE = [
++  "const net=require('node:net'),cp=require('node:child_process');",
++  'const [sock,port,...cmd]=process.argv.slice(1);',
++  "const server=net.createServer(c=>{const u=net.connect(sock);c.pipe(u);u.pipe(c);c.on('error',()=>u.destroy());u.on('error',()=>c.destroy())});",
++  "server.on('error',e=>{process.stderr.write('harness-network-bridge: '+e.message+'\\n');process.exit(126)});",
++  "server.listen(Number(port),'127.0.0.1',()=>{",
++  'const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;',
++  "const child=cp.spawn(cmd[0],cmd.slice(1),{stdio:'inherit',env});",
++  "for(const s of ['SIGINT','SIGTERM','SIGHUP'])process.on(s,()=>child.kill(s));",
++  "child.on('error',e=>{process.stderr.write('harness-network-bridge: '+e.message+'\\n');process.exit(127)});",
++  "child.on('exit',(code,signal)=>{server.close();if(signal){process.removeAllListeners(signal);process.kill(process.pid,signal)}else process.exit(code??1)})",
++  '})',
++].join('')
+diff --git a/packages/sandbox/sandbox-local/src/profiles.ts b/packages/sandbox/sandbox-local/src/profiles.ts
+index 23c10d5f..3a05ae91 100644
+--- a/packages/sandbox/sandbox-local/src/profiles.ts
++++ b/packages/sandbox/sandbox-local/src/profiles.ts
+@@ -19,9 +19,21 @@ export function bwrapProfileArgs(policy: SandboxPolicy): string[] {
+     args.push('--tmpfs', '/tmp')
+     args.push('--bind', policy.workspaceRoot, policy.workspaceRoot)
+   }
++  // A network namespace of its own, with only loopback: no route to other hosts. Under `allowlist` the
++  // proxy's Unix socket, outside /tmp and visible through the read-only root, is the only way out.
++  if (limitsNetwork(policy)) args.push('--unshare-net')
+   return args
+ }
+ 
++/**
++ * Whether a policy asks the backend to limit network access.
++ * @param policy - the policy for one execution.
++ * @returns true for `off` and `allowlist`.
++ */
++export function limitsNetwork(policy: SandboxPolicy): boolean {
++  return policy.network !== undefined && policy.network.mode !== 'on'
++}
++
+ /**
+  * Build the Landlock launcher grants for one file-effect policy.
+  * @param policy - file-effect policy to express as Landlock allow-list grants.
+@@ -54,5 +66,10 @@ export function seatbeltProfileArgs(policy: SandboxPolicy): string[] {
+   if (roots.length > 0) {
+     forms.push(`(allow file-write* ${roots.map(root => `(subpath ${sbplString(root)})`).join(' ')})`)
+   }
++  // No connections to other hosts; the loopback interface stays open, which is how `allowlist` reaches its
++  // proxy and how tests reach a local server. Unix-domain sockets (name resolution among them) are untouched.
++  if (limitsNetwork(policy)) {
++    forms.push('(deny network-outbound (remote ip "*:*"))', '(allow network-outbound (remote ip "localhost:*"))')
++  }
+   return ['-p', forms.join(' ')]
+ }
+diff --git a/packages/sandbox/sandbox-local/tests/network.spec.ts b/packages/sandbox/sandbox-local/tests/network.spec.ts
+new file mode 100644
+index 00000000..0e13a569
+--- /dev/null
++++ b/packages/sandbox/sandbox-local/tests/network.spec.ts
+@@ -0,0 +1,247 @@
++/**
++ * Network policy in the local backend: the profile dialects, failing closed where a runner cannot limit
++ * network access, the `allowlist` argv on each runner, and the proxy itself against a loopback server.
++ */
++
++import { createServer, request, type Server } from 'node:http'
++import { connect } from 'node:net'
++import { afterEach, describe, expect, it } from 'vitest'
++import { Context } from '@deepseek-ai/cordis'
++import { SANDBOX_UNAVAILABLE, SandboxNetworkUnavailableError } from '@deepseek-ai/dsh-sandbox'
++import type { SandboxPolicy } from '@deepseek-ai/dsh-sandbox'
++import { LocalSandboxProvider, hostAllowed } from '@deepseek-ai/dsh-sandbox-local'
++import { BRIDGE_SOURCE, canonicalHost, proxyEnvironment, splitAuthority, startNetworkProxy, type NetworkProxy } from '../src/network-proxy.ts'
++import { bwrapProfileArgs, seatbeltProfileArgs } from '../src/profiles.ts'
++
++const OFF: SandboxPolicy = { mode: 'workspace-write', workspaceRoot: '/ws', network: { mode: 'off' } }
++const ON: SandboxPolicy = { mode: 'workspace-write', workspaceRoot: '/ws', network: { mode: 'on' } }
++const LIST: SandboxPolicy = { mode: 'workspace-write', workspaceRoot: '/ws', network: { mode: 'allowlist', hosts: ['registry.npmjs.org', '*.github.com'] } }
++
++const closers: Array<() => Promise<void>> = []
++afterEach(async () => { for (const close of closers.splice(0)) await close() })
++
++async function provider(internals: LocalSandboxProvider['internals']) {
++  const ctx = new Context()
++  await ctx.plugin(LocalSandboxProvider, {})
++  const sandbox = ctx.sandbox as LocalSandboxProvider
++  sandbox.internals = internals
++  closers.push(() => ctx.fiber.dispose())
++  return sandbox
++}
++
++describe('network profile dialects', () => {
++  it('bwrap gives a limited command a network namespace of its own, and leaves `on` alone', () => {
++    expect(bwrapProfileArgs(OFF)).toContain('--unshare-net')
++    expect(bwrapProfileArgs(LIST)).toContain('--unshare-net')
++    expect(bwrapProfileArgs(ON)).not.toContain('--unshare-net')
++    expect(bwrapProfileArgs({ mode: 'read-only', workspaceRoot: '/ws' })).not.toContain('--unshare-net')
++  })
++
++  it('seatbelt denies outbound IP connections except to loopback', () => {
++    const profile = seatbeltProfileArgs(OFF)[1] as string
++    expect(profile).toContain('(deny network-outbound (remote ip "*:*")) (allow network-outbound (remote ip "localhost:*"))')
++    expect(seatbeltProfileArgs(ON)[1]).not.toContain('network')
++  })
++})
++
++describe('confining with a network policy', () => {
++  it('fails closed on Landlock, which cannot limit network access, and still runs `on` there', async () => {
++    const sandbox = await provider({ platform: 'linux', probeBwrap: () => false, probeLandlock: () => 'full', landlockLauncher: '/fake/landlock-run' })
++    const error = await sandbox.confine(['true'], OFF).catch((e: unknown) => e)
++    expect(error).toBeInstanceOf(SandboxNetworkUnavailableError)
++    expect((error as SandboxNetworkUnavailableError).code).toBe(SANDBOX_UNAVAILABLE)
++    expect((error as Error).message).toMatch(/Install bubblewrap/)
++    expect((await sandbox.confine(['true'], ON)).argv[0]).toBe('/fake/landlock-run')
++  })
++
++  it('points a Seatbelt command at a loopback proxy under `allowlist`', async () => {
++    const sandbox = await provider({ platform: 'darwin' })
++    const confined = await sandbox.confine(['curl', 'https://registry.npmjs.org'], LIST)
++    const separator = confined.argv.indexOf('--')
++    const command = confined.argv.slice(separator + 1)
++    expect(command[0]).toBe('/usr/bin/env')
++    const port = Number(/HTTPS_PROXY=http:\/\/127\.0\.0\.1:(\d+)/.exec(command.join(' '))?.[1])
++    expect(port).toBeGreaterThan(0)
++    expect(command.slice(-2)).toEqual(['curl', 'https://registry.npmjs.org'])
++    // The same host list reuses one proxy.
++    const again = await sandbox.confine(['true'], LIST)
++    expect(again.argv.join(' ')).toContain(`127.0.0.1:${port}`)
++  })
++
++  it('runs a bwrap command under the bridge to a Unix-socket proxy under `allowlist`', async () => {
++    const sandbox = await provider({ platform: 'linux', probeBwrap: () => true })
++    const confined = await sandbox.confine(['curl', 'https://registry.npmjs.org'], LIST)
++    expect(confined.argv[0]).toBe('bwrap')
++    expect(confined.argv).toContain('--unshare-net')
++    const command = confined.argv.slice(confined.argv.indexOf('--') + 1)
++    expect(command.slice(0, 2)).toEqual(['/usr/bin/env', 'ELECTRON_RUN_AS_NODE=1'])
++    expect(command).toContain(BRIDGE_SOURCE)
++    expect(command).toContain('HTTPS_PROXY=http://127.0.0.1:3128')
++    const socketPath = command[command.indexOf(BRIDGE_SOURCE) + 1] as string
++    expect(socketPath).toMatch(/dsh-net-[0-9a-f]{16}\.sock$/)
++    expect(command.slice(-2)).toEqual(['curl', 'https://registry.npmjs.org'])
++  })
++
++  it('binds an AppImage mount back inside bwrap, since workspace-write hides /tmp and the bridge runs the app binary', async () => {
++    const sandbox = await provider({ platform: 'linux', probeBwrap: () => true })
++    const execPath = process.execPath
++    const appDir = process.env.APPDIR
++    try {
++      process.env.APPDIR = '/tmp/.mount_HarnessTest'
++      process.execPath = '/tmp/.mount_HarnessTest/harness-studio'
++      const confined = await sandbox.confine(['true'], LIST)
++      const runner = confined.argv.slice(0, confined.argv.indexOf('--'))
++      const bind = runner.indexOf('/tmp/.mount_HarnessTest')
++      expect(runner.slice(bind - 1, bind + 2)).toEqual(['--ro-bind', '/tmp/.mount_HarnessTest', '/tmp/.mount_HarnessTest'])
++      expect(bind).toBeGreaterThan(runner.indexOf('/tmp'))
++      // Not needed outside allowlist, nor when the binary lives elsewhere.
++      expect((await sandbox.confine(['true'], OFF)).argv).not.toContain('/tmp/.mount_HarnessTest')
++      delete process.env.APPDIR
++      process.execPath = '/usr/lib/harness-studio/harness-studio'
++      expect((await sandbox.confine(['true'], LIST)).argv).not.toContain('/usr/lib/harness-studio')
++    } finally {
++      process.execPath = execPath
++      if (appDir === undefined) delete process.env.APPDIR
++      else process.env.APPDIR = appDir
++    }
++  })
++
++  it('closes a proxy as soon as the policy stops naming its host list', async () => {
++    const sandbox = await provider({ platform: 'darwin' })
++    const portOf = (argv: readonly string[]) => Number(/HTTPS_PROXY=http:\/\/127\.0\.0\.1:(\d+)/.exec(argv.join(' '))?.[1])
++    const reachable = (port: number) => new Promise<boolean>((resolve) => {
++      const socket = connect(port, '127.0.0.1', () => { socket.destroy(); resolve(true) })
++      socket.on('error', () => resolve(false))
++    })
++    const settle = () => new Promise(resolve => setTimeout(resolve, 50))
++    const first = portOf((await sandbox.confine(['true'], LIST)).argv)
++    expect(await reachable(first)).toBe(true)
++    const second = portOf((await sandbox.confine(['true'], { ...LIST, network: { mode: 'allowlist', hosts: ['pypi.org'] } })).argv)
++    expect(second).not.toBe(first)
++    await settle()
++    expect(await reachable(first)).toBe(false)
++    expect(await reachable(second)).toBe(true)
++    await sandbox.confine(['true'], OFF)
++    await settle()
++    expect(await reachable(second)).toBe(false)
++  })
++})
++
++describe('allowlist matching', () => {
++  it('admits exact names and, with *., subdomains only', () => {
++    const hosts = ['registry.npmjs.org', '*.github.com', '10.0.0.5']
++    expect(hostAllowed('registry.npmjs.org', hosts)).toBe(true)
++    expect(hostAllowed('Registry.NPMJS.org.', hosts)).toBe(true)
++    expect(hostAllowed('evil-registry.npmjs.org', hosts)).toBe(false)
++    expect(hostAllowed('api.github.com', hosts)).toBe(true)
++    expect(hostAllowed('github.com', hosts)).toBe(false)
++    expect(hostAllowed('notgithub.com', hosts)).toBe(false)
++    expect(hostAllowed('10.0.0.5', hosts)).toBe(true)
++    expect(hostAllowed('example.com', hosts)).toBe(false)
++    expect(hostAllowed('xn--bcher-kva.github.com', hosts)).toBe(true)
++    expect(hostAllowed('bücher.github.com', hosts)).toBe(true)
++  })
++
++  it('never lets an IP literal match a name or wildcard, whatever its spelling', () => {
++    const hosts = ['*.github.com', 'localhost', '10.0.0.5']
++    // A zone suffix makes the text end in an allowed name while the connection goes to the address.
++    expect(hostAllowed('[::1%.github.com]', hosts)).toBe(false)
++    expect(hostAllowed('::1%.github.com', hosts)).toBe(false)
++    expect(hostAllowed('[::ffff:127.0.0.1%.github.com]', hosts)).toBe(false)
++    expect(hostAllowed('[::1]', hosts)).toBe(false)
++    expect(hostAllowed('[::ffff:7f00:1]', hosts)).toBe(false)
++    expect(hostAllowed('127.0.0.1', hosts)).toBe(false)
++    // Other spellings of an allowed address reach it, and are allowed as that address.
++    expect(hostAllowed('[::ffff:10.0.0.5]', hosts)).toBe(true)
++    expect(hostAllowed('10.0.5', hosts)).toBe(true)
++    expect(hostAllowed('0xa.0.0.5', hosts)).toBe(true)
++    expect(hostAllowed('[::ffff:10.0.0.6]', hosts)).toBe(false)
++    // Malformed hosts match nothing.
++    for (const bad of ['', '.github.com', 'a..github.com', 'a%2e.github.com', 'evil.com/.github.com', 'u@x.github.com', '[x.github.com]', '*.github.com']) {
++      expect(hostAllowed(bad, hosts)).toBe(false)
++    }
++  })
++
++  it('canonicalizes hosts to the address the connection uses', () => {
++    expect(canonicalHost('A.GitHub.com.')).toEqual({ host: 'a.github.com', ip: 0 })
++    expect(canonicalHost('[::FFFF:127.0.0.1]')).toEqual({ host: '127.0.0.1', ip: 4 })
++    expect(canonicalHost('[0:0::1]')).toEqual({ host: '::1', ip: 6 })
++    expect(canonicalHost('127.1')).toEqual({ host: '127.0.0.1', ip: 4 })
++    expect(canonicalHost('[::1%25eth0]')).toBeUndefined()
++    expect(canonicalHost('1.2.3.4.5')).toBeUndefined()
++  })
++
++  it('splits authorities, including IPv6 and missing ports', () => {
++    expect(splitAuthority('example.com:8443', 443)).toEqual({ host: 'example.com', ip: 0, port: 8443 })
++    expect(splitAuthority('example.com', 443)).toEqual({ host: 'example.com', ip: 0, port: 443 })
++    expect(splitAuthority('[::1]:80', 443)).toEqual({ host: '::1', ip: 6, port: 80 })
++    expect(splitAuthority('EXAMPLE.com.:8443', 443)).toEqual({ host: 'example.com', ip: 0, port: 8443 })
++    expect(splitAuthority('example.com:0', 443)).toBeUndefined()
++    expect(splitAuthority('example.com:', 443)).toBeUndefined()
++    expect(splitAuthority('example.com:65536', 443)).toBeUndefined()
++    expect(splitAuthority(':443', 443)).toBeUndefined()
++    expect(splitAuthority('[::1%.github.com]:443', 443)).toBeUndefined()
++    expect(splitAuthority('a:b:c', 443)).toBeUndefined()
++  })
++
++  it('sets the proxy variables in every common spelling', () => {
++    expect(proxyEnvironment(9)).toEqual(expect.arrayContaining(['http_proxy=http://127.0.0.1:9', 'HTTPS_PROXY=http://127.0.0.1:9', 'NODE_USE_ENV_PROXY=1']))
++  })
++})
++
++describe('the proxy', () => {
++  async function upstream(): Promise<{ server: Server, port: number }> {
++    const server = createServer((req, res) => { res.end(req.url === '/host' ? `host ${req.headers.host}` : `upstream saw ${req.method} ${req.url}`) })
++    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
++    closers.push(() => new Promise(resolve => server.close(() => resolve())))
++    return { server, port: (server.address() as { port: number }).port }
++  }
++  async function proxyFor(hosts: string[]): Promise<number> {
++    const proxy: NetworkProxy = await startNetworkProxy(hosts, { port: 0 })
++    closers.push(() => proxy.close())
++    return (proxy.address as { port: number }).port
++  }
++  const viaProxy = (proxyPort: number, url: string, headers: Record<string, string> = {}) => new Promise<{ status: number, body: string }>((resolve, reject) => {
++    request({ host: '127.0.0.1', port: proxyPort, path: url, method: 'GET', headers }, (res) => {
++      let body = ''
++      res.on('data', (chunk: Buffer) => { body += chunk.toString() })
++      res.on('end', () => resolve({ status: res.statusCode ?? 0, body }))
++    }).on('error', reject).end()
++  })
++  const tunnel = (proxyPort: number, authority: string) => new Promise<string>((resolve, reject) => {
++    const socket = connect(proxyPort, '127.0.0.1', () => socket.write(`CONNECT ${authority} HTTP/1.1\r\nHost: ${authority}\r\n\r\n`))
++    let reply = ''
++    socket.on('data', (chunk: Buffer) => { reply += chunk.toString(); if (reply.includes('\r\n\r\n')) { socket.destroy(); resolve(reply) } })
++    socket.on('error', reject)
++  })
++
++  it('forwards plain HTTP to an allowed host and refuses others with a readable 403', async () => {
++    const { port } = await upstream()
++    const proxyPort = await proxyFor(['127.0.0.1'])
++    expect(await viaProxy(proxyPort, `http://127.0.0.1:${port}/ok?x=1`)).toEqual({ status: 200, body: 'upstream saw GET /ok?x=1' })
++    const refused = await viaProxy(proxyPort, 'http://example.com/')
++    expect(refused.status).toBe(403)
++    expect(refused.body).toMatch(/blocked network access to example\.com/)
++  })
++
++  it('sends the checked host as Host, whatever Host the client sent', async () => {
++    const { port } = await upstream()
++    const proxyPort = await proxyFor(['127.0.0.1'])
++    expect((await viaProxy(proxyPort, `http://127.0.0.1:${port}/host`, { host: 'blocked.example' })).body).toBe(`host 127.0.0.1:${port}`)
++  })
++
++  it('refuses CONNECT to IP literals dressed as allowed names, and to bad ports', async () => {
++    const proxyPort = await proxyFor(['*.github.com'])
++    expect(await tunnel(proxyPort, '[::1%.github.com]:443')).toMatch(/^HTTP\/1\.1 400 Bad Request/)
++    expect(await tunnel(proxyPort, '[::ffff:127.0.0.1%.github.com]:443')).toMatch(/^HTTP\/1\.1 400 Bad Request/)
++    expect(await tunnel(proxyPort, '[::1]:443')).toMatch(/^HTTP\/1\.1 403 Forbidden/)
++    expect(await tunnel(proxyPort, 'api.github.com:')).toMatch(/^HTTP\/1\.1 400 Bad Request/)
++  })
++
++  it('opens CONNECT tunnels only to allowed hosts', async () => {
++    const { port } = await upstream()
++    const proxyPort = await proxyFor(['127.0.0.1'])
++    expect(await tunnel(proxyPort, `127.0.0.1:${port}`)).toMatch(/^HTTP\/1\.1 200 Connection Established/)
++    expect(await tunnel(proxyPort, 'example.com:443')).toMatch(/^HTTP\/1\.1 403 Forbidden/)
++  })
++})
+diff --git a/packages/sandbox/sandbox-local/tests/seatbelt.e2e.ts b/packages/sandbox/sandbox-local/tests/seatbelt.e2e.ts
+index 289fd4ea..d1768cc5 100644
+--- a/packages/sandbox/sandbox-local/tests/seatbelt.e2e.ts
++++ b/packages/sandbox/sandbox-local/tests/seatbelt.e2e.ts
+@@ -1,4 +1,5 @@
+-import { spawnSync } from 'node:child_process'
++import { execFile, spawnSync } from 'node:child_process'
++import { createServer } from 'node:http'
+ import { existsSync, readFileSync } from 'node:fs'
+ import { mkdtemp, rm } from 'node:fs/promises'
+ import { homedir, tmpdir } from 'node:os'
+@@ -95,6 +96,50 @@ describe.skipIf(!seatbeltUsable)('sandbox-local: real Seatbelt confinement throu
+     expect(existsSync(join(outside, 'denied.txt'))).toBe(false)
+   })
+ 
++  it('network off refuses a connection to another host and still reaches loopback', async () => {
++    const workdir = await tempDir(homedir())
++    const sandbox = await provider()
++    const policy: SandboxPolicy = { mode: 'workspace-write', workspaceRoot: workdir, network: { mode: 'off' } }
++    // 192.0.2.1 is reserved for documentation: unconfined it would time out; confined it is refused at once.
++    const outside = await runConfined(sandbox, 'curl -sS -m 5 http://192.0.2.1/ 2>&1; echo "exit=$?"', policy)
++    expect(outside.result.stdout).not.toContain('exit=0')
++    expect(outside.result.stdout).not.toMatch(/timed out/i)
++    const server = createServer((_req, res) => { res.end('loopback-ok') })
++    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
++    try {
++      const port = (server.address() as { port: number }).port
++      const confined = await sandbox.confine(['curl', '-sS', '-m', '5', `http://127.0.0.1:${port}/`], policy)
++      const local = await new Promise<string>((resolve) => {
++        execFile(confined.argv[0] as string, confined.argv.slice(1), { timeout: 10_000 }, (_error, stdout) => resolve(stdout))
++      })
++      expect(local).toBe('loopback-ok')
++    } finally {
++      await new Promise(resolve => server.close(resolve))
++    }
++  })
++
++  it('network allowlist admits listed hosts through the proxy and refuses the rest with a 403', async () => {
++    const workdir = await tempDir(homedir())
++    const sandbox = await provider()
++    const server = createServer((_req, res) => { res.end('allowed-ok') })
++    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
++    try {
++      const port = (server.address() as { port: number }).port
++      const policy: SandboxPolicy = { mode: 'workspace-write', workspaceRoot: workdir, network: { mode: 'allowlist', hosts: ['127.0.0.1'] } }
++      const run = async (url: string) => {
++        // curl skips the proxy for loopback through NO_PROXY, so ask for it explicitly here.
++        const confined = await sandbox.confine(['bash', '-c', `curl -sS -m 5 --proxy "$HTTP_PROXY" --noproxy '' ${url}`], policy)
++        return new Promise<string>((resolve) => {
++          execFile(confined.argv[0] as string, confined.argv.slice(1), { timeout: 10_000 }, (_error, stdout) => resolve(stdout))
++        })
++      }
++      expect(await run(`http://127.0.0.1:${port}/`)).toBe('allowed-ok')
++      expect(await run('http://example.com/')).toMatch(/blocked network access to example\.com/)
++    } finally {
++      await new Promise(resolve => server.close(resolve))
++    }
++  })
++
+   it('workspace-write grants /tmp and the user temp dir (the documented Seatbelt-profile temp areas)', async () => {
+     const workdir = await tempDir(homedir())
+     const hostTmp = await tempDir('/tmp')
+diff --git a/packages/sandbox/sandbox-policy/README.md b/packages/sandbox/sandbox-policy/README.md
+index 40057488..312f1a47 100644
+--- a/packages/sandbox/sandbox-policy/README.md
++++ b/packages/sandbox/sandbox-policy/README.md
+@@ -46,6 +46,9 @@ Load the package with a default mode; the fail-safe default is `read-only`, and
+ |---|---|---|
+ | `mode` | `read-only` | The deployment default mode a session starts from, validated at load |
+ | `workspaceRoot` | `process.cwd()` | Absolute fallback root for agentless calls or sessions without a cwd; relative values fail at load. Normal agent calls use the session's immutable cwd |
++| `network` | `on` | Network for confined commands: `on`, `off` or `allowlist` (see `SandboxNetwork` in `@deepseek-ai/dsh-sandbox`) |
++| `allowedHosts` | `[]` | Hosts `allowlist` admits; entries are lower-cased, stripped of scheme, path and port, and invalid ones dropped. `*.example.com` admits subdomains |
++| `networkFile` | none | Absolute path of a JSON file `{ "network": …, "allowedHosts": [...] }` that replaces the two fields above when it holds a valid `network`; re-read when it changes, so a settings page can switch the policy without a restart |
+ 
+ The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-sandbox-policy) is the exhaustive source for every accepted field and its JSDoc.
+ 
+@@ -140,6 +143,16 @@ When a ceiling narrows the mode, the text names the reason instead:
+ Current DSH file policy: read-only because plan mode is on, and file changes wait until the user approves the plan. Operations enforced by the DSH file sandbox cannot widen past read-only until that changes, and a sandbox escalation cannot lift it, so do not request one.
+ ```
+ 
++##### Network limits
++
++When `network` is `off` or `allowlist` and the mode is not `danger-full-access`, a few sentences follow the file policy, for example on macOS:
++
++```markdown
++Network for commands: off. Direct connections to other computers are blocked, so downloads, package installs and git fetches normally fail. This is not a complete barrier: programs on this computer that forward traffic, such as local proxies and SSH tunnels listening on its loopback interface, can still be reached, and system services (opening a URL with open, launchd jobs) can make requests outside the sandbox. Do not use them to get around this setting. A command that needs more network access can be retried once with sandbox_permissions danger-full-access, which the user must approve.
++```
++
++Under `allowlist` it names the hosts and the proxy variables instead. The middle sentence depends on the platform (`NETWORK_LEAKS`): on Linux it names Unix sockets, a local proxy or tunnel listening on one, the Docker socket, and D-Bus with systemd-run. The retry sentence is left out while a ceiling holds the session.
++
+ #### Token effect
+ 
+ One concise durable context message on the first request and each effective policy change; unchanged requests add nothing. `workspace-write` carries only the recorded session workspace path; platform-specific temporary paths are summarized without adding host-dependent bytes.
+@@ -156,7 +169,9 @@ The stable system prompt remains byte-identical across mode changes. A changed f
+ These limits define the policy surface this package provides. They are current package constraints, not a general sandbox comparison or a task backlog.
+ 
+ - **One primary workspace root per session** — policy resolves `SessionHeader.cwd`; extra writable roots are not part of `SandboxExecutionPolicy`.
+-- **File-effect modes only** — `SandboxMode` governs file effects; network and process policy are outside its vocabulary, so no knob here restricts them.
++- **Network limits are not a complete barrier** — loopback stays reachable so local dev servers and databases keep working, so a local proxy or SSH tunnel (Clash on `127.0.0.1:7890`, `ssh -D`, a corporate proxy) still carries traffic out on macOS, and Unix sockets (the Docker socket, D-Bus and `systemd-run`, a proxy listening on one) do on Linux; macOS `open URL` and launchd also act outside the sandbox. The model is told so rather than told that commands cannot connect.
++- **Network policy is per deployment, not per session** — `network` and `networkFile` apply to every session; there is no per-session network override or escalation narrower than `danger-full-access`.
++- **Process policy is outside the vocabulary** — no knob here restricts which processes a command may see or signal beyond what the backend does.
+ - **Temporary areas are deliberately summarized** — enforcing backends grant different platform temporary areas, which are selected after policy resolution and therefore cannot be enumerated truthfully in the current context.
+ 
+ Policy-context replacements must be counter-tested on denied-then-escalatable tasks to verify that the model still attempts the initial tool call. The [historical five-of-twelve zero-tool-call measurement](../../../.agents/notes/archived/feature/2026-07-06-sandbox.md) records the failure this check prevents.
+diff --git a/packages/sandbox/sandbox-policy/src/index.ts b/packages/sandbox/sandbox-policy/src/index.ts
+index ef6f0ee2..bb766818 100644
+--- a/packages/sandbox/sandbox-policy/src/index.ts
++++ b/packages/sandbox/sandbox-policy/src/index.ts
+@@ -20,12 +20,13 @@
+  * @module @deepseek-ai/dsh-sandbox-policy
+  */
+ 
++import { readFileSync, statSync } from 'node:fs'
+ import { isAbsolute } from 'node:path'
+ import { Context, Service } from '@deepseek-ai/cordis'
+ import { z as zod } from 'zod'
+ import z from '@deepseek-ai/schemastery'
+ import type {} from '@deepseek-ai/dsh-agent'
+-import type { SandboxExecutionPolicy, SandboxMode } from '@deepseek-ai/dsh-sandbox'
++import type { SandboxExecutionPolicy, SandboxMode, SandboxNetwork } from '@deepseek-ai/dsh-sandbox'
+ import type { Session, SessionId } from '@deepseek-ai/dsh-session'
+ import type {} from '@deepseek-ai/dsh-session-projection'
+ import type {} from '@deepseek-ai/dsh-system-prompt'
+@@ -55,8 +56,68 @@ export interface SandboxCeiling {
+ /** Reports the ceiling for one session, or `undefined` when it sets none. Called at every resolve, so it must be cheap and synchronous. */
+ export type SandboxCeilingSource = (session: Session) => SandboxCeiling | undefined
+ 
++/** The network modes, in the order a setting offers them. */
++export const NETWORK_MODES = ['on', 'off', 'allowlist'] as const
++
++/** Host entries the allowlist accepts: a DNS name or IP address, optionally `*.` for subdomains. */
++const HOST_ENTRY = /^(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/
++
++/**
++ * Normalize allowlist entries: lower case, scheme, path and port dropped, invalid and repeated entries
++ * removed.
++ * @param hosts - entries as a person typed them, such as `https://Registry.npmjs.org/`.
++ * @returns the entries the proxy compares against.
++ */
++export function normalizeHosts(hosts: readonly unknown[]): string[] {
++  const out: string[] = []
++  for (const raw of hosts) {
++    if (typeof raw !== 'string') continue
++    const host = raw.trim().toLowerCase().replace(/^[a-z][a-z0-9+.-]*:\/\//, '').replace(/[/?#].*$/, '').replace(/:\d+$/, '')
++    if (HOST_ENTRY.test(host) && !out.includes(host)) out.push(host)
++  }
++  return out
++}
++
++/**
++ * What a limited network policy does not stop, per platform, in the words the model is told. Loopback stays
++ * reachable for local dev servers and databases, so programs on this computer that forward traffic remain a
++ * way out, and system services act outside the sandbox altogether.
++ */
++export const NETWORK_LEAKS: Readonly<Record<'darwin' | 'linux' | 'other', string>> = {
++  darwin: 'This is not a complete barrier: programs on this computer that forward traffic, such as local proxies and SSH tunnels listening on its loopback interface, can still be reached, and system services (opening a URL with open, launchd jobs) can make requests outside the sandbox.',
++  linux: 'This is not a complete barrier: programs on this computer reachable through a Unix socket, such as a local proxy or SSH tunnel listening on one, the Docker socket, or D-Bus (and systemd-run through it), can still make requests outside the sandbox.',
++  other: 'This is not a complete barrier: programs on this computer that forward traffic, such as local proxies and SSH tunnels, can still be reached, and system services can make requests outside the sandbox.',
++}
++
++/**
++ * Sentences on the network policy, or '' when it is `on`. `escalatable` is false while a ceiling holds
++ * the session, since an escalation cannot widen it then.
++ */
++function renderNetworkContext(network: SandboxNetwork | undefined, escalatable: boolean): string {
++  const retry = escalatable ? ' A command that needs more network access can be retried once with sandbox_permissions danger-full-access, which the user must approve.' : ''
++  const leaks = ` ${NETWORK_LEAKS[process.platform === 'darwin' || process.platform === 'linux' ? process.platform : 'other']} Do not use them to get around this setting.`
++  switch (network?.mode) {
++    case undefined:
++    case 'on':
++      return ''
++    case 'off':
++      return ` Network for commands: off. Direct connections to other computers are blocked, so downloads, package installs and git fetches normally fail.${leaks}${retry}`
++    case 'allowlist':
++      return ` Network for commands: only ${network.hosts.length === 0 ? 'no hosts' : network.hosts.join(', ')}, through a proxy set in HTTP_PROXY and HTTPS_PROXY; other hosts are refused with HTTP 403, and direct connections are blocked, so programs that ignore those variables cannot connect directly.${leaks}${retry}`
++    /* v8 ignore next 4 -- SandboxNetwork is a typed same-process closed union; this branch is only the static exhaustiveness guard. */
++    default: {
++      const mode: never = network
++      throw new Error(`unreachable network mode: ${String(mode)}`)
++    }
++  }
++}
++
+ /** Render the policy without claiming which capabilities are mounted. */
+ function renderPolicyContext(policy: SandboxExecutionPolicy, ceiling?: SandboxCeiling): string {
++  return renderFileContext(policy, ceiling) + (policy.mode === 'danger-full-access' ? '' : renderNetworkContext(policy.network, ceiling === undefined))
++}
++
++function renderFileContext(policy: SandboxExecutionPolicy, ceiling?: SandboxCeiling): string {
+   if (ceiling !== undefined) {
+     return `Current DSH file policy: ${policy.mode} because ${ceiling.reason}. Operations enforced by the DSH file sandbox cannot widen past ${policy.mode} until that changes, and a sandbox escalation cannot lift it, so do not request one.`
+   }
+@@ -96,6 +157,16 @@ export interface Config {
+    * `process.cwd()`). Normal agent calls use their session cwd instead.
+    */
+   workspaceRoot?: string
++  /** Network for confined commands (default: `on`). */
++  network?: SandboxNetwork['mode']
++  /** Hosts `allowlist` admits; see {@link SandboxNetwork} (default: none). */
++  allowedHosts?: string[]
++  /**
++   * Absolute path of a JSON file `{ "network": "on" | "off" | "allowlist", "allowedHosts": [...] }` whose
++   * fields, when present and valid, replace `network` and `allowedHosts`. It is re-read when it changes, so a
++   * settings page can change the policy without a restart. Absent: only the configured values apply.
++   */
++  networkFile?: string
+ }
+ 
+ /** Inputs that select the sandbox policy for one capability call. */
+@@ -134,6 +205,9 @@ export class SandboxPolicyService extends Service {
+     // No schema default: process.cwd() is resolved in the constructor so the
+     // stored root is always absolute regardless of how it was supplied.
+     workspaceRoot: z.string(),
++    network: z.union(['on', 'off', 'allowlist'] as const).default('on'),
++    allowedHosts: z.array(z.string()).default([]),
++    networkFile: z.string(),
+   })
+ 
+   static inject = ['sessionProjections']
+@@ -142,6 +216,11 @@ export class SandboxPolicyService extends Service {
+   readonly defaultMode: SandboxMode
+   /** The absolute `workspace-write` fallback root for calls without a session cwd. */
+   readonly workspaceRoot: string
++  /** The configured network policy, beneath the saved file's. */
++  private readonly configuredNetwork: SandboxNetwork
++  private readonly networkFile: string | undefined
++  /** The saved file's last read, keyed by its modification time and size. */
++  private savedNetwork: { stamp: string, network: SandboxNetwork | undefined } | undefined
+   constructor(ctx: Context, config: Config) {
+     super(ctx, 'sandboxPolicy')
+     // schemastery (static Config) already filled `mode`; the cast records that
+@@ -149,6 +228,9 @@ export class SandboxPolicyService extends Service {
+     // the process cwd is real branching, resolved absolute either way.
+     this.defaultMode = config.mode as SandboxMode
+     this.workspaceRoot = resolveWorkspaceRoot(config.workspaceRoot ?? process.cwd())
++    this.configuredNetwork = networkOf(config.network ?? 'on', config.allowedHosts ?? [])
++    if (config.networkFile !== undefined && !isAbsolute(config.networkFile)) throw new Error('sandbox-policy: networkFile must be an absolute path')
++    this.networkFile = config.networkFile
+ 
+     ctx.sessionProjections.register({
+       key: 'sandboxMode',
+@@ -230,13 +312,45 @@ export class SandboxPolicyService extends Service {
+     const { session } = request
+     const uncapped = this.uncappedMode(request)
+     const ceiling = session === undefined ? undefined : this.ceilingOf(session)
++    const network = this.network()
+     return {
+       mode: ceiling !== undefined && MODE_WIDTH[ceiling.mode] < MODE_WIDTH[uncapped] ? ceiling.mode : uncapped,
+       workspaceRoot: resolveWorkspaceRoot(session?.header.cwd ?? this.workspaceRoot),
+       ...session === undefined ? {} : { sessionId: session.id },
++      // Absent means `on`, so the common case resolves exactly as before network policy existed.
++      ...network.mode === 'on' ? {} : { network },
+     }
+   }
+ 
++  /**
++   * The network policy in force: the saved file's when it holds a valid one, else the configured one.
++   * @returns the network policy for confined commands.
++   */
++  network(): SandboxNetwork {
++    if (this.networkFile === undefined) return this.configuredNetwork
++    let stamp: string
++    try {
++      const info = statSync(this.networkFile)
++      stamp = `${info.mtimeMs}:${info.size}`
++    } catch {
++      // No saved choice yet: the configured policy applies.
++      return this.configuredNetwork
++    }
++    if (this.savedNetwork?.stamp !== stamp) {
++      let network: SandboxNetwork | undefined
++      try {
++        const saved = JSON.parse(readFileSync(this.networkFile, 'utf8')) as { network?: unknown, allowedHosts?: unknown }
++        const mode = NETWORK_MODES.find(m => m === saved.network)
++        if (mode !== undefined) network = networkOf(mode, Array.isArray(saved.allowedHosts) ? saved.allowedHosts : [])
++        else this.ctx.logger.warn('sandbox-policy: %s has no valid "network"; using the configured network policy', this.networkFile)
++      } catch (error) {
++        this.ctx.logger.warn('sandbox-policy: cannot read %s (%s); using the configured network policy', this.networkFile, error instanceof Error ? error.message : String(error))
++      }
++      this.savedNetwork = { stamp, network }
++    }
++    return this.savedNetwork.network ?? this.configuredNetwork
++  }
++
+   /**
+    * Read the session override without applying the deployment default.
+    * @param session - session whose log supplies the override.
+@@ -247,4 +361,9 @@ export class SandboxPolicyService extends Service {
+   }
+ }
+ 
++/** Build the network policy for a mode and its host entries. */
++function networkOf(mode: SandboxNetwork['mode'], hosts: readonly unknown[]): SandboxNetwork {
++  return mode === 'allowlist' ? { mode, hosts: normalizeHosts(hosts) } : { mode }
++}
++
+ export default SandboxPolicyService
+diff --git a/packages/sandbox/sandbox-policy/tests/policy.spec.ts b/packages/sandbox/sandbox-policy/tests/policy.spec.ts
+index f60d5a52..cc66e211 100644
+--- a/packages/sandbox/sandbox-policy/tests/policy.spec.ts
++++ b/packages/sandbox/sandbox-policy/tests/policy.spec.ts
+@@ -4,14 +4,15 @@
+  * override kit (fold + write path) every enforcing capability reads.
+  */
+ 
+-import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
++import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+ import { tmpdir } from 'node:os'
+ import { join, resolve, sep } from 'node:path'
+ import { describe, expect, it } from 'vitest'
+ import { Context, Service } from '@deepseek-ai/cordis'
+ import type { Agent } from '@deepseek-ai/dsh-agent'
+ import { SESSION_FORMAT_VERSION, Session, SessionId } from '@deepseek-ai/dsh-session'
+-import SandboxPolicyService, { SANDBOX_MODES, setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
++import SandboxPolicyService, { SANDBOX_MODES, normalizeHosts, setSandboxMode } from '@deepseek-ai/dsh-sandbox-policy'
++import { NETWORK_LEAKS } from '@deepseek-ai/dsh-sandbox-policy'
+ import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+ import SystemPrompt, { renderContextSnapshot, renderPrompt } from '@deepseek-ai/dsh-system-prompt'
+ 
+@@ -303,6 +304,76 @@ describe('ceilings', () => {
+   })
+ })
+ 
++describe('network policy', () => {
++  async function withNetwork(config: Record<string, unknown>): Promise<Context> {
++    const ctx = new Context()
++    await ctx.plugin(SystemPrompt)
++    await ctx.plugin(SessionProjectionRegistry)
++    await ctx.plugin(SandboxPolicyService, { mode: 'workspace-write', workspaceRoot: '/fallback', ...config })
++    return ctx
++  }
++
++  it('leaves network out of the resolved policy when it is on (the default)', async () => {
++    const ctx = await withNetwork({})
++    expect(ctx.sandboxPolicy.resolve()).toEqual({ mode: 'workspace-write', workspaceRoot: '/fallback' })
++    expect(await policyContext(ctx, session('sess-net-on', '/p'))).not.toContain('Network')
++  })
++
++  it('resolves off and allowlist, normalizing host entries', async () => {
++    expect((await withNetwork({ network: 'off' })).sandboxPolicy.resolve().network).toEqual({ mode: 'off' })
++    const ctx = await withNetwork({ network: 'allowlist', allowedHosts: ['https://Registry.npmjs.org/', '*.GitHub.com', 'pypi.org:443', 'not a host', 'pypi.org'] })
++    expect(ctx.sandboxPolicy.resolve().network).toEqual({ mode: 'allowlist', hosts: ['registry.npmjs.org', '*.github.com', 'pypi.org'] })
++    expect(normalizeHosts(['', 7, 'a..b', '-x.com', 'ok.io'])).toEqual(['ok.io'])
++  })
++
++  it('tells the model what the network policy allows, and drops the escalation hint while a ceiling holds', async () => {
++    const off = await withNetwork({ network: 'off' })
++    const target = session('sess-net-off', '/p')
++    const leaks = NETWORK_LEAKS[process.platform === 'darwin' || process.platform === 'linux' ? process.platform : 'other']
++    expect(await policyContext(off, target)).toContain(`Network for commands: off. Direct connections to other computers are blocked, so downloads, package installs and git fetches normally fail. ${leaks} Do not use them to get around this setting. A command that needs more network access can be retried once with sandbox_permissions danger-full-access, which the user must approve.`)
++    // Honest about what stays reachable: it never claims commands cannot connect at all.
++    expect(await policyContext(off, target)).not.toContain('cannot connect to other computers')
++    expect(NETWORK_LEAKS.darwin).toMatch(/local proxies and SSH tunnels .* can still be reached/)
++    expect(NETWORK_LEAKS.darwin).toContain('open')
++    expect(NETWORK_LEAKS.linux).toMatch(/Docker socket.*D-Bus.*systemd-run/)
++    off.sandboxPolicy.limit(() => ({ mode: 'read-only', reason: 'plan mode is on' }))
++    const held = await policyContext(off, target)
++    expect(held).toContain('Network for commands: off.')
++    expect(held).not.toContain('retried once')
++    const list = await withNetwork({ network: 'allowlist', allowedHosts: ['pypi.org'] })
++    expect(await policyContext(list, session('sess-net-list', '/p'))).toContain(`Network for commands: only pypi.org, through a proxy set in HTTP_PROXY and HTTPS_PROXY; other hosts are refused with HTTP 403, and direct connections are blocked, so programs that ignore those variables cannot connect directly. ${leaks}`)
++    setSandboxMode(target, 'danger-full-access')
++    const full = await withNetwork({ network: 'off' })
++    expect(await policyContext(full, target)).not.toContain('Network')
++  })
++
++  it('reads the saved choice from networkFile, follows its changes, and falls back when it is missing or invalid', async () => {
++    const dir = mkdtempSync(join(tmpdir(), 'dsh-net-'))
++    try {
++      const file = join(dir, 'network.json')
++      const ctx = await withNetwork({ network: 'off', networkFile: file })
++      expect(ctx.sandboxPolicy.network()).toEqual({ mode: 'off' })
++      writeFileSync(file, JSON.stringify({ network: 'allowlist', allowedHosts: ['github.com'] }))
++      expect(ctx.sandboxPolicy.network()).toEqual({ mode: 'allowlist', hosts: ['github.com'] })
++      writeFileSync(file, JSON.stringify({ network: 'on', note: 'changed size' }))
++      expect(ctx.sandboxPolicy.network()).toEqual({ mode: 'on' })
++      writeFileSync(file, '{ not json')
++      expect(ctx.sandboxPolicy.network()).toEqual({ mode: 'off' })
++      writeFileSync(file, JSON.stringify({ network: 'sideways' }))
++      expect(ctx.sandboxPolicy.network()).toEqual({ mode: 'off' })
++    } finally {
++      rmSync(dir, { recursive: true, force: true })
++    }
++  })
++
++  it('rejects a relative networkFile at load', async () => {
++    const ctx = new Context()
++    await ctx.plugin(SessionProjectionRegistry)
++    await expect(ctx.plugin(SandboxPolicyService, { networkFile: 'network.json' })).rejects.toThrow('networkFile must be an absolute path')
++    await ctx.fiber.dispose()
++  })
++})
++
+ describe('the sandbox/mode session kit', () => {
+   it('SANDBOX_MODES lists every mode for advertisement and validation', () => {
+     expect(SANDBOX_MODES).toEqual(['read-only', 'workspace-write', 'danger-full-access'])
+diff --git a/packages/sandbox/sandbox/README.md b/packages/sandbox/sandbox/README.md
+index 94e8968e..1c562d47 100644
+--- a/packages/sandbox/sandbox/README.md
++++ b/packages/sandbox/sandbox/README.md
+@@ -163,7 +163,7 @@ Append-only; escalation text follows the retained prefix and does not invalidate
+ 
+ These limits define when the seam is a poor fit or needs special operational care. They are current package constraints, not a general sandbox comparison or a task backlog.
+ 
+-- **File effects are the whole policy vocabulary** — the seam expresses no network, process, syscall, device, or credential restrictions.
++- **File effects and network access are the whole policy vocabulary** — the seam expresses no process, syscall, device, or credential restrictions; network is `on`, `off` or a host `allowlist`.
+ - **Same-world confinement only** — containers, microVMs, and remote execution require replacing capability implementations rather than adding a provider here.
+ - **Denial reporting is a stderr dialect** — the seam returns backend signatures instead of a typed runtime denial channel, so consumers that need classification infer it from the child process's output.
+ - **Runner diagnostics are in-band** — exit status plus stderr evidence cannot prove which process wrote a matching line, so a confined child that deliberately mimics its runner can cause a false availability or diagnostic attribution; this cannot bypass confinement, and an out-of-band runner-status channel is deferred.
+diff --git a/packages/sandbox/sandbox/src/index.ts b/packages/sandbox/sandbox/src/index.ts
+index 3cc0ec9f..bcaebb5c 100644
+--- a/packages/sandbox/sandbox/src/index.ts
++++ b/packages/sandbox/sandbox/src/index.ts
+@@ -25,10 +25,33 @@ export { canonicalPath, writableRoots } from './roots.ts'
+  * File-effect policy for confined processes. `read-only` permits only required
+  * sinks such as `/dev/null`; `workspace-write` also permits the workspace and a
+  * backend-defined temp area; `danger-full-access` bypasses confinement. Network
+- * and process visibility are outside this vocabulary.
++ * access is the separate {@link SandboxNetwork}; process visibility is outside
++ * this vocabulary.
+  */
+ export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access'
+ 
++/**
++ * Network policy for confined processes, applied alongside the file-effect
++ * mode. `on` leaves connections as the host allows them. `off` blocks direct
++ * connections to other hosts: Seatbelt still permits the loopback interface,
++ * while bwrap gives the process a network namespace of its own with only
++ * loopback. `allowlist` blocks direct connections as `off` does and routes
++ * HTTP and HTTPS through a proxy the backend runs, which admits only `hosts`;
++ * the backend sets the standard proxy variables in the process environment,
++ * so a program that ignores them cannot connect directly. Neither `off` nor
++ * `allowlist` is a complete barrier: programs on the same computer that
++ * forward traffic (a local proxy or SSH tunnel on loopback under Seatbelt, or
++ * on a Unix socket under either), and system services such as macOS `open` or
++ * the Docker socket, can still reach other hosts. A host entry matches that
++ * exact name; `*.example.com` matches its subdomains. A backend that cannot
++ * enforce `off` or `allowlist` fails closed with {@link SandboxUnavailableError}.
++ * `danger-full-access` bypasses confinement and with it this policy.
++ */
++export type SandboxNetwork =
++  | { readonly mode: 'on' }
++  | { readonly mode: 'off' }
++  | { readonly mode: 'allowlist'; readonly hosts: readonly string[] }
++
+ /** A confining (non-`danger-full-access`) mode — the modes a {@link SandboxPolicy} can carry. */
+ export type ConfinedSandboxMode = Exclude<SandboxMode, 'danger-full-access'>
+ 
+@@ -50,6 +73,8 @@ export interface SandboxExecutionPolicy {
+    * for agentless calls, which fall back to per-call backend state.
+    */
+   sessionId?: SessionId
++  /** Network policy for this execution; absent means `{ mode: 'on' }`. */
++  network?: SandboxNetwork
+ }
+ 
+ /**
+@@ -144,6 +169,22 @@ export class SandboxUnavailableError extends HarnessError {
+   }
+ }
+ 
++/**
++ * Thrown when {@link SandboxProvider.confine} is asked to limit network access
++ * (`off` or `allowlist`) but the selected backend cannot enforce it. Carries
++ * {@link SANDBOX_UNAVAILABLE}, like {@link SandboxUnavailableError}.
++ */
++export class SandboxNetworkUnavailableError extends HarnessError {
++  constructor(network: SandboxNetwork['mode'], detail: string) {
++    super(
++      `network "${network}" is requested but this host's sandbox cannot limit network access; `
++      + `refusing to run the command with unrestricted network. ${detail}`,
++      SANDBOX_UNAVAILABLE,
++    )
++    this.name = 'SandboxNetworkUnavailableError'
++  }
++}
++
+ declare module '@deepseek-ai/cordis' {
+   interface Context {
+     sandbox: SandboxProvider
+diff --git a/packages/ssh/ssh/src/schemas.ts b/packages/ssh/ssh/src/schemas.ts
+index be3d0dce..b0713ae0 100644
+--- a/packages/ssh/ssh/src/schemas.ts
++++ b/packages/ssh/ssh/src/schemas.ts
+@@ -20,8 +20,16 @@ export const targetSchema = z.object({ targetKey: remotePath, displayPath: z.str
+ export const infoSchema = z.object({ version: z.string(), type: z.enum(['file', 'directory', 'other']), size: z.number().nonnegative().optional() }).strict()
+ /** Metadata that preserves a final symlink. */
+ export const pathInfoSchema = infoSchema.extend({ type: z.enum(['file', 'directory', 'symlink', 'other']) })
+-/** A resolved file-effect policy; the remote helper owns path canonicalization. */
+-export const policySchema = z.object({ mode: z.enum(['read-only', 'workspace-write', 'danger-full-access']), workspaceRoot: remotePath, sessionId: z.string().optional() }).strict()
++/** A resolved sandbox policy; the remote helper owns path canonicalization. */
++export const policySchema = z.object({
++  mode: z.enum(['read-only', 'workspace-write', 'danger-full-access']), workspaceRoot: remotePath, sessionId: z.string().optional(),
++  // Passed through to the remote sandbox, which enforces it or fails closed as a local one would.
++  network: z.discriminatedUnion('mode', [
++    z.object({ mode: z.literal('on') }).strict(),
++    z.object({ mode: z.literal('off') }).strict(),
++    z.object({ mode: z.literal('allowlist'), hosts: z.array(z.string()) }).strict(),
++  ]).optional(),
++}).strict()
+ /** Complete directory entries. */
+ export const entriesSchema = z.array(z.object({ name: z.string(), type: z.enum(['file', 'directory', 'other']), target: targetSchema, version: z.string().optional(), size: z.number().nonnegative().optional() }).strict())
+ /** Guarded write intent. */
+diff --git a/packages/ssh/ssh/tests/policy-schema.spec.ts b/packages/ssh/ssh/tests/policy-schema.spec.ts
+new file mode 100644
+index 00000000..e6a4d04d
+--- /dev/null
++++ b/packages/ssh/ssh/tests/policy-schema.spec.ts
+@@ -0,0 +1,17 @@
++/** The sandbox policy the SSH helper admits from its client: every field a resolved local policy can carry. */
++import { describe, expect, it } from 'vitest'
++import { policySchema } from '../src/schemas.ts'
++
++describe('SSH helper policy schema', () => {
++  it('admits a network policy and passes it through to the remote sandbox', () => {
++    for (const network of [{ mode: 'on' }, { mode: 'off' }, { mode: 'allowlist', hosts: ['pypi.org', '*.github.com'] }] as const) {
++      expect(policySchema.parse({ mode: 'workspace-write', workspaceRoot: '/w', network })).toEqual({ mode: 'workspace-write', workspaceRoot: '/w', network })
++    }
++  })
++
++  it('still rejects unknown fields and malformed network policies', () => {
++    expect(() => policySchema.parse({ mode: 'workspace-write', workspaceRoot: '/w', extra: true })).toThrow()
++    expect(() => policySchema.parse({ mode: 'workspace-write', workspaceRoot: '/w', network: { mode: 'sideways' } })).toThrow()
++    expect(() => policySchema.parse({ mode: 'workspace-write', workspaceRoot: '/w', network: { mode: 'allowlist' } })).toThrow()
++  })
++})

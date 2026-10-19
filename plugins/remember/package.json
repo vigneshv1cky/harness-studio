@@ -1,0 +1,55 @@
+{
+  "name": "@harness-studio/remember",
+  "version": "0.1.0",
+  "description": "Notes that carry over to new sessions, like Claude Code's memory but visible, and an Instructions page: which instruction files a workspace loads, their size and token cost, the size limit, editing, and the saved notes.",
+  "license": "MIT",
+  "author": "Vignesh Murugan",
+  "homepage": "https://github.com/vigneshv1cky/harness-studio/tree/main/plugins/remember#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vigneshv1cky/harness-studio.git",
+    "directory": "plugins/remember"
+  },
+  "bugs": "https://github.com/vigneshv1cky/harness-studio/issues",
+  "type": "module",
+  "keywords": [
+    "harness-plugin",
+    "harness-studio",
+    "memory",
+    "instructions"
+  ],
+  "engines": {
+    "dsh": ">=0.2.1-alpha.3 <0.3.0"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./client": "./client.js"
+  },
+  "files": [
+    "index.js",
+    "logic.js",
+    "memory.js",
+    "instructions.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": false,
+      "inject": []
+    }
+  }
+}

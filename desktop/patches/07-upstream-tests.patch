@@ -288,7 +288,7 @@ index 6db1ccbd..5991e22c 100644
  }
  
 +/** Harness Studio's bundled plugins, which every package set must include. */
-+const STUDIO_PLUGINS = ['@harness-studio/compact', '@harness-studio/connectors', '@harness-studio/devpreview']
++const STUDIO_PLUGINS = ['@harness-studio/compact', '@harness-studio/connectors', '@harness-studio/devpreview', '@harness-studio/editor', '@harness-studio/hooks', '@harness-studio/remember', '@harness-studio/sessions', '@harness-studio/terminal', '@harness-studio/undo', '@harness-studio/watch']
 +const studioPlugins = (): [string, PackedDesktopPackage][] => STUDIO_PLUGINS.map(name => [name, packed(name)])
 +
  describe('desktop package-set selection', () => {

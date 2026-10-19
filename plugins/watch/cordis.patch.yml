@@ -1,0 +1,3 @@
+- insert:
+    - id: watch
+      name: '@harness-studio/watch'
