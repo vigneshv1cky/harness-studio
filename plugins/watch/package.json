@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Watches for Harness Studio: cheap checks on a command's output, a port or files that run on your computer without the model and wake the agent with a short notice only when the result changes.",
   "license": "MIT",
-  "author": "Vignesh Murugan",
+  "author": { "name": "Vignesh Murugan", "email": "Muruganvignesh0810@gmail.com", "url": "https://github.com/vigneshv1cky" },
   "homepage": "https://github.com/vigneshv1cky/harness-studio/tree/main/plugins/watch#readme",
   "repository": {
     "type": "git",

@@ -174,6 +174,9 @@ window.__ModuleLoader__.load({
       return now
     }
 
+    /** Event the Preview plugin's Panes menu sends to open this list: detail { sessionId }. */
+    const OPEN_WATCHES_EVENT = 'harness-studio:open-watches'
+
     function WatchAction({ sessionId, useSession }) {
       const openState = useSession ? useSession(snapshot => snapshot.openState) : 'open'
       const entry = useSyncExternalStore(subscribe, () => cache.get(sessionId))
@@ -185,6 +188,12 @@ window.__ModuleLoader__.load({
       const triggerRef = useRef(null)
       const menuRef = useRef(null)
       const now = useNow(open)
+      // The header's Panes menu opens this list for the Session on screen (the eye itself shows only while watches run).
+      useEffect(() => {
+        const onOpen = event => { if (event.detail && event.detail.sessionId === String(sessionId)) setOpen(true) }
+        window.addEventListener(OPEN_WATCHES_EVENT, onOpen)
+        return () => window.removeEventListener(OPEN_WATCHES_EVENT, onOpen)
+      }, [sessionId])
 
       // Cheap local reads: often while the list is open, now and then otherwise for the count.
       useEffect(() => {
@@ -245,7 +254,8 @@ window.__ModuleLoader__.load({
         ? h(AddForm, { sessionId, onDone: () => setAdding(false) })
         : h('div', { className: 'hsw-head' }, h('button', { type: 'button', className: 'hsw-link', onClick: () => setAdding(true) }, '+ Add a watch'))), document.body) : null
 
-      return h('div', { ref: rootRef, className: 'hsw-root' },
+      // No watches and the list closed: the eye steps out of the header; the Panes menu's Watches item brings it back.
+      return h('div', { ref: rootRef, className: 'hsw-root', hidden: count === 0 && !open ? true : undefined },
         h('button', {
           ref: triggerRef, type: 'button', className: `hsw-trigger${count ? ' hsw-on' : ''}`, 'aria-label': label, title: label, 'aria-expanded': open,
           'data-testid': 'harness-studio-watch-entry', onClick: () => setOpen(value => !value),

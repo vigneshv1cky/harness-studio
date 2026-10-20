@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Live preview of your app's dev server inside Harness Studio, with click-to-select so the agent knows exactly which element and source line you mean.",
   "license": "MIT",
-  "author": "Vignesh Murugan",
+  "author": { "name": "Vignesh Murugan", "email": "Muruganvignesh0810@gmail.com", "url": "https://github.com/vigneshv1cky" },
   "homepage": "https://github.com/vigneshv1cky/harness-studio/tree/main/plugins/devpreview#readme",
   "repository": { "type": "git", "url": "git+https://github.com/vigneshv1cky/harness-studio.git", "directory": "plugins/devpreview" },
   "bugs": "https://github.com/vigneshv1cky/harness-studio/issues",
@@ -18,7 +18,7 @@
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
-  "files": ["index.js", "git-helper.js", "browser-bridge.js", "client.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md"],
+  "files": ["index.js", "git-helper.js", "browser-bridge.js", "board.js", "board-runtime.html", "dashboards.js", "client.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md"],
   "dsh": {
     "manifestVersion": 1,
     "bundle": { "patch": "./cordis.patch.yml" },

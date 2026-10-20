@@ -3,7 +3,7 @@ import { performance } from 'node:perf_hooks'
 import test from 'node:test'
 import {
   LIMITS, afterDelivery, conditionHolds, cutBytes, deliveryDecision, foldCheck, foldFiles, initialState, isWantedPath, lineDiff,
-  noticeText, normalizeSpec, rebaseline,
+  describe, noticeText, normalizeSpec, rebaseline,
 } from '../logic.js'
 
 const cwd = '/work/app'
@@ -183,4 +183,17 @@ test('a pattern is tested against the last 16 KB of the output only', () => {
 test('cutBytes never splits a character', () => {
   assert.equal(cutBytes('héllo', 2), 'h')
   assert.equal(cutBytes('abc', 10), 'abc')
+})
+
+test('a dashboard watch refreshes on its interval and never notifies', () => {
+  const spec = normalizeSpec({ kind: 'dashboard', dashboard: 'sales', when: 'change' }, { cwd: '/w', now: 0 })
+  assert.equal(spec.when, 'never')
+  assert.equal(spec.interval, 15 * 60)
+  assert.equal(spec.label, 'dashboard sales')
+  assert.equal(describe(spec), 'refreshes dashboard sales, every 15 min')
+  assert.throws(() => normalizeSpec({ kind: 'dashboard', dashboard: '../x' }, { cwd: '/w' }), /name of a folder in dashboards/)
+  assert.throws(() => normalizeSpec({ kind: 'dashboard', dashboard: 'x', interval_seconds: 30 }, { cwd: '/w' }), /at least 60/)
+  let state = initialState(spec, { exitCode: 0, output: '1 of 1 sources refreshed' }, 0)
+  state = foldCheck(spec, state, { exitCode: 1, output: '0 of 1 sources refreshed\nsales: exited with 1' }, { now: 1, busy: false })
+  assert.equal(state.pending, undefined)
 })

@@ -2,7 +2,7 @@
 
 Build files for the downloadable Harness Studio app (macOS and Linux; Windows is paused, see [below](#windows-paused)): [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) at the commit pinned in [docs/HARNESS_PIN.md](../docs/HARNESS_PIN.md), with Harness Studio's name and logo, the ten plugins built in, and telemetry off. Everything is applied by script to a fresh clone, so the build can be repeated and moved to a new Harness commit.
 
-Harness Studio is an independent project. It is not affiliated with or endorsed by DeepSeek or Anthropic. The patches carry lines of DeepSeek Harness's source as context; see [patches/NOTICE.md](../patches/NOTICE.md) for its MIT licence notice.
+Harness Studio is an independent project. It is not affiliated with or endorsed by DeepSeek or Anthropic. It builds on its own fork of DeepSeek Harness, [harness-studio-core](https://github.com/vigneshv1cky/harness-studio-core), which keeps Harness's MIT licence; the patch files kept as a fallback carry lines of Harness's source as context, see [patches/NOTICE.md](../patches/NOTICE.md).
 
 ## What the app is
 
@@ -32,7 +32,7 @@ Needs a Mac with Apple Silicon, Node.js 24 (`nvm use 24`), pnpm (`corepack enabl
 desktop/build-mac.sh
 ```
 
-The script clones Harness into `dist/build/harness` (replacing an earlier copy), applies `patches/harness-studio-brand.patch`, `patches/harness-studio-account.patch` and then `desktop/patches/*.patch` in order, copies the logo, packs the ten plugins into the app, and runs Harness's own unsigned macOS packaging. It writes `dist/Harness-Studio-<version>-mac-arm64.dmg` and a `.sha256` file; the version is in [VERSION](VERSION), and the About panel shows the Harness version it is built on.
+The script clones Harness Studio's Harness fork into `dist/build/harness` (replacing an earlier copy) at the commit pinned in [docs/HARNESS_PIN.md](../docs/HARNESS_PIN.md), which must be on the fork's `studio` branch, packs the ten plugins into the app, and runs Harness's own unsigned macOS packaging. It writes `dist/Harness-Studio-<version>-mac-arm64.dmg` and a `.sha256` file; the version is in [VERSION](VERSION), and the About panel shows the Harness version it is built on.
 
 [smoke-mac.sh](smoke-mac.sh) checks a DMG without touching your own Harness Studio data: it runs a copy of the app on a throwaway home folder and checks the welcome screen, the built-in plugins and their pages, the first-use workspace (including that an existing `deepseek-harness` one is kept), the `harness-studio://` link and Office to PDF:
 
@@ -80,7 +80,7 @@ Off by default, the Browser pane behaves exactly like upstream Harness: each wor
 
 ## Patches
 
-Applied in this order to the pinned commit:
+Each row is one commit on the fork's `studio` branch, in this order after the upstream base, with the patch file's name as its title. The patch files themselves stay in [`../patches`](../patches) and [`patches`](patches) as the fallback until the first release built from the fork; applied in this order to the upstream base, then `scripts/copy-logo.sh`, they reproduce the pinned tree exactly. A new change to Harness is a commit on `studio`, not a new patch file.
 
 | Patch | Change |
 |---|---|
@@ -118,10 +118,11 @@ Applied in this order to the pinned commit:
 
 ## Moving to a new Harness commit
 
-1. Change the commit in [docs/HARNESS_PIN.md](../docs/HARNESS_PIN.md).
-2. Run `desktop/build-mac.sh`. A patch that no longer applies stops the build and names itself.
-3. To refresh one: clone Harness at the new commit, apply the patches before it and commit that state, apply it with `git apply --3way`, resolve the conflicts, and save `git diff` against that commit over the old file.
-4. Run Harness's tests for the areas the patches touch (`pnpm exec vitest run apps/desktop/tests packages/boot/app-boot packages/client/ui-brand-official packages/client/ui-conversation packages/client/ui-sidebar packages/client/ui-primitives packages/client/ui-settings-models packages/client/ui-settings-general packages/client/ui-settings-account packages/bundle` in `dist/build/harness`) and refresh `07-upstream-tests.patch` the same way.
+Upstream releases are merged into the fork's `studio` branch, never rebased, so every commit an earlier release was built from stays buildable. The full steps are in [docs/FORK_PLAN.md](../docs/FORK_PLAN.md#5-merging-an-upstream-drop); in short:
+
+1. In the dev copy (`harness/`), `git fetch upstream`, then on a branch from `studio`, `git merge upstream/master`, and resolve the conflicts.
+2. `pnpm install`, then `pnpm run build`, which includes the type check that packaging runs. Then run Harness's tests for the areas the commits touch (`pnpm exec vitest run apps/desktop/tests packages/boot/app-boot packages/client/ui-brand-official packages/client/ui-conversation packages/client/ui-sidebar packages/client/ui-primitives packages/client/ui-settings-models packages/client/ui-settings-general packages/client/ui-settings-account packages/bundle`) and the plugins' tests.
+3. Merge the branch into `studio`, push it to the fork, set `Pinned commit:` and `Upstream base:` in [docs/HARNESS_PIN.md](../docs/HARNESS_PIN.md), and build and smoke-test macOS and Linux.
 
 ## Chrome extension
 

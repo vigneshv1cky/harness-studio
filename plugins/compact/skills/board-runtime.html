@@ -1,0 +1,143 @@
+<!-- hs-board-runtime: Harness Studio board viewer -->
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #ebebe8; font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; color: #555; }
+  #hs-board-bar { position: fixed; top: 10px; left: 10px; z-index: 2; display: flex; gap: 6px; align-items: center; padding: 5px 8px; border-radius: 8px; background: rgba(255,255,255,.92); box-shadow: 0 1px 4px rgba(0,0,0,.12); }
+  #hs-board-bar b { color: #222; font-weight: 600; margin-right: 6px; }
+  #hs-board-bar button { font: inherit; border: 1px solid #ccc; background: #fff; border-radius: 6px; padding: 2px 8px; cursor: pointer; }
+  #hs-board-bar button[aria-pressed="true"] { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+  #hs-board-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; padding: 24px 40px 40px; }
+  .hs-row { display: flex; gap: 40px; align-items: flex-start; margin-bottom: 56px; }
+  .hs-board-label { margin: 0 0 8px; white-space: nowrap; }
+  .hs-board-label strong { color: #222; font-weight: 600; }
+  .hs-board-frame { display: block; border: 0; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.14), 0 8px 24px rgba(0,0,0,.08); }
+  /* Screens ignore the pointer, so scrolling and dragging anywhere move the board; "Use screens" lets them take it. */
+  body:not(.hs-interact) .hs-board-frame { pointer-events: none; }
+  body:not(.hs-interact) #hs-board-stage { cursor: grab; }
+  .hs-interact .hs-board-frame { outline: 2px solid #3b82f6; }
+  .hs-linked .hs-board-label { cursor: pointer; }
+  .hs-linked .hs-board-label:hover strong { text-decoration: underline; }
+  .hs-picking .hs-board-frame { pointer-events: none; }
+  .hs-picking .hs-board-cell { cursor: crosshair; }
+  .hs-picking .hs-board-cell:hover .hs-board-frame { outline: 3px solid #3b82f6; outline-offset: 3px; }
+</style>
+<div id="hs-board-bar"><b id="hs-board-title"></b><button data-zoom="-">−</button><span id="hs-board-zoom">100%</span><button data-zoom="+">+</button><button data-zoom="fit">Fit</button><button id="hs-board-interact" aria-pressed="false" title="Click, type and scroll inside the screens (Esc to stop)">Use screens</button></div>
+<div id="hs-board-stage"></div>
+<script>
+(() => {
+  // Harness Studio design board: each <template data-screen> becomes one row of artboards, one per width in
+  // data-widths, each an iframe of that exact width so the screen's media queries see a real phone, tablet or
+  // desktop. <template data-shared> (tokens, fonts, base styles) is prepended to every screen.
+  const HEIGHTS = { 375: 812, 390: 844, 768: 1024 }
+  const BAR = 48
+  // Each artboard reports its full height to the board, which grows the frame to it, on load, when late fonts
+  // arrive and whenever its content resizes (frames isolated from the board, as in the Design pane, cannot be
+  // measured from outside). Frames only grow, and a few times at most, so a screen sized by the viewport height
+  // cannot grow its frame for ever.
+  const MEASURE = '<script>(() => { const tell = () => parent.postMessage({ source: "hs-board-artboard", height: document.documentElement.scrollHeight }, "*");'
+    + ' addEventListener("load", () => { tell(); setTimeout(tell, 300); document.fonts && document.fonts.ready.then(tell); new ResizeObserver(tell).observe(document.body) }) })()<\/script>'
+  const MAX_GROWS = 8
+  const stage = document.getElementById('hs-board-stage')
+  const shared = [...document.querySelectorAll('template[data-shared]')].map(t => t.innerHTML).join('\n')
+  // Inside Harness Studio's Design pane: clicking a screen's label, or an artboard while the pane's Pick is on,
+  // tells the pane which screen and width was meant (only those two facts), and the zoom is reported so a
+  // reload can keep it. Opened on its own in a browser, the board does none of this.
+  const linked = window.parent !== window
+  const tell = message => { if (linked) parent.postMessage(Object.assign({ source: 'hs-design-board' }, message), '*') }
+  if (linked) document.body.classList.add('hs-linked')
+  document.getElementById('hs-board-title').textContent = document.title
+  for (const screen of document.querySelectorAll('template[data-screen]')) {
+    const row = document.createElement('div'); row.className = 'hs-row'
+    const widths = (screen.dataset.widths || '375,768,1440').split(',').map(Number).filter(Boolean)
+    for (const width of widths) {
+      const cell = document.createElement('div'); cell.className = 'hs-board-cell'
+      cell.dataset.screen = screen.dataset.screen; cell.dataset.width = width
+      const label = document.createElement('p'); label.className = 'hs-board-label'
+      label.innerHTML = '<strong></strong> · ' + width + ' px'
+      label.firstChild.textContent = screen.dataset.screen
+      const frame = document.createElement('iframe'); frame.className = 'hs-board-frame'
+      frame.title = screen.dataset.screen + ' at ' + width + ' px'
+      frame.style.width = width + 'px'
+      frame.style.height = (Number(screen.dataset.height) || HEIGHTS[width] || 900) + 'px'
+      frame.srcdoc = '<!doctype html><meta charset="utf-8">' + shared + screen.innerHTML + (screen.dataset.height ? '' : MEASURE)
+      cell.append(label, frame); row.append(cell)
+    }
+    stage.append(row)
+  }
+  let scale = 1, x = 0, y = BAR, fitted = true
+  const apply = () => {
+    stage.style.transform = `translate(${x}px, ${y}px) scale(${scale})`
+    document.getElementById('hs-board-zoom').textContent = Math.round(scale * 100) + '%'
+    tell({ type: 'view', scale, x, y, fitted })
+  }
+  // A reload in the Design pane asks for the zoom and position the board had: #hs-view=<scale>,<x>,<y>.
+  const restored = /^#hs-view=([\d.]+),(-?[\d.]+),(-?[\d.]+)$/.exec(location.hash)
+  if (restored && Number(restored[1]) > 0) { scale = Math.min(4, Math.max(0.05, Number(restored[1]))); x = Number(restored[2]); y = Number(restored[3]); fitted = false }
+  function fit() {
+    if (!fitted) return
+    // Fit the widest row to the window and scroll for the rest: long screens fitted whole would be unreadably small.
+    // The toolbar's strip stays clear so the first row's labels stay readable.
+    scale = Math.min(1, innerWidth / stage.scrollWidth) || 1; x = 0; y = BAR; apply()
+  }
+  const zoomAt = (factor, cx, cy) => {
+    const next = Math.min(4, Math.max(0.05, scale * factor)); fitted = false
+    x = cx - (cx - x) * (next / scale); y = cy - (cy - y) * (next / scale); scale = next; apply()
+  }
+  addEventListener('wheel', e => {
+    e.preventDefault()
+    if (e.ctrlKey || e.metaKey) zoomAt(Math.exp(-e.deltaY / 200), e.clientX, e.clientY)
+    else { x -= e.deltaX; y -= e.deltaY; fitted = false; apply() }
+  }, { passive: false })
+  // Dragging anywhere but the toolbar pans; a press that moved more than a few pixels is a drag, not a click.
+  let drag, dragged = false
+  addEventListener('pointerdown', e => {
+    if (e.button !== 0 || e.target.closest?.('#hs-board-bar')) return
+    drag = { sx: e.clientX - x, sy: e.clientY - y, cx: e.clientX, cy: e.clientY }; dragged = false
+    // Keep the drag's moves and release even when the pointer leaves the window.
+    try { e.target.setPointerCapture(e.pointerId) } catch {}
+  })
+  addEventListener('pointermove', e => {
+    if (!drag) return
+    if (e.buttons === 0) { drag = undefined; return } // released where the board did not hear it
+    if (!dragged && Math.hypot(e.clientX - drag.cx, e.clientY - drag.cy) < 4) return
+    dragged = true; x = e.clientX - drag.sx; y = e.clientY - drag.sy; fitted = false; apply()
+  })
+  addEventListener('pointerup', () => { drag = undefined })
+  addEventListener('pointercancel', () => { drag = undefined })
+  const interactButton = document.getElementById('hs-board-interact')
+  const interacting = on => { document.body.classList.toggle('hs-interact', on); interactButton.setAttribute('aria-pressed', String(on)) }
+  interactButton.addEventListener('click', () => { const on = !document.body.classList.contains('hs-interact'); if (on) picking(false); interacting(on) })
+  document.getElementById('hs-board-bar').addEventListener('click', e => {
+    const z = e.target.dataset?.zoom
+    if (z === 'fit') { fitted = true; fit() } else if (z) zoomAt(z === '+' ? 1.25 : 0.8, innerWidth / 2, innerHeight / 2)
+  })
+  function picking(on) { if (on) interacting(false); document.body.classList.toggle('hs-picking', on); tell({ type: 'pick', on }) }
+  stage.addEventListener('click', e => {
+    if (dragged) return
+    const cell = e.target.closest?.('.hs-board-cell')
+    const picked = document.body.classList.contains('hs-picking')
+    if (!linked || !cell || !(picked || e.target.closest('.hs-board-label'))) return
+    tell({ type: 'screen', screen: cell.dataset.screen, width: Number(cell.dataset.width) })
+    if (picked) picking(false)
+  })
+  addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return
+    if (document.body.classList.contains('hs-picking')) picking(false)
+    interacting(false)
+  })
+  addEventListener('message', e => {
+    const data = e.data
+    // Grow an artboard to its screen's full height; one with data-height keeps the device height and scrolls.
+    const grown = data && data.source === 'hs-board-artboard' && [...document.querySelectorAll('.hs-board-frame')].find(f => f.contentWindow === e.source)
+    if (grown && Number.isFinite(data.height)) {
+      const height = Math.min(20000, Math.max(200, Math.round(data.height)))
+      const grows = Number(grown.dataset.grows || 0)
+      if (height > parseFloat(grown.style.height) + 1 && grows < MAX_GROWS) { grown.dataset.grows = grows + 1; grown.style.height = height + 'px'; fit() }
+      return
+    }
+    if (e.source === parent && data && data.source === 'hs-design-pane' && data.type === 'pick') picking(data.on === true)
+  })
+  addEventListener('resize', fit)
+  if (fitted) fit(); else apply()
+})()
+</script>
+<!-- /hs-board-runtime -->

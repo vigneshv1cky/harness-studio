@@ -14,8 +14,11 @@
  * Selections live in memory: a Host restart forgets them (the logged context snapshots stay).
  */
 import { randomBytes } from 'node:crypto'
+import os from 'node:os'
+import path from 'node:path'
 import { SERVICE as HELPER_NAME, VERSION as HELPER_VERSION, startGitHelper } from './git-helper.js'
 import { createBrowserBridge } from './browser-bridge.js'
+import { LIMITS as DASHBOARD_LIMITS, createApprovals, createDashboards } from './dashboards.js'
 
 export const name = 'harness-studio-devpreview'
 export const inject = ['commands', 'tools', 'systemPrompt']
@@ -145,6 +148,81 @@ Object.defineProperty(HelperAccess.prototype, REMOTE_METHODS_MARKER, {
   value: Object.freeze({ version: 1, methods: Object.freeze([Object.freeze({ method: 'helper', invocation: Object.freeze({ kind: 'direct' }) })]) }),
 })
 
+/** The service dashboard watches reach this plugin's dashboards through (plugins/watch). */
+export const DASHBOARDS_SERVICE = 'harnessStudioDashboards'
+/** Watches' own service, through which Keep fresh adds a dashboard watch. */
+const WATCH_SERVICE = 'harnessStudioWatch'
+
+/**
+ * Dashboards for the helper's routes and for dashboard watches: reading, approving and snapshots by folder, and
+ * refreshing by session, so the refresh scripts run under that session's own sandbox and network setting.
+ */
+export function createDashboardAccess(ctx) {
+  const home = ctx.get('profileContext')?.home ?? process.env.DSH_HOME ?? path.join(os.homedir(), '.dsh')
+  const dashboards = createDashboards({ approvals: createApprovals(path.join(home, 'harness-studio', 'dashboard-approvals.json')) })
+
+  async function agentOf(sessionId) {
+    const loaded = ctx.get('agents')?.get(sessionId)
+    if (loaded) return loaded
+    const controller = ctx.get('sessionController')
+    if (!controller) throw Object.assign(new Error(`session ${sessionId} is not loaded`), { status: 404 })
+    const agents = ctx.get('agents')
+    const resolve = () => controller.resolveAgent(sessionId)
+    const resolved = await (agents?.withoutInitiator ? agents.withoutInitiator(resolve) : resolve())
+    if ('error' in resolved) throw Object.assign(new Error(`session ${sessionId} was not found`), { status: 404 })
+    return resolved.agent
+  }
+
+  async function folderOf(agent) {
+    const workingDirectory = ctx.get('workingDirectory')
+    if (workingDirectory) {
+      try { return await workingDirectory.ensure(agent) } catch { /* fall back to the session's folder */ }
+    }
+    const cwd = agent.session?.header?.cwd
+    if (typeof cwd !== 'string') throw Object.assign(new Error('This session has no folder'), { status: 404 })
+    return cwd
+  }
+
+  /** One script run through Harness's command runner, sandboxed as the session's commands are, but never with full access. */
+  function runnerFor(agent) {
+    return async (command, workdir) => {
+      const shell = ctx.get('shell')
+      if (!shell) throw new Error('Harness\'s command runner is not available')
+      const policies = ctx.get('sandboxPolicy')
+      let sandboxPolicy = policies?.resolve({ session: agent.session })
+      // A refresh runs without anyone watching: full access, which also lifts the hidden secret files, is narrowed.
+      if (sandboxPolicy?.mode === 'danger-full-access') sandboxPolicy = policies.resolve({ session: agent.session, mode: 'workspace-write' })
+      const result = await (await shell.execute(shell.resolve({
+        command, workdir, timeoutMs: DASHBOARD_LIMITS.timeoutMs, stdoutMaxBytes: DASHBOARD_LIMITS.outputBytes + 1, ...sandboxPolicy ? { sandboxPolicy } : {},
+      }))).result()
+      return { exitCode: result.timedOut ? null : result.exitCode, timedOut: result.timedOut === true, stdout: result.stdout?.text ?? '', stderr: result.stderr?.text ?? '' }
+    }
+  }
+
+  async function refreshFor({ agent, name }) {
+    return dashboards.refresh({ cwd: await folderOf(agent), name, run: runnerFor(agent) })
+  }
+
+  return {
+    list: cwd => dashboards.list(cwd),
+    read: (cwd, name) => dashboards.read(cwd, name),
+    approve: (cwd, name, hash) => dashboards.approve(cwd, name, hash),
+    revoke: (cwd, name) => dashboards.revoke(cwd, name),
+    snapshot: (cwd, name) => dashboards.snapshot(cwd, name),
+    refreshFor,
+    async refresh({ sessionId, name }) {
+      return refreshFor({ agent: await agentOf(sessionId), name })
+    },
+    /** A dashboard watch that refreshes it every `minutes` while it is closed, for 7 days. */
+    async keepFresh({ sessionId, name, minutes }) {
+      const watch = ctx.get(WATCH_SERVICE)
+      if (!watch) throw Object.assign(new Error('Keeping a dashboard fresh needs Harness Studio\'s Watch plugin'), { status: 501 })
+      const every = Number.isInteger(minutes) && minutes >= 1 && minutes <= 24 * 60 ? minutes : 15
+      return watch.call({ action: 'create', sessionId, spec: { kind: 'dashboard', dashboard: name, label: `keep ${name} fresh`, interval_seconds: every * 60, lifetime_minutes: 7 * 24 * 60 } })
+    },
+  }
+}
+
 export function apply(ctx) {
   /** Picked element per Session id. */
   const selections = new Map()
@@ -159,13 +237,16 @@ export function apply(ctx) {
   // not add command rows to the conversation (see git-helper.js). Every request must carry this
   // launch's secret, so another process listening on a helper port learns nothing and can't
   // drive the Browser pane, and a second Harness never talks to the first one's helper.
+  const dashboards = createDashboardAccess(ctx)
+  if (typeof ctx.provide === 'function') ctx.provide(DASHBOARDS_SERVICE, dashboards)
+
   const secret = randomBytes(32)
   /** Resolves with the running helper's port, or undefined when it could not start. */
   let helperPort = Promise.resolve(undefined)
   ctx.effect(() => {
     let helper
     let stopped = false
-    helperPort = startGitHelper({ browser: bridge, secret }).then(
+    helperPort = startGitHelper({ browser: bridge, dashboards, secret }).then(
       started => { if (stopped) { started.close(); return undefined } helper = started; return started.port },
       error => { console.warn('[harness-studio] git helper not started:', error.message); return undefined })
     return () => { stopped = true; return helper?.close() }
@@ -216,6 +297,7 @@ export function apply(ctx) {
       'Browsing: for websites, use the chrome_* tools (chrome_tabs, chrome_open, chrome_read, chrome_click, chrome_type, chrome_press, chrome_screenshot) when they are available.',
       "They act in the user's own Chrome, where the user is signed in; tabs you open there join a \"Harness\" tab group.",
       "Use the browser_* tools only for the user's local app previews (localhost, 127.0.0.1) or when the user asks for the Browser pane.",
+      'After building or changing a web page, open it in the Browser pane and check it at about 375, 768 and 1440 pixels wide with browser_resize and browser_screenshot, then fix what breaks (overflow, overlap, unreadable text).',
     ].join(' '),
   })
 
@@ -274,6 +356,35 @@ function describePage(page) {
  */
 const OPEN_TIMEOUT_MS = 90000
 const TOOL_TIMEOUT_MS = 60000
+
+/** Page widths browser_resize accepts, in CSS pixels: below the narrowest phone to beyond a wide desktop. */
+const MIN_PAGE_WIDTH = 240
+const MAX_PAGE_WIDTH = 3840
+
+/**
+ * The attachment store, once the model this Session is using is known to accept images; the same checks
+ * Harness makes before passing a connector's screenshot to the model. Throws the reason otherwise.
+ */
+async function imageStore(ctx, exec) {
+  const attachments = ctx.get('attachments')
+  if (attachments === undefined) throw new Error('no attachment store is mounted')
+  const routed = exec.agent?.session?.requestHeader?.()?.config
+  const provider = routed?.provider ?? exec.agent?.options?.provider
+  const model = routed?.model ?? exec.agent?.options?.model
+  const llm = ctx.get('llm')
+  if (provider === undefined || model === undefined || llm === undefined) throw new Error('the current model could not be found')
+  const info = await llm.resolveModelInfo(provider, model, exec.signal)
+  if (!info?.inputModalities?.includes('image')) throw new Error(`the model "${model}" does not accept images`)
+  exec.signal?.throwIfAborted?.()
+  return attachments
+}
+
+/** Model-facing rendering of a browser_screenshot result: the summary, then the stored image when there is one. */
+export function screenshotContent(value) {
+  const blocks = [{ type: 'text', text: String(value?.text ?? '') }]
+  if (value?.attachment) blocks.push({ type: 'image', attachment: value.attachment })
+  return blocks
+}
 
 /** Model-facing note about console messages or requests the list leaves out; '' when none. */
 export function omittedNote(dropped, earlier, noun) {
@@ -368,6 +479,48 @@ export function registerBrowserTools(ctx, bridge) {
       },
     },
     {
+      name: 'browser_resize',
+      description: `Set the width of the page in ${PANE}, in CSS pixels, to check a layout at phone, tablet and desktop sizes (for example 375, 768 and 1440). The page's own width (what its media queries see) is set to exactly this, whatever the pane's size; a page wider than the pane scrolls sideways. Leave width out to fit the page to the pane again. Returns the page's width and height afterwards; take a browser_screenshot to see it.`,
+      parameters: {
+        type: 'object',
+        properties: { width: { type: 'integer', minimum: MIN_PAGE_WIDTH, maximum: MAX_PAGE_WIDTH, description: 'Page width in CSS pixels. Leave out to fit the pane.' } },
+        additionalProperties: false,
+      },
+      async execute(args, exec) {
+        const width = args?.width
+        if (width !== undefined && (!Number.isInteger(width) || width < MIN_PAGE_WIDTH || width > MAX_PAGE_WIDTH)) {
+          throw new Error(`width must be a whole number from ${MIN_PAGE_WIDTH} to ${MAX_PAGE_WIDTH}`)
+        }
+        const page = await landed(await run('resize', width === undefined ? {} : { width }, exec), exec)
+        return `${width === undefined ? 'The page fits the pane again' : `Page width set to ${width}`}: the page is now ${page.width}×${page.height} CSS pixels at ${page.url}`
+      },
+    },
+    {
+      name: 'browser_screenshot',
+      description: `Take a screenshot of the visible part of the page in ${PANE} and see it, at the page's current width (set it with browser_resize). Use it to check how a page you built or changed looks, at phone, tablet and desktop widths. To see further down a long page, pass scroll_y; the result says the page's full height.`,
+      parameters: {
+        type: 'object',
+        properties: { scroll_y: { type: 'integer', minimum: 0, description: 'Scroll the page to this many CSS pixels from the top before the screenshot.' } },
+        additionalProperties: false,
+      },
+      output: { schema: {}, render: (_args, value) => screenshotContent(value) },
+      async execute(args, exec) {
+        const scrollY = args?.scroll_y
+        if (scrollY !== undefined && (!Number.isInteger(scrollY) || scrollY < 0)) throw new Error('scroll_y must be a whole number of pixels, 0 or more')
+        const shot = await landed(await run('screenshot', scrollY === undefined ? {} : { scroll_y: scrollY }, exec), exec)
+        const below = shot.pageHeight - shot.scrollY - shot.height
+        const summary = `Screenshot of ${shot.url}: ${shot.width}×${shot.height} CSS pixels, showing ${shot.scrollY}–${shot.scrollY + shot.height} of a page ${shot.pageHeight} pixels tall${below > 0 ? ` (pass scroll_y to see the ${below} pixels below)` : ''}.`
+        const image = shot.image
+        if (!image || typeof image.data !== 'string') throw new Error('The Browser pane returned no image')
+        let attachments
+        try { attachments = await imageStore(ctx, exec) } catch (error) {
+          return { text: `${summary} The image is not shown: ${error.message}.` }
+        }
+        const [attachment] = await attachments.saveImages([{ data: Buffer.from(image.data, 'base64'), mediaType: image.mediaType, name: 'browser-screenshot' }])
+        return { text: summary, attachment }
+      },
+    },
+    {
       name: 'browser_console',
       description: `Return the recent console messages (errors, warnings and logs) of the page in ${PANE}, newest last, including uncaught errors with their stack traces. Useful for finding front-end errors in the user's app.`,
       parameters: { type: 'object', properties: {}, additionalProperties: false },
@@ -413,5 +566,5 @@ export function registerBrowserTools(ctx, bridge) {
       },
     },
   ]
-  for (const tool of tools) ctx.effect(() => ctx.tools.register({ timeoutMs: TOOL_TIMEOUT_MS, ...tool, output: text }), `tool ${tool.name}`)
+  for (const tool of tools) ctx.effect(() => ctx.tools.register({ timeoutMs: TOOL_TIMEOUT_MS, output: text, ...tool }), `tool ${tool.name}`)
 }

@@ -39,6 +39,8 @@ async function harness(t, { answer, home: givenHome, listed } = {}) {
   const presets = new Map()
   /** Background jobs by id: { id, owner, status }. */
   const jobs = new Map()
+  /** System prompt sections by name. */
+  const prompts = new Map()
   const ctx = {
     get: name => ({
       profileContext: { home },
@@ -52,7 +54,7 @@ async function harness(t, { answer, home: givenHome, listed } = {}) {
     effect: (fn) => { const d = fn(); if (typeof d === 'function') disposers.push(d) },
     on: (name, fn) => { if (!listeners.has(name)) listeners.set(name, []); listeners.get(name).push(fn) },
     tools: { register: tool => { tools.set(tool.name, tool); return () => tools.delete(tool.name) } },
-    systemPrompt: { context: () => {} },
+    systemPrompt: { context: section => { prompts.set(section.name, section) } },
     agents: { get: id => agents.get(id), withoutInitiator: fn => fn() },
     sessions: { flush: async () => true },
     sessionController: {
@@ -88,7 +90,7 @@ async function harness(t, { answer, home: givenHome, listed } = {}) {
   }
   const dispose = async () => { for (const d of disposers.reverse()) await d() }
   t.after(dispose)
-  return { home, ctx, agents, archived, presets, jobs, questionsAsked, parent, call, emit, turn, dispose, actions: plugin.actions }
+  return { home, ctx, agents, archived, presets, jobs, prompts, questionsAsked, parent, call, emit, turn, dispose, actions: plugin.actions }
 }
 
 const recordFile = home => path.join(home, 'harness-studio', 'sessions.json')
@@ -175,6 +177,18 @@ test('a subagent cannot start sessions', async t => {
   const sub = new FakeAgent('sub-1', h.home)
   sub.session.header.origin = 'subagent'
   await assert.rejects(h.call('start_session', { title: 't', prompt: 'p', initiation: 'user_asked' }, sub), /Only a top-level session/)
+})
+
+test('top-level sessions get the separate-session and helper-agent guidance; helpers get neither', async t => {
+  const h = await harness(t)
+  const sub = new FakeAgent('sub-1', h.home)
+  sub.session.header.origin = 'subagent'
+  const helpers = h.prompts.get('helper-agents').text({ agent: h.parent })
+  assert.match(helpers, /subagent tool/)
+  assert.match(helpers, /one quick lookup/)
+  assert.match(helpers, /subagent_fork copies this whole conversation/)
+  assert.match(h.prompts.get('side-sessions').text({ agent: h.parent }), /start_session/)
+  for (const name of ['helper-agents', 'side-sessions']) assert.equal(h.prompts.get(name).text({ agent: sub }), '')
 })
 
 test('a finished turn wakes the idle parent with a fenced report; a busy parent gets it at its next step', async t => {

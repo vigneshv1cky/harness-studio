@@ -69,6 +69,7 @@ test('a git worktree shares its main repository\'s memory folder', async () => {
   apply({
     get: name => (name === 'profileContext' ? { home } : undefined),
     effect: fn => fn(),
+    on: () => () => {},
     tools: { register: tool => { tools.set(tool.name, tool); return () => {} } },
     workingDirectory: { ensure: async () => path.join(worktree, 'src') },
     systemPrompt: { context: entry => prompts.push(entry) },
@@ -130,6 +131,7 @@ test('the agent saves, reads and deletes through its tools, and new sessions see
   apply({
     get: name => (name === 'profileContext' ? { home } : undefined),
     effect: fn => fn(),
+    on: () => () => {},
     tools: { register: tool => { tools.set(tool.name, tool); return () => {} } },
     workingDirectory: { ensure: async () => path.join(project, 'src') },
     systemPrompt: { context: entry => prompts.push(entry) },

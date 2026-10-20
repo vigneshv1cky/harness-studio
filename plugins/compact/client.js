@@ -61,29 +61,24 @@ window.__ModuleLoader__.load({
 
       // ---- composer ----------------------------------------------------------------------
       [`${c('composerSeat')} ${c('card')}`, 'border-radius: 14px !important; padding-top: 0 !important; gap: 0 !important'],
-      // Like Claude Code's: the text starts at the box's left edge, in line with the + button, rather than
-      // 40px in; the + is a plain icon until pointed at; the mode and model labels a little smaller.
-      // One line, like Claude Code's: the + and send sit on the text's own line, in room kept free at its
-      // left and right, and stay level with the last line as the message grows.
-      [`${c('composerSeat')} ${c('scroll')}`, 'padding: 9px 50px 9px 42px !important'],
-      [`${c('composerSeat')} ${c('input')}`, 'padding: 2px 4px 0 4px !important; min-height: 28px !important'],
-      [`${c('composerSeat')} ${c('row')}`, 'position: absolute !important; left: 0 !important; right: 0 !important; bottom: 0 !important; padding: 0 9px 9px 9px !important; min-height: 0 !important; pointer-events: none'],
-      [`${c('composerSeat')} ${c('row')} button`, 'pointer-events: auto'],
+      // The box keeps Harness's two rows: the text on top, and under it the + button, the access mode menu, the model
+      // menu and send. The + is a plain icon until pointed at; the mode and model labels a little smaller.
+      // The text starts in line with the + button below it (Harness indents it 54px).
+      [`${c('composerSeat')} ${c('card')} > ${c('scroll')}`, 'padding-left: 4px !important; padding-right: 16px !important'],
+      [`${c('composerSeat')} ${c('input')}`, 'padding-left: 10px !important'],
       [`${c('composerSeat')} ${c('add')}`, 'background: transparent !important; color: var(--dsw-alias-label-secondary) !important'],
       [`${c('composerSeat')} ${c('add')}:hover`, 'background: var(--dsw-alias-interactive-bg-hover) !important; color: var(--dsw-alias-label-primary) !important'],
       [`${c('composerSeat')} ${c('row')} ${c('trigger')}, ${c('composerSeat')} ${c('row')} ${c('trigger')} *`, 'font-size: 12.5px !important'],
-      // Like Claude Code desktop's: the access mode and model menus sit under the box, left and right, on
-      // the usage line's row, 8px below the box with a 12px gap under them; the box itself keeps the text, + and send.
+      // The usage line sits under the box, centred, 12px above the bottom. Only the composer's own dock
+      // ([data-composer-dock]): Harness's queued-message panel and goal bar use the same class name and stay where Harness puts them.
       [`${c('composerSeat')} ${c('root')}:has(> ${c('card')})`, 'position: relative !important; padding-bottom: 48px !important; container: hs-composer / inline-size'],
-      [`${c('composerSeat')} ${c('card')} ${c('modes')}`, 'position: absolute !important; left: 0 !important; top: 100% !important; margin-top: 8px !important'],
-      [`${c('composerSeat')} ${c('card')} ${c('standardControls')}`, 'position: absolute !important; right: 0 !important; top: 100% !important; margin-top: 8px !important'],
-      [`${c('composerSeat')} ${c('dock')}`, 'position: absolute !important; left: 0 !important; right: 0 !important; bottom: 12px !important; height: 28px !important; ' +
+      [`${c('composerSeat')} [data-composer-dock]`, 'position: absolute !important; left: 0 !important; right: 0 !important; bottom: 12px !important; height: 28px !important; ' +
         'display: flex !important; align-items: center !important; justify-content: center !important; padding: 0 !important; font-size: 11px !important; opacity: 0.8; pointer-events: none'],
-      [`${c('composerSeat')} ${c('dock')} > *`, 'pointer-events: auto'],
-      // Room for both menus beside the readings: no icons on the two text readings, and tighter pills.
-      [`${c('composerSeat')} ${c('dock')} [class*="_anchor"] svg`, 'display: none !important'],
-      [`${c('composerSeat')} ${c('dock')} [class*="_pill"]`, 'padding: 0 5px !important; gap: 0 !important'],
-      [`${c('composerSeat')} ${c('dock')} *`, 'font-size: 11px !important'],
+      [`${c('composerSeat')} [data-composer-dock] > *`, 'pointer-events: auto'],
+      // Quieter readings: no icons on the two text readings, and tighter pills.
+      [`${c('composerSeat')} [data-composer-dock] [class*="_anchor"] svg`, 'display: none !important'],
+      [`${c('composerSeat')} [data-composer-dock] [class*="_pill"]`, 'padding: 0 5px !important; gap: 0 !important'],
+      [`${c('composerSeat')} [data-composer-dock] *`, 'font-size: 11px !important'],
       // The send (and stop) button, smaller, as in Claude Code desktop: a 24px circle with a 13px glyph.
       [`${c('composerSeat')} ${c('primary')}`, 'width: 24px !important; height: 24px !important; min-width: 24px !important; min-height: 24px !important; padding: 0 !important; margin: 0 !important; transform: none !important'],
       [`${c('composerSeat')} ${c('primary')} svg`, 'width: 13px !important; height: 13px !important'],
@@ -160,9 +155,9 @@ window.__ModuleLoader__.load({
     const CHAT_TEXT_STYLE = `font-family: ${CHAT_TEXT} !important; font-size: 14px !important; line-height: 20px !important; ` +
       'font-weight: 400; -webkit-font-smoothing: auto !important; font-variant-ligatures: none'
 
-    // Panels and popups that stand apart, like Claude Code desktop's: Harness draws menus 58%
-    // transparent with almost no shadow, so they melt into the white behind them. Popups here are
-    // solid with Claude's popover shadow, and the side panes and message box carry its panel shadow.
+    // Panels and popups that stand apart, like Claude Code desktop's: Harness draws menus 58% (light) and 45%
+    // (dark) opaque with almost no shadow, so the page shows through them. Popups here are solid in both themes,
+    // in the raised surface colour, with Claude's popover shadow; the side panes and message box carry its panel shadow.
     const LIGHT = 'body:not([data-ds-dark-theme])'
     const DARK = 'body[data-ds-dark-theme]'
     const POPUPS = ':is([class*="_material_"], [role="menu"], [role="listbox"], [class*="_dialog_"], [data-studio-menu])'
@@ -170,9 +165,14 @@ window.__ModuleLoader__.load({
       [LIGHT, '--dsw-specific-menu: #fff !important; --dsw-menu-surface-fill: #fff !important; ' +
         '--hs-popup-shadow: 0 0 0 0.5px rgba(0,0,0,0.12), 0 8px 24px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.08); ' +
         '--hs-panel-shadow: 0 0 0 0.5px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06), 0 2px 8px rgba(0,0,0,0.05)'],
-      [DARK, '--hs-popup-shadow: 0 0 0 0.5px rgba(255,255,255,0.12), 0 8px 24px rgba(0,0,0,0.32), 0 2px 6px rgba(0,0,0,0.2); ' +
+      [DARK, '--dsw-specific-menu: var(--dsw-alias-bg-layer-3) !important; --dsw-menu-surface-fill: var(--dsw-alias-bg-layer-3) !important; ' +
+        '--hs-popup-shadow: 0 0 0 0.5px rgba(255,255,255,0.12), 0 8px 24px rgba(0,0,0,0.32), 0 2px 6px rgba(0,0,0,0.2); ' +
         '--hs-panel-shadow: 0 0 0 0.5px rgba(255,255,255,0.08), 0 1px 2px rgba(0,0,0,0.3)'],
       [POPUPS, 'box-shadow: var(--hs-popup-shadow) !important'],
+      // No preview on hover over files in the chat: the diff preview of a changed-files card and the image preview of
+      // an image link (both portalled to the page). Clicking still opens the file. The sidebar's hover cards are kept.
+      // Its classes come in either naming form (`x_card` or `_card_hash_line`), so both are matched.
+      [`body > :is(${c('card')}, ${m('card')}):is(${c('preview')}, ${c('media')}, ${m('preview')}, ${m('media')})`, 'display: none !important'],
     ]
 
     const TABLE = `${c('body')} [class*="_markdown_"]`
@@ -295,9 +295,23 @@ window.__ModuleLoader__.load({
       [c('scroll'), `--dsh-chat-content-width: ${CHAT_COLUMN}px !important`],
       [`${c('scroll')} ${c('column')}`, `max-width: ${CHAT_COLUMN}px !important`],
       [`${c('composerSeat')} ${c('card')}`, `max-width: ${CHAT_COLUMN + 10}px !important`],
-      // The usage line spans the box's width (not the column's), and its readings are centred in the room
-      // between the access mode menu (left) and the model menu (right).
-      [`${c('composerSeat')} ${c('dock')}`, `left: 32px !important; right: 32px !important; margin: 0 auto !important; max-width: ${CHAT_COLUMN + 10}px !important; padding: 0 196px 0 156px !important; box-sizing: border-box !important`],
+      // Queued messages, like Claude Code desktop's: Harness's queue panel above the box (one row per message, in order)
+      // loses its frame and header, so each queued message reads as your own message at the end of the conversation,
+      // faded, with a "Queued" label; edit, remove and send-now show on hover. Found by Harness's [data-queue-dock].
+      ['[data-queue-dock]', `width: 100% !important; max-width: ${CHAT_COLUMN + 10}px !important; margin: 0 auto 10px !important; padding: 0 5px 0 0 !important; box-sizing: border-box !important`],
+      [`[data-queue-dock] ${c('panel')}`, 'background: none !important; padding: 0 !important; overflow: visible !important; border-radius: 0 !important'],
+      [`[data-queue-dock] ${c('panel')}::before, [data-queue-dock] ${c('panel')}::after`, 'display: none !important'],
+      [`[data-queue-dock] ${c('header')}, [data-queue-dock] ${c('lead')}`, 'display: none !important'],
+      [`[data-queue-dock] ${c('list')}`, 'display: flex !important; flex-direction: column !important; align-items: stretch !important; gap: 8px !important; max-height: 40vh !important'],
+      [`[data-queue-dock] ${c('row')}`, 'justify-content: flex-end !important; gap: 8px !important; min-height: 0 !important; padding: 0 !important; box-shadow: none !important; background: none !important'],
+      [`[data-queue-dock] ${c('row')}::before`, 'content: "Queued"; order: -2; flex: none; font-size: 12px; line-height: 16px; color: var(--dsw-alias-label-tertiary)'],
+      [`[data-queue-dock] ${c('preview')}, [data-queue-dock] ${c('attachments')}`, 'flex: 0 1 auto !important; max-width: calc(100% - 96px) !important; opacity: 0.55'],
+      [`[data-queue-dock] ${c('preview')}`, 'padding: 7px 12px !important; border-radius: 14px !important; background: var(--dsw-specific-bubble) !important; font-size: 14px !important; line-height: 20px !important; color: var(--dsw-alias-label-primary) !important'],
+      // Buttons first, then the label, then the message, so the label sits beside the message and the buttons appear to its left.
+      [`[data-queue-dock] ${c('actions')}`, 'order: -3; gap: 2px !important; opacity: 0; transition: opacity 120ms'],
+      [`[data-queue-dock] ${c('row')}:is(:hover, :focus-within) ${c('actions')}`, 'opacity: 1'],
+      // The usage line spans the box's width (not the column's), with its readings centred.
+      [`${c('composerSeat')} [data-composer-dock]`, `left: 32px !important; right: 32px !important; margin: 0 auto !important; max-width: ${CHAT_COLUMN + 10}px !important; padding: 0 !important; box-sizing: border-box !important`],
       // Harness's drag-to-resize handles beside the transcript: the column is fixed at 768px here, as in
       // Claude Code desktop, so they would only show a stray resize cursor and glow next to the text.
       [c('widthHandle'), 'display: none !important'],
@@ -439,11 +453,32 @@ window.__ModuleLoader__.load({
       // Start page: a plain menu of rows rather than bordered cards.
       [`${c('guide')} ${c('entry')}`, 'border-color: transparent !important; background: transparent !important; box-shadow: none !important'],
       [`${c('guide')} ${c('entry')}:hover`, 'background: var(--dsw-alias-interactive-bg-hover) !important'],
+      // Settings rows drawn by this plugin, with the values of Harness's own rows (Language, Font size, Permission),
+      // so they match on every page, including the pages that have no Harness row to copy.
+      ['.hs-setting', 'display: flex; align-items: center; gap: 8px; padding: 16px 0; border-bottom: 0.5px solid var(--dsw-alias-border-l2)'],
+      ['.hs-setting-text', 'flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; padding-right: 48px'],
+      ['.hs-setting-title', 'font-size: 14px; font-weight: 400; line-height: 22px; color: var(--dsw-alias-label-primary)'],
+      ['.hs-setting-desc', 'font-size: 12px; font-weight: 400; line-height: 18px; color: var(--dsw-alias-label-tertiary)'],
+      ['.hs-setting-control', 'display: inline-flex; align-items: center; gap: 8px'],
+      ['.hs-setting-select', 'display: inline-flex; align-items: center; gap: 12px; height: 36px; padding: 0 14px; border: none; ' +
+        'border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-module-platform); font: inherit; font-size: 14px; ' +
+        'line-height: 22px; color: var(--dsw-alias-label-primary); cursor: pointer'],
+      ['.hs-setting-select:hover', 'background: var(--dsw-alias-interactive-bg-hover)'],
+      // Questions and approvals waiting in the conversation: Harness draws them on the message box's surface with only a
+      // faint shadow, which disappears against the chat. They keep that surface and get a clear neutral border and a soft
+      // shadow; an approval keeps its own amber border.
+      [`[data-pending-seat] :is([data-question-key], [data-plan-review-key]) ${c('card')}:not(${c('card')} ${c('card')})`,
+        'border: 1px solid var(--dsw-alias-border-l4) !important; box-shadow: 0 1px 2px rgba(0, 0, 0, .05), 0 6px 18px rgba(0, 0, 0, .06) !important'],
+      [`[data-pending-seat] [data-approval-key] ${c('card')}:not(${c('card')} ${c('card')})`,
+        'box-shadow: 0 1px 2px rgba(0, 0, 0, .05), 0 6px 18px rgba(0, 0, 0, .06) !important'],
+      // A page's last row has no divider under it, as on Harness's pages: only a row that is the last thing in the
+      // page's last entry (a row with a list under it keeps its divider).
+      ['[data-slot$=".item"] > :last-child > .hs-setting:last-child', 'border-bottom: none'],
     ]
 
     // Rules that need an at-rule around them. When the box is too narrow for the usage readings between the
     // mode and model menus, the turns, steps and speed reading steps aside (the Session pane still shows it).
-    const AT_RULES = `@container hs-composer (max-width: 700px) { ${c('composerSeat')} ${c('dock')} [class*="_anchor"]:first-child { display: none !important } }`
+    const AT_RULES = `@container hs-composer (max-width: 420px) { ${c('composerSeat')} [data-composer-dock] [class*="_anchor"]:first-child { display: none !important } }`
     const CSS = [...RULES, ...LOOK_RULES].map(([selector, body]) => `${selector} { ${body} }`).join('\n') + '\n' + AT_RULES
     const STYLE_ID = 'harness-studio-compact'
 
@@ -1057,6 +1092,18 @@ window.__ModuleLoader__.load({
     // What Harness Studio adds and how it works, grouped the way people ask about it. Kept to what the app
     // actually does; "Not yet" lists the known gaps so the page never promises more.
     const REPO = 'https://github.com/vigneshv1cky/harness-studio'
+    // Who makes Harness Studio, shown at the head of the About page.
+    const DEVELOPER = {
+      name: 'Vignesh Murugan',
+      device: 'Built on a 13-inch MacBook Air with the Apple M1 chip, 8 GB of memory and 512 GB of storage.',
+      links: [
+        ['Email', 'mailto:Muruganvignesh0810@gmail.com', 'Muruganvignesh0810@gmail.com'],
+        ['GitHub', 'https://github.com/vigneshv1cky', 'vigneshv1cky'],
+        ['LinkedIn', 'https://www.linkedin.com/in/vignesh-murugan-data/', 'vignesh-murugan-data'],
+        ['Instagram', 'https://www.instagram.com/vignesh_v1cky/', 'vignesh_v1cky'],
+        ['X', 'https://x.com/vigneshv1cky', 'vigneshv1cky'],
+      ],
+    }
     let layout
     const openAbout = () => {
       try { layout?.selectPanel('about') } catch (error) { console.warn('[harness-studio] About page unavailable', error) }
@@ -1099,7 +1146,27 @@ window.__ModuleLoader__.load({
             'Only text files inside your workspace folders, up to 2 MB, open in the editor.'],
           why: 'Small fixes are quicker to make yourself than to describe, and the conflict check means you and the agent never silently overwrite each other.' },
       ] },
-      { id: 'control', title: '2. Control and planning', summary: 'Keeping a capable agent from making unguided changes.', items: [
+      { id: 'making', title: '2. Making things', summary: 'Besides code, the agent makes documents, designs, apps and dashboards, and works with recordings, all on this computer.', items: [
+        { name: 'Documents, decks and spreadsheets', what: 'The agent writes PowerPoint, Word and Excel files, with editable charts in decks and spreadsheets, renders slides to check its own layout, and exports PDF. Results open in the side pane’s preview.',
+          how: 'A Python, Node and office converter bundled with the app do the work, so nothing needs installing and it works offline.' },
+        { name: 'Design boards', what: 'Ask for a design or a mock-up and the agent drafts it on one board: each screen and variant side by side at phone, tablet and desktop widths, in your project’s own colours and fonts, before any app code changes.',
+          how: ['The board is one HTML file with pan and zoom. It opens in the Design pane, which reloads as the agent changes it; clicking a screen there adds it to your message as a reference.', 'Each screen is drawn in a frame of its real width, so the page’s own layout rules apply as they would on that device.'] },
+        { name: 'Desktop and mobile apps', what: 'The agent builds Mac, Android and Linux desktop apps, and iPhone apps when Xcode is installed, then runs and checks them: Mac apps through computer use, Android apps in a headless emulator, and web-based ones in the Browser pane.',
+          how: 'Every tool’s downloads stay in the project, inside the agent’s sandbox.' },
+        { name: 'Live dashboards', what: 'Ask for a dashboard and the agent builds a page of charts with a small refresh script for each data source: a spreadsheet, a CSV file, a database or warehouse through your own login, or a web API.',
+          how: ['The Dashboards pane fetches fresh data each time you open a dashboard, once you have approved its refresh scripts at their exact text. An edited script stops until you approve it again.', 'Keep fresh refreshes a dashboard while it is closed; Save snapshot writes one HTML file with today’s data that you can send.'],
+          why: 'Approving the exact script text means a page can never run something you have not read.' },
+        { name: 'Charts, icons and diagrams', what: 'Editable charts inside PowerPoint and Excel files, and SVG files for standalone charts, icon sets and flow or architecture diagrams, drawn from your data.' },
+        { name: 'Speech to text', what: 'The microphone button between the model picker and Send dictates into your message; a menu in the recording bar picks the language. The agent can also transcribe an audio or video file, or a part you marked in the Files tab, with the time each piece was said.',
+          how: ['Recognition runs on this computer with Harness’s local speech model (about 241 MB, downloaded once after you agree), in Chinese, English, Cantonese, Japanese or Korean, or detected automatically. No audio leaves the computer.', 'The model leaves memory after a minute without use. When the agent needs ffmpeg to read a recording and you have none, it asks once and downloads a pinned build, checked against its published checksum.'] },
+      ] },
+      { id: 'control', title: '3. Control and planning', summary: 'Keeping a capable agent from making unguided changes.', items: [
+        { name: 'Sending while the agent works', what: 'Enter delivers your message at the agent’s next step, as in Claude Code, so it can change course mid-turn. Until the agent reads it, Unsend beside the message takes it back and puts its text into the message box. Cmd/Ctrl+Enter queues it for after the turn instead; Settings → General → Send behavior while busy swaps the two.' },
+        { name: 'Long turns', what: 'Settings → Permissions → Long turns: when one request takes 60 steps (or 120, 200, or never), the agent asks before continuing, so a stuck agent cannot run on until you notice.',
+          how: ['Halfway to the limit the agent is told to sum up what it has done and to ask you if it is going in circles or needs something only you can do, such as a restart.',
+            'At the limit its next tool call shows an approval card: Allow gives it another full budget, Reject ends the turn. On the command line, where nothing can ask, the call is refused.',
+            'Separately, when one tool returns exactly the same result three times in a request, the agent is told the calls are not showing anything new. Harness itself already reminds it when the same call is repeated with the same arguments.'],
+          why: 'Each step resends the whole conversation to the model, so an agent that keeps probing without progress spends tokens fast; a reminder and a checkpoint stop that early without limiting real long work.' },
         { name: 'Plan mode', what: 'Type /plan, optionally followed by the task. The agent explores the code, then presents a plan on a card: approve it to let the agent start, or send feedback for another round. /plan off leaves plan mode.',
           how: ['The agent is told to explore, ask about real choices, and submit a complete plan: goal, changes by area, edge cases and tests.',
             'While plan mode is on, the session’s sandbox is held at read-only, so commands and file tools cannot change files, even with an approved step-up, until you approve the plan.'],
@@ -1120,14 +1187,14 @@ window.__ModuleLoader__.load({
         { name: 'Branching a conversation', what: 'Any finished reply can be branched into a new conversation that starts from that point, leaving the original as it was.',
           how: 'The new session copies the history up to that reply. To also put files back, use Undo file changes.' },
       ] },
-      { id: 'context', title: '3. Context and memory', summary: 'What the agent knows before you say anything, what it learns, and how long sessions stay within the model’s limit.', items: [
+      { id: 'context', title: '4. Context and memory', summary: 'What the agent knows before you say anything, what it learns, and how long sessions stay within the model’s limit.', items: [
         { name: 'Instruction files (AGENTS.md)', what: 'Rules every new session reads before it starts: build and test commands, code style, architecture boundaries, anything you would otherwise repeat.',
           how: ['Read in this order, Claude Code’s three levels with Harness Studio’s own files: your personal rules for every project (~/.harness-studio/AGENTS.md), then the project’s AGENTS.md in each folder from the repository root down to the session’s folder, each followed by that folder’s AGENTS.local.md, which is just for you.',
             'Files written for other agent tools are not read: not CLAUDE.md, CLAUDE.local.md or ~/.agents/AGENTS.md. To use a project’s CLAUDE.md rules here, move them into AGENTS.md, or make CLAUDE.md a link to AGENTS.md so both tools read one file.',
             'A line @path brings in another file, as in Claude Code: a project’s files only from inside the project, your personal file from anywhere; at most five levels, no loops.',
             'When a file changes during a session, only its changed lines are sent again.'],
           why: 'Instructions are sent with every request, so reading each rule once and sending only changes keeps every message cheaper.' },
-        { name: 'Reply style', what: 'Out of the box the agent replies the way Claude Code does: the answer first, as long as the request needs, lists and tables only when the content has that shape, linked files, a one-line note before each batch of tool calls, and a finish that says what changed and how it was checked.',
+        { name: 'Reply style', what: 'Out of the box the agent replies the way Claude Code does: the answer first, as long as the request needs, lists and tables only when the content has that shape, linked files, a one-line note before each batch of tool calls, few steps (reads and commands batched, no re-reading after an edit), and a finish that says what changed and how it was checked.',
           how: ['It is ordinary text in your global instruction file, “Global, all projects” on the Instructions page, written there on the first start. Edit it like any instruction file.',
             'It is written only when you have no global instruction file yet, and never again: a file you already had is kept, and one you change or delete stays as you left it.',
             'Harness’s own system prompt says nothing about tone or format, so these defaults do not conflict with it; a direct request in a conversation still wins.'],
@@ -1135,7 +1202,7 @@ window.__ModuleLoader__.load({
         { name: 'Instruction size limit', what: 'Instructions have a size limit, 128 KB by default, adjustable from 64 KB to 1 MB or off on the Instructions page.',
           how: 'Files that do not fit are left out or shortened, and a row under your message names each one with its size, so nothing is dropped silently.',
           why: 'A very large instruction set slows and costs every request; the limit makes that trade-off visible and yours to choose.' },
-        { name: 'Instructions page', what: 'Below Automation tasks in the sidebar. For a chosen workspace: Harness Studio’s own system prompt (read only, with Show for the full text), every instruction file with its size, estimated tokens and status (loaded, skipped, not created, left out or shortened), with Edit, Create and Open; the size limit; the agent’s memories; and the remembered rules.' },
+        { name: 'Instructions page', what: 'Below Automation tasks in the sidebar. For a chosen workspace: Harness Studio’s own system prompt with Show for the full text, each of its sections with Open (edit your own copy of that section in the text editor) and Reset, and Your additions at its end; every instruction file with its size, estimated tokens and status (loaded, skipped, not created, left out or shortened), with Open; the size limit; the agent’s memories; and the remembered rules.' },
         { name: 'Auto memory', what: 'Like Claude Code’s: the agent keeps notes for itself as it works, without asking, when you correct it, state a lasting preference, or it finds something a later session would otherwise have to rediscover.',
           how: ['Each project has a folder in ~/.harness-studio/memory/ holding one small Markdown file per fact (a description, a type: user, feedback, project or reference, the date, and the fact with why and how to apply it) and a MEMORY.md index with one line per file.',
             'Every new session in the project reads the first 200 lines of the index and opens a full memory only when it is relevant.',
@@ -1147,18 +1214,19 @@ window.__ModuleLoader__.load({
         { name: 'Compaction', what: 'Long sessions keep working near the model’s context limit.',
           how: ['First, oversized old tool output is cut to its beginning and end; the full output stays in the session log.',
             'If that is not enough, the oldest history is summarised in one extra model request and recent messages are kept as they are.',
-            'If the provider still reports the context is full, Harness summarises and retries. /compact does it whenever you ask.'],
+            'If the provider still reports the context is full, Harness summarises and retries. /compact does it whenever you ask.',
+            'Images the agent looked at through a tool, such as screenshots or video frames, are sent to the model for five more steps and then replaced by a short note naming the file; with DeepSeek’s Flash model, the reasoning from earlier turns is not sent again. Both keep long visual sessions much smaller, and the chat still shows everything.'],
           why: 'Trimming tool output first is free and often enough; summarising costs a request, so it comes second.' },
         { name: 'Lean connectors', what: 'A connector with more than 10 tools is listed by name only; its tools are loaded when the agent needs them.',
           why: 'Tool descriptions are sent with every request, so loading a large connector’s tools only when needed keeps every request smaller.' },
         { name: 'Usage at a glance', what: 'Under the message box: turns and steps, tokens used, how much the provider served from its cache, and how full the context is.' },
       ] },
-      { id: 'extend', title: '4. Extensibility and orchestration', summary: 'Reaching other services, dividing work, and adding your own checks.', items: [
+      { id: 'extend', title: '5. Extensibility and orchestration', summary: 'Reaching other services, dividing work, and adding your own checks.', items: [
         { name: 'Connectors (MCP)', what: 'Add Model Context Protocol servers to give the agent access to databases, issue trackers, design tools and anything else that offers one.',
           how: ['Add a server by URL or by command from Connectors in the sidebar or in Settings. Servers that need it sign in with OAuth. Each shows its status and can be turned on or off per session from the + menu in the message box.',
             'Each connector has Ask before calls: Never (the default), Before calls that can change things (tools its server does not mark read-only), or Before every call. A call that asks waits for your approval in the conversation.'] },
         { name: 'Helper agents', what: 'For larger tasks the agent starts helper agents that work in parallel, for example one auditing security while another writes tests.',
-          how: 'A helper starts either from scratch with a written task or from the conversation so far. The main agent can message, interrupt and list its helpers, and is told when each finishes.' },
+          how: ['A helper starts either from scratch with a written task or from the conversation so far. The main agent can message, interrupt and list its helpers, and is told when each finishes.', 'The agent is told when a helper is worth it, as in Claude Code: a self-contained piece whose files, search results or images are not needed afterwards, only its conclusion, or independent pieces that can run in parallel; not a single quick lookup.'] },
         { name: 'Workflows', what: 'When you ask for one, the agent writes a workflow: a short script that coordinates many helpers, in parallel, in stages, or one feeding the next.',
           how: 'It can run in the background while the conversation continues, and it returns one combined result.' },
         { name: 'Separate sessions', what: 'The agent can hand a piece of work to a new session in the sidebar with a written brief and get that session’s report back when it finishes.',
@@ -1178,8 +1246,8 @@ window.__ModuleLoader__.load({
             'The agent is told to use the Browser pane for your own apps on this computer, and your Chrome for websites; it uses the pane for a website only when you ask.'],
           why: 'Front-end bugs usually show up as a console error or a failed request; reading those directly beats guessing from a screenshot.' },
       ] },
-      { id: 'panes', title: '5. Panes and pages', summary: 'What sits around the conversation: the right panel’s panes, and the pages in the sidebar.', items: [
-        { name: 'The right panel', what: 'Icons in the session header open the Session, Terminal, Changes, Browser and Files panes, as in Claude Code desktop. Up to two show at once, stacked, with a bar between them you can drag.',
+      { id: 'panes', title: '6. Panes and pages', summary: 'What sits around the conversation: the right panel’s panes, and the pages in the sidebar.', items: [
+        { name: 'The right panel', what: 'Terminal, Browser and Files are icons in the session header, as in Claude Code desktop, and the Panes menu beside them opens every pane: Session details, Terminal, Changes, Browser, Files, Design and Dashboards, with Watches at its foot. Up to two show at once, stacked, with a bar between them you can drag.',
           how: ['Opening a third pane replaces the bottom one. Closing panes never brings back ones you closed earlier, and closing the last one closes the panel.',
             'Each pane header has a layout button that opens a menu to move the pane, fill the panel with it, or open it in a new window; the expand button fills the whole window with it; × closes it.',
             'A browser pane keeps its own tabs; + opens a new tab in that pane. Drag the panel’s edge to make it wider; it first opens at about a third of the window.'] },
@@ -1191,7 +1259,7 @@ window.__ModuleLoader__.load({
           how: 'Git runs in a small read-only helper with the repository’s hooks, filters and external programs switched off, so refreshing the pane can never start a program the repository names.' },
         { name: 'Files', what: 'A tree of the session folder beside tabs of open files, like Claude Code desktop’s. Type to filter by file name, or start with ? to search inside files and jump to the line.',
           how: ['A single click opens a preview tab (its name in italics) that the next file replaces; editing it or double-clicking keeps it open.',
-            'Files open ready to edit (see Editing files yourself). The button at the left of the pane header hides or shows the tree; drag the tree’s edge to resize it.', 'Every file opens here, as in Claude Code: PDFs, images, Excel workbooks, and Word and PowerPoint documents in Harness’s own viewers, and text files in the editor. Markdown, web pages, CSV files and SVG images have a Rendered / Source switch that starts in the view you chose last; CSV files render as a table.', 'A file card, file link or reference in the conversation opens its file here too, with the tree hidden so the file has the room; the tree button brings it back.'] },
+            'Files open ready to edit (see Editing files yourself). The button at the left of the pane header hides or shows the tree; drag the tree’s edge to resize it.', 'Every file opens here, as in Claude Code: PDFs, images, Excel workbooks, and Word and PowerPoint documents in Harness’s own viewers, and text files in the editor. Markdown, web pages, CSV files and SVG images have a Rendered / Source switch that starts in the view you chose last; CSV files render as a table.', 'A file card, file link or reference in the conversation opens its file here too, with the tree hidden so the file has the room; the tree button brings it back.', 'Videos and audio play here. Under the player, Set start and Set end mark a part, and Add to message puts it in your message as a reference such as [clip.mp4, 1:10.4 to 1:25.0], so the agent can cut, change or transcribe exactly that part.'] },
         { name: 'Terminal', what: 'A terminal for you in the right panel, opened from the session header, next to the conversation.' },
         { name: 'Git page', what: 'Git, in the sidebar below Instructions, opens over the whole window; Back returns to where you were. Pick All workspaces for an overview, or one workspace for its history.',
           how: ['Overview: each workspace’s branch, how far it is ahead of or behind its upstream (as git last saw it; nothing is fetched), its uncommitted files and its last commit.',
@@ -1200,11 +1268,12 @@ window.__ModuleLoader__.load({
             'The Branch menu switches the workspace to another local branch in one click. It refuses while anything is uncommitted, while an agent is working in that workspace, and for a branch checked out in another worktree. Switching is the only change the page makes.'],
           why: 'Looking back through history is quicker on a page than through git commands in a terminal; refusing to switch with uncommitted work means a switch can never carry or lose it.' },
       ] },
-      { id: 'sessions', title: '6. Sessions', summary: 'Picking work up again, running it on a schedule, and running it from a terminal.', items: [
-        { name: 'Command line', what: 'A harness-studio command for the terminal: on macOS from App menu → Install Command-Line Tool, on Linux installed with the .deb. Give it a task, or pipe text into it, and it runs one session in the current folder, prints the answer and exits, for scripts and CI; with no task it opens a chat in the terminal.',
-          how: ['It uses the app’s home folder, so it shares your model key, settings, network setting, connectors, memory and hooks.',
+      { id: 'sessions', title: '7. Sessions', summary: 'Picking work up again, running it on a schedule, and running it from a terminal.', items: [
+        { name: 'Command line', what: 'A harness-studio command for the terminal: on macOS from App menu → Install Command-Line Tool, on Linux installed with the .deb. Give it a task, or pipe text into it, and it runs one session in the current folder, prints the answer and exits, for scripts and CI; with no task it opens a full-screen chat in the terminal, in the style of Claude Code: a welcome box, the conversation in the terminal’s scrollback, tool calls with their results, a spinner while the agent works, an input box with the status line under it, a / menu of commands, and approvals as a Yes/No box chosen with the arrow keys (--plain keeps plain lines).',
+          how: ['It uses the app’s home folder, so it shares your settings, network setting, connectors, memory and hooks, and the model key you saved in the app; with no saved key it uses DEEPSEEK_API_KEY from the environment.',
             'Exit code 0 means the task finished and 1 means it failed; --json prints a stream of events for scripts, and --session-id continues an earlier session.',
-            'It cannot show approval cards, so anything that needs your approval is refused, and a project’s hooks run only if you allowed them in the app.'],
+            'In the chat, an action that needs your approval asks “Allow once? [y/N]” on the input line; a one-task run cannot ask, so it refuses those. A project’s hooks run only if you allowed them in the app.',
+            'In the chat, /help lists commands: /compact, /plan, /permission and /goal as in the app, /clear for a new session and /model; each reply ends with a line showing the model, tokens, context use and permission mode.'],
           why: 'The same agent, rules and memory work both in the window and in automated jobs.' },
         { name: 'Every session is kept', what: 'Sessions stay in the sidebar under their workspace; open one to continue exactly where it stopped, even after quitting the app.',
           how: 'Each session is an append-only log on disk, compressed, holding every message, tool call and result.' },
@@ -1216,26 +1285,29 @@ window.__ModuleLoader__.load({
             'Each watch waits at least a minute between notices by default (changes in between are merged), sends 20 notices at most, ends after a day unless given longer (a week at most), and is removed when its session is archived. They are kept in ~/.harness-studio/harness-studio/watches.json and resume when the app starts.'],
           why: 'A scheduled check costs a full model turn every time it runs; a watch costs nothing while nothing changes.' },
       ] },
-      { id: 'safety', title: '7. Safety model', summary: 'What actually stops a command, and what it does not cover.', items: [
+      { id: 'safety', title: '8. Safety model', summary: 'What actually stops a command, and what it does not cover.', items: [
         { name: 'Operating-system sandbox', what: 'Every command the agent runs is confined by the operating system, not by the model’s good behaviour.',
           how: ['macOS: Seatbelt. Linux: bubblewrap, with Landlock as a fallback when bubblewrap is missing.',
             'The file tools follow the same rules as commands.',
             'If confinement cannot be set up, the command does not run at all rather than running unconfined.'],
           why: 'A web page or file can trick a model into running something harmful; the operating system enforces the boundary whatever the model decides, and that is what lets the agent work without asking about every command.' },
         { name: 'Secret files', what: 'Commands the agent runs and its file tools cannot read well-known secret files: SSH keys, cloud and registry credentials, password files, ~/.env, Harness Studio’s own API keys, and .env files outside the workspace.',
-          how: ['Hidden: ~/.ssh (except known_hosts and config, so ssh can still connect through an ssh agent), ~/.aws, ~/.config/gcloud, ~/.netrc, ~/.git-credentials, ~/.npmrc, ~/.docker/config.json, ~/.env, and ~/.harness-studio/.credentials.yaml and .env.',
+          how: ['Hidden: ~/.ssh (except known_hosts and config, so ssh can still connect through an ssh agent), ~/.aws, ~/.config/gcloud, ~/.netrc, ~/.git-credentials, ~/.npmrc, ~/.docker/config.json, ~/.env, the database logins (Snowflake\u2019s connections, ~/.databrickscfg and ~/.databricks, ~/.pgpass and ~/.pg_service.conf, ~/.my.cnf and ~/.mylogin.cnf), and ~/.harness-studio/.credentials.yaml and .env.',
             'macOS: the operating system refuses to read them (names and sizes stay visible), symlinks included. Linux: each one that exists is covered by an empty folder or an empty file; .env files in other projects cannot be named in advance and stay readable there, and without bubblewrap nothing is hidden from commands.',
             'The read, edit, write and search tools refuse the same files. The workspace’s own .env files stay readable, since the agent often needs them.',
             'The agent is told which files are hidden. A command that genuinely needs one, such as git over ssh without an ssh agent, fails until you approve it with full access, which lifts the list for that command.'],
           why: 'A README or web page can carry instructions for the model. If the agent can read your keys, such an injection can have it send them anywhere, by a command, a web fetch or a page it opens; files it cannot read cannot leak.' },
-        { name: 'Network for commands', what: 'Settings → General → Network for commands decides whether commands the agent runs can reach the internet: On (the default), Off, or Only allowed sites with a list you edit. A change applies from the next command.',
+        { name: 'Cloud logins for commands', what: 'Settings → Permissions → Cloud logins for commands lets the agent’s commands use your existing Google Cloud, AWS, Azure, Kubernetes, Snowflake, Databricks, PostgreSQL or MySQL login, so gcloud, aws, az, kubectl, snow, databricks, psql or mysql run as you without signing in. Each is off by default; the first command using a login in a session asks you once.',
+          how: ['Switched off, the sandbox hides that login’s files from commands, as it hides SSH keys and other credentials.', 'Switched on, its files are readable to commands and its folders also writable, so the CLI can refresh its tokens; a login kept in one file, such as ~/.pgpass or ~/.my.cnf, is only readable. Everything else stays hidden.'],
+          why: 'Cloud and database work without signing in again in every session, and without turning the sandbox off.' },
+        { name: 'Network for commands', what: 'Settings → Permissions → Network for commands decides whether commands the agent runs can reach the internet: On (the default), Off, or Only allowed sites with a list you edit. A change applies from the next command.',
           how: ['Off: the operating system refuses connections to other computers. On macOS commands can still reach this computer (local dev servers); on Linux each command gets an isolated network of its own.',
             'Only allowed sites: direct connections are refused the same way, and HTTP and HTTPS go through a small proxy built into the app that lets through only the listed sites. Other sites get a refusal that names them, so the agent knows why. An entry matches that exact name; *.example.com matches its subdomains. The list starts with common package and code hosts (npm, PyPI, GitHub).',
             'Programs that ignore the standard proxy settings cannot connect at all, and other protocols such as ssh only work with the network On.',
             'The agent is told the current setting, and can ask you to approve a single command with full access when it needs more.'],
           why: 'Blocking writes alone does not stop a tricked command from sending your files somewhere; limiting where commands can connect closes that gap, as Claude Code’s sandbox does.' },
         { name: 'Asking before new sites', what: 'Web fetch, Browser pane pages the agent opens and pages it opens in your Chrome ask you before reaching a site for the first time in a session. Once you allow a site, the session reaches it again without asking.',
-          how: ['These reach the internet from the app itself, not through a command, so Network for commands cannot limit them. Instead, before one goes to a new site, the conversation shows an approval naming the site; rejecting it stops the request before anything is sent. Always allow for this website saves the site so it never asks again; Settings → General → Always-allowed sites removes it.',
+          how: ['These reach the internet from the app itself, not through a command, so Network for commands cannot limit them. Instead, before one goes to a new site, the conversation shows an approval naming the site; rejecting it stops the request before anything is sent. Always allow for this website saves the site so it never asks again; Settings → Permissions → Always-allowed sites removes it.',
             'No question for this computer (localhost, 127.0.0.1) or, while Network for commands is set to Only allowed sites, for the sites on that list. Back, forward and reload never ask.',
             'Approvals last for the session while the app runs; a new session, a helper agent’s session, or a restart asks again. Full access lifts the check, as it lifts the sandbox.',
             'Once a page is open, the agent’s clicks and typing act inside it, and the page itself can load from or send to other sites. The Browser pane and your Chrome show everything the agent does there.'],
@@ -1253,37 +1325,51 @@ window.__ModuleLoader__.load({
             'On Linux without bubblewrap the network cannot be limited, so commands refuse to run while it is set to Off or Only allowed sites.',
             'Hooks are your own commands and run outside the sandbox, as in Claude Code.'] },
       ] },
-      { id: 'app', title: '8. Look, privacy and updates', summary: 'The rest of the app.', items: [
+      { id: 'app', title: '9. Look, privacy and updates', summary: 'The rest of the app.', items: [
         { name: 'Calmer interface', what: 'Denser rows, text sizes and a sidebar modelled on Claude Code desktop, in Harness’s own colours, in light and dark. Drag the sidebar’s edge to resize it; long messages fold with Show more.' },
-        { name: 'Prompt history', what: 'Up in an empty message box brings back the prompts you sent, newest first; Down steps forward and returns what you were typing.' },
-        { name: 'Colour themes', what: 'Settings → General → Colour theme: Warm, Graphite, Nord, Solarized or High contrast on top of the default look. Each has a light and a dark version, so Appearance still chooses light, dark or system.' },
-        { name: 'Chat font and zoom', what: 'Settings → General → Chat font: the system font by default, installed presets, or any font you name. ⌘+ and ⌘− zoom the whole app; ⌘0 resets.' },
+        { name: 'Prompt history', what: 'Up in an empty message box brings back the prompts you sent in this chat, newest first; Down steps forward and returns what you were typing.' },
+        { name: 'Colour themes', what: 'Settings → Appearance → Colour theme: Warm, Graphite, Nord, Solarized or High contrast on top of the default look. Each has a light and a dark version, so Light or dark still chooses light, dark or system.' },
+        { name: 'Chat font and zoom', what: 'Settings → Appearance → Chat font: the system font by default, installed presets, or any font you name. ⌘+ and ⌘− zoom the whole app; ⌘0 resets.' },
         { name: 'No account, no telemetry', what: 'There is no sign-in, and usage reporting is turned off. Your conversations go only to the model provider you configured.' },
-        { name: 'Your data', what: 'Settings → General → Your data lists where Harness Studio keeps things on this computer, with each part’s size and an Open button: conversations, auto memory, Undo copies, settings and rules, keys (size only), and the window’s own browser data.' },
+        { name: 'Your data', what: 'Settings → Data lists where Harness Studio keeps things on this computer, with each part’s size and an Open button: conversations, auto memory, Undo copies, settings and rules, keys (size only), and the window’s own browser data.' },
         { name: 'Updates', what: 'Check for Updates opens the Releases page, which lists each version’s changes and downloads for macOS and Linux. The app is not signed by Apple, so the first launch on a Mac needs the steps in the Guide.' },
       ] },
     ]
     const NOT_YET = [
+      ['A full design canvas', 'design boards cover drafting; frames you drag by hand, comments and a design-system library are planned'],
+      ['Image generation', 'there is no image model yet; graphics are drawn as code'],
+      ['Slide and document templates', 'each file is styled from scratch for now'],
+      ['Video making', 'planned as a separate app, to keep Harness Studio light'],
       ['The command-line tool from the AppImage', 'on Linux it comes with the .deb'],
       ['Windows', 'paused; macOS and Linux are supported'],
     ]
     const ABOUT_CSS = `
       .hsa-page { box-sizing: border-box; height: 100%; overflow: auto; padding: 0 clamp(24px, 4vw, 48px) 64px; color: var(--dsw-alias-label-primary); font-size: 14px; scroll-behavior: smooth; container-type: inline-size; }
-      .hsa-layout { max-width: 1140px; margin: 0 auto; display: flex; align-items: flex-start; gap: 44px; }
+      .hsa-layout { max-width: 1140px; margin: 0 auto; display: flex; align-items: flex-start; gap: 36px; }
       .hsa-inner { flex: 1; min-width: 0; max-width: 880px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
-      /* The index: every section and feature, beside the text while it scrolls. Shown when there is room. */
-      .hsa-index { display: none; flex: none; width: 216px; position: sticky; top: 0; max-height: 100vh; overflow-y: auto; box-sizing: border-box; padding: 28px 4px 32px 0; font-size: 12.5px; line-height: 18px; scrollbar-width: thin; }
+      /* The index, beside the text while it scrolls (shown when there is room): every section with its number, and
+         the features of the section being read, with the current one marked. */
+      .hsa-index { display: none; flex: none; width: 224px; position: sticky; top: 0; max-height: 100vh; overflow-y: auto; box-sizing: border-box; padding: 28px 8px 32px 0; font-size: 13px; line-height: 18px; scrollbar-width: thin; }
       [data-platform="darwin"] .hsa-index { padding-top: calc(28px + var(--dsh-frame-top-clearance, 0px)); }
-      .hsa-index-title { font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--dsw-alias-label-tertiary); margin: 0 0 10px 10px; }
-      .hsa-index button { display: block; width: 100%; text-align: left; border: none; background: transparent; font: inherit; cursor: pointer; border-radius: 6px; padding: 3px 10px; color: var(--dsw-alias-label-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .hsa-index-title { font-size: 12px; font-weight: 500; color: var(--dsw-alias-label-tertiary); margin: 0 0 8px 8px; }
+      .hsa-index button { display: block; width: 100%; text-align: left; border: none; background: transparent; font: inherit; cursor: pointer; border-radius: 6px; color: var(--dsw-alias-label-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .hsa-index button:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
-      .hsa-index .hsa-index-section { margin-top: 12px; font-weight: 600; color: var(--dsw-alias-label-primary); }
-      .hsa-index .hsa-index-section:first-of-type { margin-top: 0; }
-      .hsa-index .hsa-index-item { padding-left: 20px; }
-      .hsa-index button[aria-current="true"] { color: var(--dsw-alias-label-primary); background: color-mix(in srgb, var(--dsw-alias-label-primary) 7%, transparent); }
-      @container (min-width: 1020px) {
+      .hsa-index .hsa-index-section { display: flex; align-items: center; gap: 9px; padding: 5px 8px; font-weight: 500; }
+      .hsa-index-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+      .hsa-index-num { flex: none; width: 18px; height: 18px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; font-size: 10.5px; font-weight: 600; line-height: 1; color: var(--dsw-alias-label-secondary); background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent); }
+      .hsa-index .hsa-index-section[data-open] { color: var(--dsw-alias-label-primary); }
+      .hsa-index-section[data-open] .hsa-index-num { color: var(--dsw-alias-bg-layer-1, #fff); background: var(--dsw-alias-label-primary); }
+      .hsa-index-items { margin: 1px 0 6px 17px; padding-left: 9px; border-left: 1px solid var(--dsw-alias-border-l2); }
+      .hsa-index .hsa-index-item { position: relative; padding: 3px 8px; font-size: 12.5px; }
+      .hsa-index .hsa-index-item[aria-current="true"] { color: var(--dsw-alias-label-primary); background: color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent); }
+      .hsa-index-item[aria-current="true"]::before { content: ''; position: absolute; left: -10px; top: 4px; bottom: 4px; width: 2px; border-radius: 1px; background: var(--dsw-alias-label-primary); }
+      .hsa-index-later { margin-top: 6px; padding-top: 6px; border-top: 0.5px solid var(--dsw-alias-border-l2); }
+      /* Narrow windows: the same index as one menu above the text. */
+      .hsa-jump { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--dsw-alias-label-secondary); }
+      .hsa-jump select { height: 30px; min-width: 0; max-width: 100%; padding: 0 28px 0 10px; border-radius: 8px; border: 0.5px solid var(--dsw-alias-border-l3); background: transparent; color: var(--dsw-alias-label-primary); font: inherit; cursor: pointer; }
+      @container (min-width: 860px) {
         .hsa-index { display: block; }
-        .hsa-toc { display: none !important; }
+        .hsa-jump { display: none !important; }
       }
       .hsa-card { scroll-margin-top: 20px; }
       .hsa-head { padding-top: 28px; }
@@ -1293,9 +1379,17 @@ window.__ModuleLoader__.load({
       .hsa-links { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; font-size: 13px; }
       .hsa-links a { color: var(--dsw-alias-label-link, var(--dsw-alias-accent-primary, #3b82f6)); text-decoration: none; }
       .hsa-links a:hover { text-decoration: underline; }
-      .hsa-toc { display: flex; flex-wrap: wrap; gap: 8px; }
-      .hsa-chip { height: 28px; padding: 0 12px; border-radius: 14px; border: 0.5px solid var(--dsw-alias-border-l3); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; cursor: pointer; }
-      .hsa-chip:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); }
+      .hsa-dev { margin-top: 20px; padding: 12px 14px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: 12px; }
+      .hsa-dev-name { font-size: 13px; color: var(--dsw-alias-label-secondary); }
+      .hsa-dev-name strong { color: var(--dsw-alias-label-primary); font-weight: 600; }
+      .hsa-dev-device { margin-top: 2px; font-size: 12px; color: var(--dsw-alias-label-tertiary); }
+      .hsa-dev-links { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 6px; font-size: 13px; }
+      .hsa-dev-item { display: inline-flex; align-items: baseline; gap: 5px; }
+      .hsa-dev-label { color: var(--dsw-alias-label-tertiary); }
+      .hsa-dev-links a { color: var(--dsw-alias-label-link, var(--dsw-alias-accent-primary, #3b82f6)); text-decoration: none; border-radius: 3px; }
+      .hsa-dev-links a:hover { text-decoration: underline; }
+      .hsa-dev-links a:focus { text-decoration: none; outline: none; }
+      .hsa-dev-links a:focus-visible { outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 2px; }
       .hsa-section { scroll-margin-top: 16px; margin-top: 16px; padding-top: 32px; border-top: 0.5px solid var(--dsw-alias-border-l2); }
       .hsa-h2 { margin: 0; display: flex; align-items: baseline; gap: 10px; font-size: 18px; font-weight: 600; line-height: 26px; }
       .hsa-num { flex: none; min-width: 26px; height: 26px; padding: 0 6px; box-sizing: border-box; border-radius: 13px; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; color: var(--dsw-alias-label-secondary); background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent); }
@@ -1349,16 +1443,35 @@ window.__ModuleLoader__.load({
         const at = active.getBoundingClientRect()
         if (at.top < box.top + 40 || at.bottom > box.bottom - 24) index.scrollTop += at.top - box.top - box.height / 3
       }, [current])
-      const index = h('nav', { className: 'hsa-index', 'aria-label': 'Index' },
-        h('div', { className: 'hsa-index-title' }, 'Index'),
-        ...ABOUT.flatMap(section => [
-          h('button', { key: section.id, type: 'button', className: 'hsa-index-section', onClick: () => jump(section.id) }, section.title),
-          ...section.items.map((item, i) => {
-            const key = `${section.id}:${i}`
-            return h('button', { key, type: 'button', className: 'hsa-index-item', title: item.name, 'aria-current': current === key ? 'true' : undefined, onClick: () => jumpItem(key) }, item.name)
-          }),
-        ]),
-        h('button', { type: 'button', className: 'hsa-index-section', 'aria-current': current === 'later' ? 'true' : undefined, onClick: () => jump('later') }, 'Not yet'))
+      const split = title => ({ num: title.split('. ')[0], label: title.split('. ').slice(1).join('. ') })
+      // The section being read: the current feature's, else the first.
+      const open = current === 'later' ? 'later' : (current?.split(':')[0] ?? ABOUT[0].id)
+      const index = h('nav', { className: 'hsa-index', 'aria-label': 'On this page' },
+        h('div', { className: 'hsa-index-title' }, 'On this page'),
+        ...ABOUT.map(section => {
+          const { num, label } = split(section.title)
+          return h(React.Fragment, { key: section.id },
+            h('button', { type: 'button', className: 'hsa-index-section', 'data-open': open === section.id ? '' : undefined, title: label, onClick: () => jump(section.id) },
+              h('span', { className: 'hsa-index-num', 'aria-hidden': 'true' }, num), h('span', { className: 'hsa-index-label' }, label)),
+            open === section.id ? h('div', { className: 'hsa-index-items' },
+              ...section.items.map((item, i) => {
+                const key = `${section.id}:${i}`
+                return h('button', { key, type: 'button', className: 'hsa-index-item', title: item.name, 'aria-current': current === key ? 'true' : undefined, onClick: () => jumpItem(key) }, item.name)
+              })) : null)
+        }),
+        h('button', { type: 'button', className: 'hsa-index-section hsa-index-later', 'data-open': open === 'later' ? '' : undefined, 'aria-current': current === 'later' ? 'true' : undefined, onClick: () => jump('later') },
+          h('span', { className: 'hsa-index-num', 'aria-hidden': 'true' }, '…'), h('span', { className: 'hsa-index-label' }, 'Not yet')))
+      const jumpMenu = h('label', { className: 'hsa-jump' }, 'Jump to',
+        h('select', { value: '', 'aria-label': 'Jump to a section or feature', onChange: e => {
+          const value = e.target.value
+          if (value.includes(':')) jumpItem(value)
+          else if (value) jump(value)
+        } },
+          h('option', { value: '' }, 'Choose a section or feature…'),
+          ...ABOUT.map(section => h('optgroup', { key: section.id, label: section.title },
+            h('option', { value: section.id }, `${split(section.title).label}: overview`),
+            ...section.items.map((item, i) => h('option', { key: i, value: `${section.id}:${i}` }, item.name)))),
+          h('option', { value: 'later' }, 'Not yet')))
       return h('div', { className: 'hsa-page', ref: page },
         h('style', null, ABOUT_CSS),
         h('div', { className: 'hsa-layout' },
@@ -1366,15 +1479,20 @@ window.__ModuleLoader__.load({
         h('div', { className: 'hsa-inner' },
           h('div', { className: 'hsa-head' },
             h('h1', { className: 'hsa-title' }, 'About Harness Studio'),
-            h('p', { className: 'hsa-intro' }, 'Harness Studio is a desktop app for macOS and Linux that runs a coding agent on your own computer. It is built on DeepSeek Harness, an open-source agent runtime, and adds what people expect from Claude Code: an operating-system sandbox with approvals, enforced plan mode, undo for file changes, hooks, memory that carries across sessions, connectors, a browser with app previews, side panes for the session, its changes and files, a Git history page, and a calmer interface. You choose the model provider in Settings → Models and bring your own key.'),
+            h('p', { className: 'hsa-intro' }, 'Harness Studio is a desktop app for macOS and Linux that runs a coding agent on your own computer. It is built on DeepSeek Harness, an open-source agent runtime, and adds what people expect from Claude Code: an operating-system sandbox with approvals, enforced plan mode, undo for file changes, hooks, memory that carries across sessions, connectors, a browser with app previews, side panes for the session, its changes and files, a Git history page, and a calmer interface. It also makes documents, design boards, apps and live dashboards, and transcribes speech on this computer. You choose the model provider in Settings → Models and bring your own key.'),
             h('p', { className: 'hsa-intro' }, 'This page explains each part: what it does, how it works underneath, and why it works that way.'),
             h('div', { className: 'hsa-links' },
               h('a', { href: REPO + '/releases', target: '_blank', rel: 'noreferrer' }, 'Releases and updates'),
               h('a', { href: REPO + '#readme', target: '_blank', rel: 'noreferrer' }, 'Guide'),
-              h('a', { href: REPO + '/issues', target: '_blank', rel: 'noreferrer' }, 'Report a problem'))),
-          h('nav', { className: 'hsa-toc', 'aria-label': 'Sections' },
-            ...ABOUT.map(s => h('button', { key: s.id, type: 'button', className: 'hsa-chip', onClick: () => jump(s.id) }, s.title)),
-            h('button', { type: 'button', className: 'hsa-chip', onClick: () => jump('later') }, 'Not yet')),
+              h('a', { href: REPO + '/issues', target: '_blank', rel: 'noreferrer' }, 'Report a problem')),
+            h('div', { className: 'hsa-dev', 'data-about-developer': '' },
+              h('div', { className: 'hsa-dev-name' }, 'Made by ', h('strong', null, DEVELOPER.name)),
+              h('div', { className: 'hsa-dev-device' }, DEVELOPER.device),
+              h('div', { className: 'hsa-dev-links' },
+                ...DEVELOPER.links.map(([label, href, text]) => h('span', { key: label, className: 'hsa-dev-item' },
+                  h('span', { className: 'hsa-dev-label' }, label),
+                  h('a', { href, target: '_blank', rel: 'noreferrer', 'aria-label': label + ': ' + text }, text)))))),
+          jumpMenu,
           ...ABOUT.map(section => h('section', { key: section.id, className: 'hsa-section', 'data-about-section': section.id },
             h('h2', { className: 'hsa-h2' }, h('span', { className: 'hsa-num' }, section.title.split('. ')[0]), section.title.split('. ').slice(1).join('. ')),
             h('p', { className: 'hsa-summary' }, section.summary),
@@ -1393,7 +1511,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'hsa-card' },
               ...NOT_YET.map(([name, state]) => h('div', { key: name, className: 'hsa-later-row' },
                 h('span', { className: 'hsa-name' }, name), h('span', { className: 'hsa-later' }, ` — ${state}`))))),
-          h('p', { className: 'hsa-foot' }, 'Harness Studio is an independent open-source project under the MIT licence. It is not affiliated with or endorsed by DeepSeek or Anthropic.'))))
+          h('p', { className: 'hsa-foot' }, 'Harness Studio is an independent open-source project by ' + DEVELOPER.name + ', under the MIT licence. It is not affiliated with or endorsed by DeepSeek or Anthropic.'))))
     }
 
     // ---- chat font ---------------------------------------------------------------------------------
@@ -1461,19 +1579,12 @@ window.__ModuleLoader__.load({
       for (const listener of fontListeners) listener(choice)
     }
 
-    /** The General page's row look, borrowed from the Font size row Harness draws just above this one. */
-    function generalRowClasses() {
-      const title = [...document.querySelectorAll('[class*="_title"]')].find(e => e.textContent.trim() === 'Font size')
-      const row = title?.closest('[class$="_row"], [class*="_row "]')
-      const pick = name => row?.querySelector(`[class$="_${name}"], [class*="_${name} "]`)?.className
-      // The dropdown look of the other General rows (Work details, Language), for the select.
-      const selector = document.querySelector('[role="dialog"] :is([class$="_selector"], [class*="_selector "])')?.className
-      return { row: row?.className, text: pick('rowText'), title: title?.className, desc: pick('desc'), control: pick('control'), selector }
-    }
+    /** The look of a settings row: this plugin's own classes, defined with the values of Harness's rows. */
+    const ROW_CLASSES = { row: 'hs-setting', text: 'hs-setting-text', title: 'hs-setting-title', desc: 'hs-setting-desc', control: 'hs-setting-control', selector: 'hs-setting-select' }
 
 
     // ---- network for commands ----------------------------------------------------------------------
-    // Settings → General: whether commands the agent runs may reach the internet. The Host half (index.js)
+    // Settings → Permissions: whether commands the agent runs may reach the internet. The Host half (index.js)
     // saves the choice in <harness home>/harness-studio/network.json; the sandbox policy reads it before
     // each command, so a change applies to the next command without a restart.
     const NETWORK_ENDPOINT = 'harnessStudioSettings/call'
@@ -1494,19 +1605,14 @@ window.__ModuleLoader__.load({
     const splitHosts = text => text.split(/[\s,]+/).map(h => h.trim()).filter(Boolean)
 
     // ---- your data --------------------------------------------------------------------------------------
-    // Settings → General: where Harness Studio keeps your data on this computer and how large each part is, with
+    // Settings → Data: where Harness Studio keeps your data on this computer and how large each part is, with
     // Open to show it in the file manager. Sizes come from the Host half (data.js); nothing is read or sent.
     const formatBytes = bytes => (bytes < 1024 ? `${bytes} B` : bytes < 1024 ** 2 ? `${(bytes / 1024).toFixed(0)} KB` : bytes < 1024 ** 3 ? `${(bytes / 1024 ** 2).toFixed(1)} MB` : `${(bytes / 1024 ** 3).toFixed(2)} GB`)
     const tildePath = file => file.replace(/^\/(?:Users|home)\/[^/]+/, '~')
     function DataRow() {
-      const [classes, setClasses] = React.useState(generalRowClasses)
+      const classes = ROW_CLASSES
       const [rows, setRows] = React.useState(null)
       const [error, setError] = React.useState('')
-      React.useEffect(() => {
-        if (classes.row) return undefined
-        const timer = setInterval(() => { const next = generalRowClasses(); if (next.row) { setClasses(next); clearInterval(timer) } }, 250)
-        return () => clearInterval(timer)
-      }, [classes.row])
       React.useEffect(() => { settingsCall({ action: 'listData' }).then(setRows, e => setError(e.message)) }, [])
       const open = id => settingsCall({ action: 'revealData', id }).catch(e => setError(e.message))
       const button = { height: 24, padding: '0 9px', borderRadius: 7, border: '1px solid var(--dsw-alias-border-l2)', background: 'transparent', color: 'inherit', font: 'inherit', fontSize: 12, cursor: 'pointer', flex: 'none' }
@@ -1526,23 +1632,18 @@ window.__ModuleLoader__.load({
     }
 
     // ---- computer use -----------------------------------------------------------------------------------
-    // Settings → General: the two macOS permissions computer use needs (read from its helper, never by opening a
+    // Settings → Computer use: the two macOS permissions computer use needs (read from its helper, never by opening a
     // system prompt), the apps saved with "Always allow" (Remove), and the apps it never controls (editable).
     const PERMISSION_ROWS = [
       ['accessibility', 'Accessibility', 'Lets the agent click and type in the apps you approve.'],
       ['screenRecording', 'Screen Recording', 'Lets the agent see the windows of the apps you approve.'],
     ]
     function ComputerRow() {
-      const [classes, setClasses] = React.useState(generalRowClasses)
+      const classes = ROW_CLASSES
       const [state, setState] = React.useState(null)
       const [error, setError] = React.useState('')
       const [refusedText, setRefusedText] = React.useState('')
       const [note, setNote] = React.useState('')
-      React.useEffect(() => {
-        if (classes.row) return undefined
-        const timer = setInterval(() => { const next = generalRowClasses(); if (next.row) { setClasses(next); clearInterval(timer) } }, 250)
-        return () => clearInterval(timer)
-      }, [classes.row])
       const load = React.useCallback(() => settingsCall({ action: 'computerStatus' }).then((next) => {
         setState(next); setError('')
         if (next.refusedApps) setRefusedText(next.refusedApps.join(', '))
@@ -1596,7 +1697,34 @@ window.__ModuleLoader__.load({
       return h('div', { 'data-studio-computer': '' }, rows)
     }
 
+    /** Settings → Computer use and Settings → Data: one column each, like Harness's own pages. */
+    const ComputerPage = () => h('div', { 'data-hs-page': 'computer-use', style: { display: 'flex', flexDirection: 'column', width: '100%' } }, h(ComputerRow))
+    const DataPage = () => h('div', { 'data-hs-page': 'data', style: { display: 'flex', flexDirection: 'column', width: '100%' } }, h(DataRow))
+
     // The Stop bar: while a session controls an app, a bar at the top of the window names the app and stops it.
+    /**
+     * Messages sent while the agent works: Harness keeps them in a panel above the message box and, once there are two
+     * or more, folds them behind an "N queued messages" header. Like Claude Code desktop, each one shows as a faded
+     * message at the end of the conversation instead (the styles above hide the header), so the list is opened each
+     * time the panel appears.
+     */
+    function watchQueue() {
+      const opened = new WeakSet()
+      const scan = () => {
+        for (const dock of document.querySelectorAll('[data-queue-dock]')) {
+          if (opened.has(dock)) continue
+          const header = dock.querySelector('button[aria-expanded]')
+          if (header === null) continue
+          opened.add(dock)
+          if (header.getAttribute('aria-expanded') === 'false' && !header.disabled) header.click()
+        }
+      }
+      const observer = new MutationObserver(scan)
+      observer.observe(document.body, { childList: true, subtree: true })
+      scan()
+      return () => observer.disconnect()
+    }
+
     function watchComputerUse() {
       const bar = document.createElement('div')
       bar.setAttribute('data-studio-computer-bar', '')
@@ -1646,7 +1774,7 @@ window.__ModuleLoader__.load({
       button.className = reject.className.split(' ').filter(name => !/_reject$/.test(name)).join(' ')
       button.dataset.hsAlwaysAllow = host
       button.textContent = 'Always allow for this website'
-      button.title = `Never ask again for ${host}. Remove it in Settings → General → Always-allowed sites.`
+      button.title = `Never ask again for ${host}. Remove it in Settings → Permissions → Always-allowed sites.`
       button.addEventListener('click', async () => {
         button.disabled = true
         try {
@@ -1667,16 +1795,11 @@ window.__ModuleLoader__.load({
       return () => observer.disconnect()
     }
 
-    // Settings → General: the always-allowed sites, each with Remove.
+    // Settings → Permissions: the always-allowed sites, each with Remove.
     function SitesRow() {
-      const [classes, setClasses] = React.useState(generalRowClasses)
+      const classes = ROW_CLASSES
       const [hosts, setHosts] = React.useState(null)
       const [error, setError] = React.useState('')
-      React.useEffect(() => {
-        if (classes.row) return undefined
-        const timer = setInterval(() => { const next = generalRowClasses(); if (next.row) { setClasses(next); clearInterval(timer) } }, 250)
-        return () => clearInterval(timer)
-      }, [classes.row])
       React.useEffect(() => { settingsCall({ action: 'listSites' }).then(r => setHosts(r.hosts), e => setError(e.message)) }, [])
       const forget = host => settingsCall({ action: 'forgetSite', host }).then(r => setHosts(r.hosts), e => setError(e.message))
       const button = { height: 24, padding: '0 9px', borderRadius: 7, border: '1px solid var(--dsw-alias-border-l2)', background: 'transparent', color: 'inherit', font: 'inherit', fontSize: 12, cursor: 'pointer', flex: 'none' }
@@ -1692,17 +1815,71 @@ window.__ModuleLoader__.load({
           h('div', { style: { fontSize: 12, color: 'var(--dsw-alias-label-tertiary)', padding: '0 0 12px' } }, hosts ? 'None yet.' : ''))
     }
 
+    // Settings → Permissions → Long turns: how many steps a turn may take before it pauses for approval (turn-guard.js).
+    const TURN_BUDGETS = [[60, 'Ask after 60 steps'], [120, 'Ask after 120 steps'], [200, 'Ask after 200 steps'], [0, 'Never ask']]
+    function LongTurnsRow() {
+      const classes = ROW_CLASSES
+      const [value, setValue] = React.useState(null)
+      const [message, setMessage] = React.useState('')
+      React.useEffect(() => {
+        settingsCall({ action: 'getTurnBudget' }).then(v => setValue(v.pauseAfter), e => setMessage(e.message))
+      }, [])
+      const help = value === 0
+        ? 'Turns run until the agent finishes or you stop it. It is still reminded when a tool keeps returning the same result.'
+        : `When one request takes ${value ?? 60} steps, the agent asks before continuing; halfway there it is reminded to take stock and ask you if it is stuck.`
+      return h('div', { className: classes.row, style: classes.row ? undefined : { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, padding: '12px 0' } },
+        h('div', { className: classes.text },
+          h('div', { className: classes.title }, 'Long turns'),
+          h('div', { className: classes.desc }, message || help)),
+        h('div', { className: classes.control },
+          h('select', {
+            'aria-label': 'Long turns', value: value ?? 60, disabled: value === null,
+            onChange: async (e) => {
+              const next = Number(e.target.value)
+              try { setValue((await settingsCall({ action: 'setTurnBudget', pauseAfter: next })).pauseAfter); setMessage('Saved. Applies from the next step.'); setTimeout(() => setMessage(''), 2500) }
+              catch (error) { setMessage(error.message) }
+            },
+            style: { height: 32, padding: '0 10px', borderRadius: 8, border: 'none', font: 'inherit', fontSize: 13, cursor: 'pointer', background: 'var(--dsw-alias-button-floating-fill, color-mix(in srgb, var(--dsw-alias-label-primary) 6%, transparent))', color: 'var(--dsw-alias-label-primary)' },
+          }, ...TURN_BUDGETS.map(([n, label]) => h('option', { key: n, value: n }, label)))))
+    }
+
+    // ---- cloud logins for commands -----------------------------------------------------------------------
+    // Settings → Permissions: which cloud command-line logins the agent's commands may use. The Host half
+    // (cloud-logins.js) saves the choice in <harness home>/harness-studio/cloud-logins.json, which Harness's
+    // sandbox reads before each command; the first command using a login in a session asks once.
+    function CloudLoginsRow() {
+      const classes = ROW_CLASSES
+      const [state, setState] = React.useState(null)
+      const [message, setMessage] = React.useState('')
+      React.useEffect(() => {
+        settingsCall({ action: 'getCloudLogins' }).then(setState, e => setMessage(e.message))
+      }, [])
+      const toggle = async (id, on) => {
+        const enabled = state.logins.filter(login => (login.id === id ? on : login.enabled)).map(login => login.id)
+        try { setState(await settingsCall({ action: 'setCloudLogins', enabled })); setMessage('Saved. Applies from the next command.'); setTimeout(() => setMessage(''), 2500) }
+        catch (error) { setMessage(error.message) }
+      }
+      const help = 'Lets the agent\u2019s commands use your existing cloud and database logins, so these CLIs run as you without signing in. The first such command in a session asks you once. Off, their login files stay hidden from commands.'
+      return h('div', { className: classes.row, style: { ...classes.row ? {} : { display: 'flex', justifyContent: 'space-between', gap: 16, padding: '12px 0' }, alignItems: 'flex-start' } },
+        h('div', { className: classes.text },
+          h('div', { className: classes.title }, 'Cloud logins for commands'),
+          h('div', { className: classes.desc }, message || help)),
+        h('div', { className: classes.control, style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6 } },
+          ...(state?.logins ?? []).map(login => h('label', {
+            key: login.id, title: `${login.path}${login.present ? '' : ' (not found: not signed in on this computer)'}`,
+            style: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap' },
+          },
+            h('input', { type: 'checkbox', checked: login.enabled, 'aria-label': `${login.label} login for commands`, onChange: e => toggle(login.id, e.target.checked) }),
+            `${login.label} (${login.cli})`,
+            login.present ? null : h('span', { style: { color: 'var(--dsw-alias-label-tertiary)', fontSize: 12 } }, 'not signed in')))))
+    }
+
     function NetworkRow() {
-      const [classes, setClasses] = React.useState(generalRowClasses)
+      const classes = ROW_CLASSES
       const [state, setState] = React.useState(null)
       const [hostsText, setHostsText] = React.useState('')
       const [error, setError] = React.useState('')
       const [savedNote, setSavedNote] = React.useState('')
-      React.useEffect(() => {
-        if (classes.row) return undefined
-        const timer = setInterval(() => { const next = generalRowClasses(); if (next.row) { setClasses(next); clearInterval(timer) } }, 250)
-        return () => clearInterval(timer)
-      }, [classes.row])
       React.useEffect(() => {
         settingsCall({ action: 'getNetwork' })
           .then(value => { setState(value); setHostsText(value.allowedHosts.join('\n')) })
@@ -1762,15 +1939,10 @@ window.__ModuleLoader__.load({
     const CHEVRON = `url("data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="#81858c" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>')}")`
     function ChatFontRow() {
       const [choice, setChoice] = React.useState(readFont)
-      const [classes, setClasses] = React.useState(generalRowClasses)
+      const classes = ROW_CLASSES
       const [custom, setCustom] = React.useState(() => (readFont().startsWith('custom:') ? readFont().slice(7) : ''))
       const [editing, setEditing] = React.useState(() => readFont().startsWith('custom:'))
       React.useEffect(() => { fontListeners.add(setChoice); return () => { fontListeners.delete(setChoice) } }, [])
-      React.useEffect(() => {
-        if (classes.row) return undefined
-        const timer = setInterval(() => { const next = generalRowClasses(); if (next.row) { setClasses(next); clearInterval(timer) } }, 250)
-        return () => clearInterval(timer)
-      }, [classes.row])
       const groups = [...new Set(FONT_CHOICES.map(f => f.group))]
       const offered = f => f.probe === undefined || isInstalled(f.probe) || choice === f.id
       const control = {
@@ -1808,7 +1980,7 @@ window.__ModuleLoader__.load({
     }
 
     // ---- colour themes ------------------------------------------------------------------------------------
-    // Settings → General, after Appearance: a colour theme on top of Harness's light and dark palettes. Each theme
+    // Settings → Appearance, after Light or dark: a colour theme on top of Harness's light and dark palettes. Each theme
     // gives base colours for both schemes; they are spread over Harness's colour tokens and applied as one override
     // layer through Harness's theme service, so Appearance (Light, Dark, System) still picks the scheme. The choice
     // is remembered in this window's storage.
@@ -1941,7 +2113,7 @@ window.__ModuleLoader__.load({
 
     function ColorThemeRow() {
       const [choice, setChoice] = React.useState(colorTheme)
-      const [classes, setClasses] = React.useState(generalRowClasses)
+      const classes = ROW_CLASSES
       const [dark, setDark] = React.useState(() => document.body.hasAttribute('data-ds-dark-theme'))
       React.useEffect(() => { colorThemeListeners.add(setChoice); return () => { colorThemeListeners.delete(setChoice) } }, [])
       React.useEffect(() => {
@@ -1949,15 +2121,10 @@ window.__ModuleLoader__.load({
         observer.observe(document.body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
         return () => observer.disconnect()
       }, [])
-      React.useEffect(() => {
-        if (classes.row) return undefined
-        const timer = setInterval(() => { const next = generalRowClasses(); if (next.row) { setClasses(next); clearInterval(timer) } }, 250)
-        return () => clearInterval(timer)
-      }, [classes.row])
       return h('div', { 'data-studio-color-theme': '', style: { display: 'flex', flexDirection: 'column', gap: 12, padding: '12px 0' } },
         h('div', { className: classes.text },
           h('div', { className: classes.title }, 'Colour theme'),
-          h('div', { className: classes.desc }, 'Colours for the whole app. Appearance above still chooses light or dark, and every theme has both.')),
+          h('div', { className: classes.desc }, 'Colours for the whole app. Light or dark above still applies, and every theme has both.')),
         h('div', { role: 'radiogroup', 'aria-label': 'Colour theme', style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
           COLOR_THEMES.map(theme => h('button', {
             key: theme.id, type: 'button', role: 'radio', 'aria-checked': choice === theme.id, onClick: () => saveColorTheme(theme.id),
@@ -1968,24 +2135,27 @@ window.__ModuleLoader__.load({
     }
 
     // ---- prompt history -------------------------------------------------------------------------------
-    // Up and Down in the message box step through the prompts you sent, newest first, like a shell or Claude Code:
-    // Up starts when the box is empty or the cursor is at its very start; while a recalled prompt is unchanged, Up
-    // and Down keep stepping, and Down past the newest brings back what you were typing. Any edit ends the stepping.
-    // Nothing is taken while the / or @ menu is open, or while an input method is composing. Prompts are kept in
-    // this window's storage, the last 200, without repeats in a row.
-    const PROMPT_HISTORY_KEY = 'harness-studio.prompt-history'
-    const PROMPT_HISTORY_MAX = 200
+    // Up and Down in the message box step through the prompts sent in this chat, newest first, like a shell or Claude
+    // Code: Up starts when the box is empty or the cursor is at its very start; while a recalled prompt is unchanged,
+    // Up and Down keep stepping, and Down past the newest brings back what you were typing. Any edit ends the stepping.
+    // Nothing is taken while the / or @ menu is open, or while an input method is composing. The prompts are read from
+    // the conversation the box belongs to (its own one in a split view), so other chats' prompts never come up and nothing
+    // is stored; older turns count once they are loaded.
     const COMPOSER_INPUT = '[data-composer-input][contenteditable="true"]'
-    const readPromptHistory = () => {
-      try { const list = JSON.parse(localStorage.getItem(PROMPT_HISTORY_KEY) || '[]'); return Array.isArray(list) ? list.filter(x => typeof x === 'string') : [] } catch { return [] }
-    }
-    function rememberPrompt(text) {
-      const prompt = text.replace(/\u00a0/g, ' ').trim()
-      if (!prompt) return
-      const list = readPromptHistory()
-      if (list[0] === prompt) return
-      list.unshift(prompt)
-      try { localStorage.setItem(PROMPT_HISTORY_KEY, JSON.stringify(list.slice(0, PROMPT_HISTORY_MAX))) } catch { /* storage unavailable: history lasts until reload */ }
+    // An earlier version kept one list for every chat in this window's storage; it is no longer used.
+    const OLD_PROMPT_HISTORY_KEY = 'harness-studio.prompt-history'
+    try { localStorage.removeItem(OLD_PROMPT_HISTORY_KEY) } catch { /* storage unavailable: nothing to clear */ }
+    /** The prompts sent in the chat this message box belongs to, newest first, without repeats in a row. */
+    function chatPrompts(input) {
+      // The conversation's own body holds both its chat and this box, and is marked with its session.
+      const view = input.closest('[data-conversation-session]')
+      if (!view) return []
+      const prompts = []
+      for (const item of view.querySelectorAll(':is([data-chat-flow-kind="user"], [data-chat-flow-kind="steering"])')) {
+        const text = (item.querySelector(c('bubble')) ?? item).innerText.replace(/\u00a0/g, ' ').trim()
+        if (text && prompts[0] !== text) prompts.unshift(text)
+      }
+      return prompts
     }
     /**
      * Replace the box's text through its editor (Lexical, which ignores the browser's editing commands): one paragraph
@@ -2018,6 +2188,186 @@ window.__ModuleLoader__.load({
       range.setEnd(selection.anchorNode, selection.anchorOffset)
       return range.toString().length === 0
     }
+    // ---- Settings search -------------------------------------------------------------------------------
+    // A search field at the top of the Settings page list. Typing lists matching rows from every page as
+    // "row · page"; choosing one opens its page, scrolls to the row and highlights it. Harness renders only the
+    // open page, so the index starts from the rows each page had when this was written and adds whatever a page
+    // shows each time it is opened (kept in this window's storage), so new rows and plugin cards become findable.
+    const SETTINGS_SEARCH_KEY = 'harness-studio.settings-index'
+    const SETTINGS_SEED = {
+      General: [['Work details', 'How much detail to show for tool calls'], ['When to collapse work details', 'When to collapse work details automatically'], ['Show coding view', 'Trajectory, code diffs and all agent presets'], ['Keyboard shortcuts', 'View and edit shortcuts and input actions'], ['Open chat links in', 'Where to open web links'], ['Send behavior while busy', 'Steer or queue messages sent while the agent works'], ['Performance & usage', 'How much performance and usage information to show'], ['Current version', 'Updates']],
+      Appearance: [['Language', ''], ['Light or dark', 'Theme'], ['Colour theme', 'Default, Warm, Graphite, Nord, Solarized, High contrast'], ['Font size', 'Conversation text size'], ['Chat font', 'Typeface for messages and replies']],
+      Permissions: [['Permission', 'Default permission mode for new sessions'], ['Network for commands', 'Internet access for commands the agent runs'], ['Cloud logins for commands', 'Google Cloud, AWS, Azure, Kubernetes, Snowflake, Databricks, PostgreSQL, MySQL'], ['Long turns', 'Ask after a number of steps'], ['Always-allowed sites', 'Websites the agent may open without asking']],
+      'Computer use': [['Computer use', 'Let the agent click and type in apps'], ['Accessibility', 'macOS permission'], ['Screen Recording', 'macOS permission'], ['Always allowed apps', ''], ['Apps the agent never controls', '']],
+      Models: [['Models', 'Model providers and API keys']],
+      Connectors: [['Connectors', 'MCP servers'], ['Add connector', 'MCP server by URL or command']],
+      'Built-in plugins': [['Built-in plugins', 'Plugins this app ships'], ['Voice Input', 'Dictation and speech-to-text']],
+      'Agent presets': [['Agent presets', ''], ['Standard mode', ''], ['PTC mode', ''], ['Minimal mode', ''], ['Creator mode', '']],
+      Data: [['Your data', 'Where Harness Studio keeps things'], ['Conversations', ''], ['Auto memory', ''], ['Undo copies', ''], ['Separate-session worktrees', ''], ['ffmpeg', ''], ['Speech model', ''], ['Settings and rules', ''], ['Plugin settings', ''], ['Workspaces and schedules', ''], ['Keys and sign-ins', ''], ['Plugin lists', ''], ['Window data', '']],
+    }
+    const SETTINGS_SEARCH_CSS = `
+      .hs-ss { position: relative; display: flex; align-items: center; margin: 0 0 -6px; color: var(--dsw-alias-label-tertiary); }
+      .hs-ss > svg { position: absolute; left: 10px; pointer-events: none; }
+      .hs-ss input { width: 100%; height: 32px; box-sizing: border-box; border: 0.5px solid var(--dsw-alias-border-l4); border-radius: var(--dsw-radius-md, 12px);
+        padding: 0 10px 0 32px; outline: none; background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; }
+      .hs-ss input::placeholder { color: var(--dsw-alias-label-tertiary); }
+      .hs-ss input:focus-visible { border-color: var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)) 18%, transparent); }
+      .hs-ss input::-webkit-search-cancel-button { cursor: pointer; }
+      .hs-ss-results { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; min-height: 0; }
+      .hs-ss-hit { display: flex; flex-direction: column; align-items: flex-start; gap: 0; width: 100%; padding: 6px 12px; border: none; border-radius: var(--dsw-radius-md, 12px);
+        background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 13px; line-height: 18px; text-align: left; cursor: pointer; }
+      .hs-ss-hit:hover, .hs-ss-hit[data-selected] { background: var(--dsw-alias-interactive-bg-hover); }
+      .hs-ss-hit span { max-width: 100%; overflow-wrap: anywhere; }
+      .hs-ss-hit .hs-ss-page { font-size: 11px; line-height: 15px; color: var(--dsw-alias-label-tertiary); }
+      .hs-ss-none { padding: 6px 12px; font-size: 12px; color: var(--dsw-alias-label-tertiary); }
+      .hs-ss-flash { border-radius: 10px; animation: hs-ss-flash 1.8s ease-out; }
+      @keyframes hs-ss-flash { 0%, 35% { background: color-mix(in srgb, var(--dsw-alias-button-info-fill, #3b82f6) 18%, transparent); } 100% { background: transparent; } }
+    `
+    const SETTINGS_TITLE = '[class*="_title"], [class*="settingTitle"], [class*="rowName"], [class*="cardTitle"], [class*="cardName"], [class*="heading"], .hs-setting-title, .hsc-title'
+    const SETTINGS_DESC = '[class*="_desc"], [class*="settingDescription"], [class*="cardDescription"], .hs-setting-desc, .hsc-desc'
+    function settingsIndex() {
+      let learned = {}
+      try { learned = JSON.parse(localStorage.getItem(SETTINGS_SEARCH_KEY) || '{}') } catch (error) { console.warn('[harness-studio] settings index unreadable', error) }
+      const rows = new Map()
+      for (const [page, list] of [...Object.entries(SETTINGS_SEED), ...Object.entries(learned)]) {
+        for (const [title, desc] of list) {
+          const key = page + '\u0000' + title
+          if (!rows.has(key) || (desc && !rows.get(key).desc)) rows.set(key, { page, title, desc: desc || '' })
+        }
+      }
+      return [...rows.values()]
+    }
+    function learnSettingsPage(page, options) {
+      const leaf = el => (el.children.length === 0 ? el.textContent : el.innerText || '').trim()
+      const list = []
+      for (const el of options.querySelectorAll(SETTINGS_TITLE)) {
+        const title = leaf(el)
+        if (!title || title.length > 60 || /^\d/.test(title)) continue
+        const box = el.closest('.hs-setting, [class*="row" i], [class*="card" i], [class*="item" i]') || el.parentElement
+        const descEl = box?.querySelector(SETTINGS_DESC)
+        const desc = descEl && descEl !== el ? leaf(descEl).slice(0, 120) : ''
+        if (!list.some(([t]) => t === title)) list.push([title, desc])
+      }
+      if (!list.length) return
+      try {
+        const learned = JSON.parse(localStorage.getItem(SETTINGS_SEARCH_KEY) || '{}')
+        learned[page] = list
+        localStorage.setItem(SETTINGS_SEARCH_KEY, JSON.stringify(learned))
+      } catch (error) { console.warn('[harness-studio] settings index not saved', error) }
+    }
+    function searchSettings(query, pages) {
+      const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+      if (!words.length) return []
+      const all = [...pages.map(page => ({ page, title: page, desc: '', isPage: true })), ...settingsIndex().filter(row => pages.includes(row.page))]
+      const scored = []
+      for (const row of all) {
+        const title = row.title.toLowerCase(), hay = (row.title + ' ' + row.desc + ' ' + row.page).toLowerCase()
+        if (!words.every(word => hay.includes(word))) continue
+        const score = (title.startsWith(words[0]) ? 0 : title.includes(words[0]) ? 1 : 2) + (row.isPage ? -0.5 : 0)
+        scored.push({ ...row, score })
+      }
+      return scored.sort((a, b) => a.score - b.score || a.title.localeCompare(b.title)).slice(0, 40)
+    }
+    function watchSettingsSearch() {
+      const style = document.createElement('style')
+      style.id = 'hs-settings-search'
+      style.dataset.plugin = '@harness-studio/compact'
+      style.textContent = SETTINGS_SEARCH_CSS
+      document.head.append(style)
+      let query = ''
+      let selected = 0
+      const modal = () => document.querySelector('[data-shortcut-modal="settings"]')
+      const navCells = () => [...(modal()?.querySelectorAll('nav [class*="_navCell"]') ?? [])]
+      const pages = () => navCells().map(cell => cell.innerText.trim()).filter(Boolean)
+      const activePage = () => navCells().find(cell => /_active/.test(cell.className))?.innerText.trim()
+      const options = () => modal()?.querySelector('[class*="_options"]')
+      const flash = (title) => {
+        const started = Date.now()
+        const tick = () => {
+          const box = options()
+          const el = box && [...box.querySelectorAll(SETTINGS_TITLE + ', label, span, div')].find(node => node.children.length === 0 && node.textContent.trim() === title)
+          if (el) {
+            const row = el.closest('.hs-setting, [class*="row" i], [class*="card" i], [class*="item" i]') || el.parentElement
+            row.scrollIntoView({ block: 'center', behavior: 'smooth' })
+            row.classList.remove('hs-ss-flash'); void row.offsetWidth; row.classList.add('hs-ss-flash')
+            setTimeout(() => row.classList.remove('hs-ss-flash'), 2000)
+          } else if (Date.now() - started < 1500) setTimeout(tick, 80)
+        }
+        tick()
+      }
+      const open = (hit) => {
+        navCells().find(cell => cell.innerText.trim() === hit.page)?.click()
+        if (!hit.isPage) flash(hit.title)
+      }
+      const render = () => {
+        const root = modal()
+        const nav = root?.querySelector('nav')
+        const list = nav?.querySelector('[class*="_navList"]')
+        if (!nav || !list) return
+        let field = nav.querySelector('.hs-ss')
+        if (!field) {
+          field = document.createElement('label')
+          field.className = 'hs-ss'
+          field.innerHTML = '<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6.6 11.9a5.4 5.4 0 1 0 0-10.8 5.4 5.4 0 0 0 0 10.8zM10.3 10.4l4.5 4.5" stroke="currentColor"/></svg>'
+          const input = document.createElement('input')
+          input.type = 'search'; input.placeholder = 'Search settings'; input.setAttribute('aria-label', 'Search settings'); input.spellcheck = false
+          input.value = query
+          input.addEventListener('input', () => { query = input.value; selected = 0; render() })
+          input.addEventListener('keydown', (event) => {
+            const hits = searchSettings(query, pages())
+            if (event.key === 'Escape' && query) { event.preventDefault(); event.stopPropagation(); input.value = ''; query = ''; render(); return }
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); selected = Math.max(0, Math.min(hits.length - 1, selected + (event.key === 'ArrowDown' ? 1 : -1))); render() }
+            if (event.key === 'Enter' && hits[selected]) { event.preventDefault(); open(hits[selected]) }
+          })
+          field.append(input)
+          list.before(field)
+        }
+        let results = nav.querySelector('.hs-ss-results')
+        if (!query.trim()) { results?.remove(); list.style.display = ''; return }
+        if (!results) { results = document.createElement('div'); results.className = 'hs-ss-results'; results.setAttribute('role', 'listbox'); results.setAttribute('aria-label', 'Matching settings'); list.after(results) }
+        list.style.display = 'none'
+        const hits = searchSettings(query, pages())
+        results.replaceChildren(...(hits.length ? hits.map((hit, i) => {
+          const button = document.createElement('button')
+          button.type = 'button'; button.className = 'hs-ss-hit'; button.setAttribute('role', 'option')
+          if (i === selected) button.setAttribute('data-selected', '')
+          const name = document.createElement('span'); name.textContent = hit.title
+          const where = document.createElement('span'); where.className = 'hs-ss-page'; where.textContent = hit.isPage ? 'Page' : hit.page
+          button.append(name, where)
+          button.addEventListener('click', () => { selected = i; open(hit); render() })
+          return button
+        }) : [Object.assign(document.createElement('div'), { className: 'hs-ss-none', textContent: 'No settings match' })]))
+      }
+      // Learn the open page's rows a moment after it renders, and keep the field in place across re-renders.
+      let learnTimer = 0
+      let shownPage
+      const observer = new MutationObserver(() => {
+        const root = modal()
+        if (!root) { query = ''; shownPage = undefined; return }
+        if (!root.querySelector('nav .hs-ss') || (query && !root.querySelector('nav .hs-ss-results'))) render()
+        const page = activePage()
+        if (page && page !== shownPage) {
+          shownPage = page
+          clearTimeout(learnTimer)
+          learnTimer = setTimeout(() => { const box = options(); if (box && activePage() === page) learnSettingsPage(page, box) }, 700)
+        }
+      })
+      observer.observe(document.body, { childList: true, subtree: true })
+      const onKey = (event) => {
+        if (!modal() || !(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'f') return
+        const input = modal().querySelector('nav .hs-ss input')
+        if (input) { event.preventDefault(); input.focus(); input.select() }
+      }
+      document.addEventListener('keydown', onKey, true)
+      return () => {
+        observer.disconnect(); clearTimeout(learnTimer); document.removeEventListener('keydown', onKey, true); style.remove()
+        modal()?.querySelectorAll('nav .hs-ss, nav .hs-ss-results').forEach(el => el.remove())
+        const list = modal()?.querySelector('nav [class*="_navList"]')
+        if (list) list.style.display = ''
+      }
+    }
+
     function watchPromptHistory() {
       // Stepping state: the position in the history (-1 = the draft), the draft, and the text last put in the box.
       let step = -1
@@ -2027,7 +2377,6 @@ window.__ModuleLoader__.load({
         const input = event.target instanceof Element ? event.target.closest(COMPOSER_INPUT) : null
         if (!input) return
         if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && !document.querySelector('[data-trigger-menu]')) {
-          rememberPrompt(input.innerText)
           step = -1; shown = null
           return
         }
@@ -2036,7 +2385,7 @@ window.__ModuleLoader__.load({
         const text = input.innerText.replace(/\n$/, '')
         const stepping = shown !== null && text === shown
         if (!stepping) { step = -1; shown = null }
-        const list = readPromptHistory()
+        const list = chatPrompts(input)
         if (event.key === 'ArrowUp') {
           if (!stepping && !(text.trim() === '' || caretAtStart(input))) return
           if (step + 1 >= list.length) return
@@ -2052,18 +2401,9 @@ window.__ModuleLoader__.load({
         setComposerText(input, step === -1 ? draft : list[step])
         if (step === -1) draft = ''
       }
-      // Sending with the button records the prompt too (read before the box is cleared).
-      const onPointerDown = (event) => {
-        const button = event.target instanceof Element ? event.target.closest(`${c('composerSeat')} ${c('primary')}`) : null
-        if (!button || /stop/i.test(button.getAttribute('aria-label') || '')) return
-        const input = button.closest(c('composerSeat'))?.querySelector(COMPOSER_INPUT)
-        if (input) { rememberPrompt(input.innerText); step = -1; shown = null }
-      }
       document.addEventListener('keydown', onKeyDown, true)
-      document.addEventListener('pointerdown', onPointerDown, true)
       return () => {
         document.removeEventListener('keydown', onKeyDown, true)
-        document.removeEventListener('pointerdown', onPointerDown, true)
       }
     }
 
@@ -2073,21 +2413,29 @@ window.__ModuleLoader__.load({
         layout = ctx.layout
         settingsConnection = ctx.connection
         ctx.effect(() => () => { settingsConnection = undefined }, 'Network setting connection')
-        ctx.effect(() => ctx.slots.inject('settings.general.item', () => ctx.slots.register({
-          name: 'settings.general.item', id: 'network-for-commands', order: -19, inject: () => ({}),
-        }, NetworkRow)), 'Network for commands row in Settings → General, after Permission')
-        ctx.effect(() => ctx.slots.inject('settings.general.item', () => ctx.slots.register({
-          name: 'settings.general.item', id: 'your-data', order: 100, inject: () => ({}),
-        }, DataRow)), 'Your data row at the end of Settings → General')
-        ctx.effect(() => ctx.slots.inject('settings.general.item', () => ctx.slots.register({
-          name: 'settings.general.item', id: 'computer-use', order: -18, inject: () => ({}),
-        }, ComputerRow)), 'Computer use row in Settings → General, after Network for commands')
+        ctx.effect(() => ctx.slots.inject('settings.permissions.item', () => ctx.slots.register({
+          name: 'settings.permissions.item', id: 'network-for-commands', order: -19, inject: () => ({}),
+        }, NetworkRow)), 'Network for commands row in Settings → Permissions, after Permission')
+        ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
+          name: 'settings.section', id: 'data', order: 30, label: () => 'Data', inject: () => ({}),
+        }, DataPage)), 'Data page, last in Settings')
+        ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
+          name: 'settings.section', id: 'computer-use', order: 3, label: () => 'Computer use', inject: () => ({}),
+        }, ComputerPage)), 'Computer use page in Settings, after Permissions')
+        ctx.effect(() => ctx.slots.inject('settings.permissions.item', () => ctx.slots.register({
+          name: 'settings.permissions.item', id: 'cloud-logins', order: -18.9, inject: () => ({}),
+        }, CloudLoginsRow)), 'Cloud logins row in Settings → Permissions, after Network for commands')
+        ctx.effect(() => ctx.slots.inject('settings.permissions.item', () => ctx.slots.register({
+          name: 'settings.permissions.item', id: 'long-turns', order: -18.8, inject: () => ({}),
+        }, LongTurnsRow)), 'Long turns row in Settings → Permissions, after Cloud logins')
         ctx.effect(watchComputerUse, 'computer use Stop bar')
+        ctx.effect(watchQueue, 'queued messages listed one row each')
         ctx.effect(watchPromptHistory, 'Up and Down recall sent prompts in the message box')
+        ctx.effect(watchSettingsSearch, 'Search field at the top of the Settings page list')
         ctx.effect(watchApprovalCards, 'Always allow for this website on new-site approvals')
-        ctx.effect(() => ctx.slots.inject('settings.general.item', () => ctx.slots.register({
-          name: 'settings.general.item', id: 'always-allowed-sites', order: -18.5, inject: () => ({}),
-        }, SitesRow)), 'Always-allowed sites row in Settings → General, after Network for commands')
+        ctx.effect(() => ctx.slots.inject('settings.permissions.item', () => ctx.slots.register({
+          name: 'settings.permissions.item', id: 'always-allowed-sites', order: -18.5, inject: () => ({}),
+        }, SitesRow)), 'Always-allowed sites row in Settings → Permissions, after Long turns')
         ctx.effect(() => () => { layout = undefined }, 'About row target')
         ctx.effect(() => ctx.slots.inject('main', () => ctx.slots.register({
           name: 'main', key: 'about', inject: () => ({}),
@@ -2095,12 +2443,27 @@ window.__ModuleLoader__.load({
         ctx.effect(() => ctx.slots.inject('settings.launcher', () => ctx.slots.register({
           name: 'settings.launcher', priority: -10, inject: () => ({}),
         }, SettingsLauncher)), 'Settings alone at the foot of the left sidebar')
-        ctx.effect(() => ctx.slots.inject('settings.general.item', () => ctx.slots.register({
-          name: 'settings.general.item', id: 'chat-font', order: 11.5, inject: () => ({}),
-        }, ChatFontRow)), 'Chat font row in Settings → General, after Font size')
-        ctx.effect(() => ctx.slots.inject('settings.general.item', () => ctx.slots.register({
-          name: 'settings.general.item', id: 'color-theme', order: 10.5, inject: () => ({}),
-        }, ColorThemeRow)), 'Colour theme row in Settings → General, after Appearance')
+        ctx.effect(() => ctx.slots.inject('settings.appearance.item', () => ctx.slots.register({
+          name: 'settings.appearance.item', id: 'chat-font', order: 11.5, inject: () => ({}),
+        }, ChatFontRow)), 'Chat font row in Settings → Appearance, after Font size')
+        ctx.effect(() => ctx.slots.inject('settings.appearance.item', () => ctx.slots.register({
+          name: 'settings.appearance.item', id: 'color-theme', order: 10.5, inject: () => ({}),
+        }, ColorThemeRow)), 'Colour theme row in Settings → Appearance, after Light or dark')
+        // Enter while the agent works delivers at its next step (Steer), as in Claude Code, unless the person has
+        // chosen in Settings → General → Send behavior while busy. Harness's own default is Queue (wait until the
+        // turn ends). The form's user layer shows whether a choice was ever made, so a later Queue choice sticks.
+        ctx.inject(['configForms'], (scope) => {
+          const form = scope.configForms.get('ui-conversation')
+          let settled = false
+          const adopt = () => {
+            const snapshot = form.getSnapshot()
+            if (settled || snapshot.status !== 'ready' || !snapshot.writable) return
+            settled = true
+            if (snapshot.user?.busyEnter === undefined) void form.set('busyEnter', 'steer')
+          }
+          scope.effect(() => form.subscribe(adopt), 'Steer by default while busy')
+          adopt()
+        })
         ctx.inject(['theme'], (scope) => {
           themeService = scope.theme
           applyColorTheme()

@@ -61,6 +61,17 @@ const GUIDANCE = [
   'A started session\'s report arrives here as a message when it ends a turn; never poll it. A report is that session\'s claim: check the result or diff before telling the user the work is done.',
 ].join(' ')
 
+// When to hand work to Harness's own helper agents; modelled on Claude Code's wording for its agent tool.
+const HELPER_GUIDANCE = [
+  'Helper agents: the subagent tool hands a self-contained piece of work to a helper that works in its own conversation, under the same sandbox, and returns only its conclusion.',
+  'Use one when the piece would fill this conversation with material you will not need afterwards, only its result: reading or searching across many files, judging a batch of images, screenshots or rendered frames, sifting a long log. Every step re-sends this whole conversation, so what stays out of it stays cheap.',
+  'Start independent pieces in the same message so they run in parallel.',
+  'Do the work yourself when it is one quick lookup, when you already know the file or value, or when you need the material itself to keep working.',
+  'A helper does not see this conversation: give it a complete brief with the files or paths, what to check, and the form of the answer you want. Once you have handed a piece off, do not also do it yourself; wait for its report.',
+  'The user does not see a helper\'s report: pass on what matters in your own words, and check it yourself where it decides something important.',
+  'subagent_fork copies this whole conversation into the helper, images included, so use it only when the piece needs that context.',
+].join(' ')
+
 export function apply(ctx, rawConfig) {
   const config = resolveConfig(rawConfig)
   const profile = ctx.get('profileContext')
@@ -450,6 +461,12 @@ export function apply(ctx, rawConfig) {
     order: 295,
     interpolate: false,
     text: context => (context.agent?.session.header?.origin === 'subagent' ? '' : GUIDANCE),
+  })
+  ctx.systemPrompt.context({
+    name: 'helper-agents',
+    order: 294,
+    interpolate: false,
+    text: context => (context.agent?.session.header?.origin === 'subagent' ? '' : HELPER_GUIDANCE),
   })
 
   // ---- reports ----------------------------------------------------------------------------------

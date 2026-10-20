@@ -4,7 +4,7 @@
   "private": true,
   "description": "Development-only script that lets the Harness Studio Browser pane pick elements in your running app.",
   "license": "MIT",
-  "author": "Vignesh Murugan",
+  "author": { "name": "Vignesh Murugan", "email": "Muruganvignesh0810@gmail.com", "url": "https://github.com/vigneshv1cky" },
   "homepage": "https://github.com/vigneshv1cky/harness-studio/tree/main/plugins/devpreview-companion#readme",
   "repository": { "type": "git", "url": "git+https://github.com/vigneshv1cky/harness-studio.git", "directory": "plugins/devpreview-companion" },
   "bugs": "https://github.com/vigneshv1cky/harness-studio/issues",

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "A real terminal for the agent in Harness Studio: run full-screen and interactive programs (editors, pagers, top, prompts, installers) under the session's sandbox, read the screen as text and send keys.",
   "license": "MIT",
-  "author": "Vignesh Murugan",
+  "author": { "name": "Vignesh Murugan", "email": "Muruganvignesh0810@gmail.com", "url": "https://github.com/vigneshv1cky" },
   "homepage": "https://github.com/vigneshv1cky/harness-studio/tree/main/plugins/terminal#readme",
   "repository": {
     "type": "git",

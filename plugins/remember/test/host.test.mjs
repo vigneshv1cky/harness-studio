@@ -6,6 +6,7 @@ import path from 'node:path'
 import { afterEach, beforeEach, test } from 'node:test'
 import { apply } from '../index.js'
 import { HEADING, PERSONAL, PROJECT, SKIP } from '../logic.js'
+import { createSystemPromptAdditions } from '../system-prompt.js'
 
 let base
 let project
@@ -25,6 +26,7 @@ function harness(answer) {
       },
     } : undefined,
     effect: (fn) => fn(),
+    on: () => () => {},
     tools: { register: tool => { tools.set(tool.name, tool); return () => {} } },
     workingDirectory: { ensure: async () => path.join(project, 'src') },
     systemPrompt: { context: entry => prompts.push(entry) },
@@ -99,4 +101,35 @@ test('the guidance is given to top-level sessions only', () => {
   const { prompts } = harness({ selected: [] })
   assert.match(prompts[0].text({ agent: { session: { header: {} } } }), /call remember/)
   assert.equal(prompts[0].text({ agent: { session: { header: { origin: 'subagent' } } } }), '')
+})
+
+test('saved additions and section copies reach prompt assembly through the listeners', async () => {
+  // Listeners registered with `prepend` run before those registered earlier, each delegating with next().
+  const handlers = new Map()
+  apply({
+    get: name => (name === 'profileContext' ? { home } : undefined),
+    effect: fn => fn(),
+    on: (name, handler, options) => {
+      const list = handlers.get(name) ?? []
+      if (options?.prepend) list.unshift(handler); else list.push(handler)
+      handlers.set(name, list)
+      return () => {}
+    },
+    tools: { register: () => () => {} },
+    workingDirectory: { ensure: async () => project },
+    systemPrompt: { context: () => {} },
+  })
+  await createSystemPromptAdditions({ home }).write('Mine.', null)
+  const assembly = { sections: [{ name: 'identity', text: 'Harness.' }, { name: 'tools', text: 'Use tools.' }] }
+  const run = (index = 0) => (index === handlers.get('system-prompt/assemble').length
+    ? Promise.resolve(assembly)
+    : handlers.get('system-prompt/assemble')[index](assembly, {}, () => run(index + 1)))
+  await mkdir(path.join(home, 'harness-studio', 'system-prompt'), { recursive: true })
+  await writeFile(path.join(home, 'harness-studio', 'system-prompt', 'tools.md'), 'My tool rules.')
+  const result = await run()
+  assert.deepEqual(result.sections, [
+    { name: 'identity', text: 'Harness.' },
+    { name: 'tools', text: 'My tool rules.' },
+    { name: 'harness-studio/system-prompt-additions', text: 'Mine.', interpolate: false },
+  ])
 })

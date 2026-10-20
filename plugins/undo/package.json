@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Undo for Harness Studio, like Claude Code's rewind for file edits: a copy of each file is kept before the agent first changes it in a turn, and an Undo row under the turn puts the files back.",
   "license": "MIT",
-  "author": "Vignesh Murugan",
+  "author": { "name": "Vignesh Murugan", "email": "Muruganvignesh0810@gmail.com", "url": "https://github.com/vigneshv1cky" },
   "homepage": "https://github.com/vigneshv1cky/harness-studio/tree/main/plugins/undo#readme",
   "repository": {
     "type": "git",

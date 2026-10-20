@@ -2,8 +2,8 @@
 //   - which instruction files a workspace's sessions read, with size, token cost and status (loaded,
 //     skipped, left out or shortened to fit the limit);
 //   - the size limit for instructions, applied from the next message;
-//   - editing a file on the page, or opening it in the editor;
-//   - the notes Remember saved, each with Delete.
+//   - opening a file in the text editor, where it is edited and saved;
+//   - the notes Remember saved, each with Open and Delete.
 // It talks to the Host half through the `harnessStudioInstructions/call` Remote method (instructions.js).
 
 window.__ModuleLoader__.load({
@@ -42,6 +42,10 @@ window.__ModuleLoader__.load({
       if (!result?.ok) throw new Error(result?.error?.message ?? 'The Instructions service did not answer. Restart Harness after installing or updating the plugin.')
       return result.value
     }
+    /** The Host runs the plugin code it loaded at startup; an action it does not know means it predates this page. */
+    const actionError = error => /Unknown action/.test(error?.message ?? '')
+      ? 'Restart Harness Studio to load the updated Remember plugin, then try again.'
+      : error.message
 
     const CSS = `
       .hsi-page { box-sizing: border-box; height: 100%; display: flex; flex-direction: column; align-items: center; gap: 20px; padding: 0 clamp(24px, 4vw, 48px) 48px; overflow: auto; color: var(--dsw-alias-label-primary); font-size: 14px; }
@@ -72,9 +76,6 @@ window.__ModuleLoader__.load({
       .hsi-btn:disabled { opacity: 0.5; cursor: default; }
       .hsi-btn.primary { background: var(--dsw-alias-button-primary-fill); border-color: transparent; color: var(--dsw-alias-bg-layer-1); }
       .hsi-btn.danger { color: var(--dsw-alias-state-error-primary); }
-      .hsi-editor { display: flex; flex-direction: column; gap: 8px; padding: 0 14px 12px; }
-      .hsi-editor textarea { box-sizing: border-box; width: 100%; min-height: 260px; padding: 10px 12px; border-radius: 8px; border: 0.5px solid var(--dsw-alias-border-l3); background: transparent; color: var(--dsw-alias-label-primary); font-family: var(--dsw-font-markdown-code-font-family, ui-monospace, monospace); font-size: 12.5px; line-height: 19px; resize: vertical; }
-      .hsi-editor-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
       .hsi-error { color: var(--dsw-alias-state-error-primary); font-size: 12px; }
       .hsi-empty { padding: 14px; font-size: 13px; color: var(--dsw-alias-label-tertiary); }
       .hsi-prompt { margin: 0 14px 12px; padding: 10px 12px; max-height: 420px; overflow: auto; border-radius: 8px; border: 0.5px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-layer-2, transparent); font-family: var(--dsw-font-markdown-code-font-family, ui-monospace, monospace); font-size: 12px; line-height: 18px; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -87,36 +88,59 @@ window.__ModuleLoader__.load({
       }, [])
     }
 
-    function Editor({ file, onClose }) {
-      const [text, setText] = useState(null)
-      // The hash of the text as opened; the Host refuses the save when the file changed since.
-      const [hash, setHash] = useState(null)
-      const [error, setError] = useState('')
-      const [busy, setBusy] = useState(false)
-      useEffect(() => {
-        call({ action: 'read', file: file.absolutePath }).then(r => { setText(r.content); setHash(r.hash) }, e => setError(e.message))
-      }, [file.absolutePath])
-      const save = async () => {
-        setBusy(true); setError('')
-        try { await call({ action: 'write', file: file.absolutePath, content: text, hash }); onClose(true) } catch (e) { setError(e.message) } finally { setBusy(false) }
-      }
-      return h('div', { className: 'hsi-editor' },
-        text === null && !error ? h('div', { className: 'hsi-note' }, 'Loading…') : null,
-        text !== null ? h('textarea', { value: text, spellCheck: false, onChange: e => setText(e.target.value), 'aria-label': `Edit ${file.path}` }) : null,
-        h('div', { className: 'hsi-editor-actions' },
-          error ? h('span', { className: 'hsi-error' }, error) : null,
-          text !== null ? h('span', { className: 'hsi-note' }, `${kb(new TextEncoder().encode(text).length)} · ${tokens(new TextEncoder().encode(text).length)}`) : null,
-          h('button', { type: 'button', className: 'hsi-btn', onClick: () => onClose(false) }, 'Cancel'),
-          h('button', { type: 'button', className: 'hsi-btn primary', disabled: busy || text === null, onClick: save }, busy ? 'Saving…' : 'Save')))
-    }
-
-    /** Harness's own system prompt, as a new session starts with it: read only, shown on demand. */
+    /**
+     * The system prompt: Harness's own, read only and shown on demand, then your additions, which are appended at its
+     * end for every main session. Additions are opened, edited and saved in the text editor.
+     */
     function SystemPrompt() {
       const [prompt, setPrompt] = useState(undefined)
       const [open, setOpen] = useState(false)
+      const [busy, setBusy] = useState(false)
       const [error, setError] = useState('')
-      useEffect(() => { call({ action: 'systemPrompt' }).then(setPrompt, e => setError(e.message)) }, [])
+
+      const load = useCallback(async () => {
+        try { setPrompt(await call({ action: 'systemPrompt' })); setError('') } catch (e) { setError(actionError(e)) }
+      }, [])
+      useEffect(() => { load() }, [load])
+      // Coming back from the text editor refreshes the size and whether the additions are there.
+      useEffect(() => {
+        const refresh = () => { void load() }
+        window.addEventListener('focus', refresh)
+        return () => window.removeEventListener('focus', refresh)
+      }, [load])
       if (prompt === null) return null
+
+      const openAdditions = async () => {
+        setBusy(true); setError('')
+        try { await call({ action: 'openPromptAdditions' }); await load() }
+        catch (e) { setError(actionError(e)) }
+        finally { setBusy(false) }
+      }
+      const remove = async () => {
+        if (!confirm('Remove your additions from the system prompt?')) return
+        setBusy(true); setError('')
+        try { await call({ action: 'removePromptAdditions' }); await load() }
+        catch (e) { setError(actionError(e)) }
+        finally { setBusy(false) }
+      }
+
+      const openSection = async (name) => {
+        setBusy(true); setError('')
+        try { await call({ action: 'openSection', name }); await load() }
+        catch (e) { setError(actionError(e)) }
+        finally { setBusy(false) }
+      }
+      const resetSection = async (name) => {
+        if (!confirm(`Reset "${name}" to Harness's text? Your copy of this section is deleted.`)) return
+        setBusy(true); setError('')
+        try { await call({ action: 'resetSection', name }); await load() }
+        catch (e) { setError(actionError(e)) }
+        finally { setBusy(false) }
+      }
+
+      const added = prompt?.additions === true
+      const editedCount = prompt ? prompt.sections.filter(section => section.edited).length : 0
+      const harnessBytes = prompt ? prompt.bytes - (added ? prompt.additionsBytes + 2 : 0) : 0
       return h(React.Fragment, null,
         h('div', { className: 'hsi-section' }, 'System prompt'),
         h('div', { className: 'hsi-list' },
@@ -125,12 +149,33 @@ window.__ModuleLoader__.load({
               h('div', { className: 'hsi-label' }, 'Harness Studio, every session'),
               h('div', { style: { fontSize: 13, lineHeight: '20px' } }, 'Sent before the files below: the agent\'s role and how to use each tool, set by Harness and its plugins.'),
               error ? h('div', { className: 'hsi-error' }, error)
-                : prompt ? h('div', { className: 'hsi-why' }, `${prompt.sections.length} sections, plus ${prompt.tools} tool definitions sent alongside. {{model}} is filled in with the session's model; plan mode and agent presets add or replace parts.`) : null),
-            h('div', { className: 'hsi-size' }, prompt ? `${kb(prompt.bytes)} · ${tokens(prompt.bytes)}` : ''),
-            h('div', { className: 'hsi-pill', style: { color: 'var(--dsw-alias-label-tertiary)' } }, 'Read only'),
+                : prompt ? h('div', { className: 'hsi-why' }, `${prompt.sections.length} sections, listed below, plus ${prompt.tools} tool definitions sent alongside (those stay as Harness sets them). {{model}} is filled in with the session's model; plan mode and agent presets add or replace parts.`) : null),
+            h('div', { className: 'hsi-size' }, prompt ? `${kb(harnessBytes)} · ${tokens(harnessBytes)}` : ''),
+            h('div', { className: 'hsi-pill', style: { color: editedCount ? 'var(--dsw-alias-state-success-primary, #1f9d55)' : 'var(--dsw-alias-label-tertiary)' } }, editedCount ? `${editedCount} edited` : 'Harness\'s'),
             h('div', { className: 'hsi-actions' },
               h('button', { type: 'button', className: 'hsi-btn', disabled: !prompt, onClick: () => setOpen(!open) }, open ? 'Hide' : 'Show'))),
-          open && prompt ? h('pre', { className: 'hsi-prompt', 'aria-label': 'System prompt' }, prompt.text) : null))
+          open && prompt ? h('pre', { className: 'hsi-prompt', 'aria-label': 'System prompt' }, prompt.text) : null,
+          // One row per section, like the files below: Open makes your copy (from Harness's text) and opens it in
+          // the text editor; from then on your copy is sent for that section. Reset deletes the copy.
+          ...(prompt ? prompt.sections.map(section => h('div', { className: 'hsi-row', key: section.name, 'data-prompt-section': section.name },
+            h('div', { className: 'hsi-main' },
+              h('div', { className: 'hsi-label' }, `Section · ${section.name}`),
+              h('div', { className: 'hsi-why', title: section.firstLine }, section.firstLine || '(empty)')),
+            h('div', { className: 'hsi-size' }, `${kb(section.bytes)} · ${tokens(section.bytes)}`),
+            h('div', { className: 'hsi-pill', style: { color: section.edited ? 'var(--dsw-alias-state-success-primary, #1f9d55)' : 'var(--dsw-alias-label-tertiary)' } }, section.edited ? 'Your copy' : 'Harness\'s'),
+            h('div', { className: 'hsi-actions' },
+              h('button', { type: 'button', className: 'hsi-btn', disabled: busy, onClick: () => openSection(section.name), title: section.edited ? 'Edit your copy in the text editor' : 'Make your own copy of this section and edit it in the text editor' }, 'Open'),
+              section.edited ? h('button', { type: 'button', className: 'hsi-btn danger', disabled: busy, onClick: () => resetSection(section.name) }, 'Reset') : null))) : []),
+          h('div', { className: 'hsi-row' },
+            h('div', { className: 'hsi-main' },
+              h('div', { className: 'hsi-label' }, 'Your additions'),
+              h('div', { style: { fontSize: 13, lineHeight: '20px' } }, 'Added at the end of the system prompt for every session; Harness\'s own part above stays as it is.'),
+              h('div', { className: 'hsi-why' }, 'Kept in harness-studio/system-prompt-additions.md in the Harness home. Open it to edit; save the file and the next request uses it. Helper agents keep their own prompt.')),
+            h('div', { className: 'hsi-size' }, added ? `${kb(prompt.additionsBytes)} · ${tokens(prompt.additionsBytes)}` : ''),
+            h('div', { className: 'hsi-pill', style: { color: added ? 'var(--dsw-alias-state-success-primary, #1f9d55)' : 'var(--dsw-alias-label-tertiary)' } }, added ? 'Added' : 'None'),
+            h('div', { className: 'hsi-actions' },
+              h('button', { type: 'button', className: 'hsi-btn', disabled: !prompt || busy, onClick: openAdditions }, 'Open'),
+              added ? h('button', { type: 'button', className: 'hsi-btn danger', disabled: busy, onClick: remove }, 'Remove') : null))))
     }
 
     function InstructionsPage() {
@@ -138,7 +183,6 @@ window.__ModuleLoader__.load({
       const [state, setState] = useState(null)
       const [error, setError] = useState('')
       const [folder, setFolder] = useState(null)
-      const [editing, setEditing] = useState(null)
       const load = useCallback(async (nextFolder) => {
         try {
           const value = await call({ action: 'overview', folder: nextFolder ?? undefined })
@@ -150,11 +194,17 @@ window.__ModuleLoader__.load({
         try { saved = localStorage.getItem('harness-studio.instructions-workspace') } catch { /* no storage: first workspace */ }
         load(saved)
       }, [load])
+      // Coming back from the text editor refreshes sizes, notes and statuses after a save there.
+      useEffect(() => {
+        const refresh = () => { void load(folder) }
+        window.addEventListener('focus', refresh)
+        return () => window.removeEventListener('focus', refresh)
+      }, [load, folder])
       const act = async (request) => { try { await call(request); await load(folder) } catch (e) { setError(e.message) } }
 
       const head = h('div', { className: 'hsi-head' },
         h('h1', { className: 'hsi-title' }, 'Instructions'),
-        h('p', { className: 'hsi-intro' }, 'What every new session reads before it starts, in this order: your rules for every project, then the project\'s AGENTS.md in each folder from the repository root down, each followed by its AGENTS.local.md, which is just for you. They are sent with every request, so their size is a cost on every message.'))
+        h('p', { className: 'hsi-intro' }, 'What every new session reads before it starts, in this order: your rules for every project, then the project\'s AGENTS.md in each folder from the repository root down, each followed by its AGENTS.local.md, which is just for you. They are sent with every request, so their size is a cost on every message. Open edits a file in your text editor; a file that does not exist yet is created empty first.'))
       if (!state) return h('div', { className: 'hsi-page' }, head, error ? h('div', { className: 'hsi-error' }, error) : h('div', { className: 'hsi-note' }, 'Loading…'))
 
       const limitLabel = state.limit === 0 ? 'no limit' : kb(state.limit)
@@ -173,19 +223,18 @@ window.__ModuleLoader__.load({
 
       const rows = state.files.map(file => {
         const [statusLabel, color] = STATUS[file.status] ?? [file.status, 'inherit']
-        const key = file.absolutePath
-        return h(React.Fragment, { key },
-          h('div', { className: 'hsi-row' },
-            h('div', { className: 'hsi-main' },
-              h('div', { className: 'hsi-label' }, file.label),
-              h(PathText, { text: file.path, title: file.absolutePath }),
-              file.reason ? h('div', { className: 'hsi-why' }, file.reason) : null),
-            h('div', { className: 'hsi-size' }, file.bytes == null ? '' : `${kb(file.bytes)} · ${tokens(file.bytes)}`),
-            h('div', { className: 'hsi-pill', style: { color } }, statusLabel),
-            h('div', { className: 'hsi-actions' },
-              h('button', { type: 'button', className: 'hsi-btn', onClick: () => setEditing(editing === key ? null : key) }, file.status === 'missing' ? 'Create' : 'Edit'),
-              file.status === 'missing' ? null : h('button', { type: 'button', className: 'hsi-btn', onClick: () => act({ action: 'open', file: file.absolutePath }) }, 'Open'))),
-          editing === key ? h(Editor, { file, onClose: saved => { setEditing(null); if (saved) load(folder) } }) : null)
+        return h('div', { key: file.absolutePath, className: 'hsi-row' },
+          h('div', { className: 'hsi-main' },
+            h('div', { className: 'hsi-label' }, file.label),
+            h(PathText, { text: file.path, title: file.absolutePath }),
+            file.reason ? h('div', { className: 'hsi-why' }, file.reason) : null),
+          h('div', { className: 'hsi-size' }, file.bytes == null ? '' : `${kb(file.bytes)} · ${tokens(file.bytes)}`),
+          h('div', { className: 'hsi-pill', style: { color } }, statusLabel),
+          h('div', { className: 'hsi-actions' },
+            h('button', {
+              type: 'button', className: 'hsi-btn', title: file.status === 'missing' ? 'Create the file and open it in your text editor' : 'Open it in your text editor',
+              onClick: () => act({ action: 'open', file: file.absolutePath }),
+            }, 'Open')))
       })
 
       const notes = state.notes.length === 0
@@ -195,6 +244,7 @@ window.__ModuleLoader__.load({
             h('div', { style: { fontSize: 13, lineHeight: '20px' } }, note.text),
             h('div', { className: 'hsi-why' }, `${note.file}${note.date ? ' · ' + note.date : ''}`)),
           h('div', { className: 'hsi-actions' },
+            h('button', { type: 'button', className: 'hsi-btn', onClick: () => act({ action: 'open', file: note.absolutePath }) }, 'Open'),
             h('button', { type: 'button', className: 'hsi-btn danger', onClick: () => act({ action: 'deleteNote', file: note.absolutePath, line: note.line }) }, 'Delete'))))
 
       const memory = state.memory

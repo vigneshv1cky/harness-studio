@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Notes that carry over to new sessions, like Claude Code's memory but visible, and an Instructions page: which instruction files a workspace loads, their size and token cost, the size limit, editing, and the saved notes.",
   "license": "MIT",
-  "author": "Vignesh Murugan",
+  "author": { "name": "Vignesh Murugan", "email": "Muruganvignesh0810@gmail.com", "url": "https://github.com/vigneshv1cky" },
   "homepage": "https://github.com/vigneshv1cky/harness-studio/tree/main/plugins/remember#readme",
   "repository": {
     "type": "git",
@@ -32,6 +32,8 @@
     "logic.js",
     "memory.js",
     "instructions.js",
+    "system-prompt.js",
+    "section-copies.js",
     "client.js",
     "cordis.patch.yml",
     "locale/*.json",

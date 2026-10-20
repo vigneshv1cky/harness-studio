@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "A code editor in Harness Studio's right panel: edit any file in your workspace with CodeMirror, save, and follow the agent's changes without losing your cursor, undo history or unsaved edits.",
   "license": "MIT",
-  "author": "Vignesh Murugan",
+  "author": { "name": "Vignesh Murugan", "email": "Muruganvignesh0810@gmail.com", "url": "https://github.com/vigneshv1cky" },
   "homepage": "https://github.com/vigneshv1cky/harness-studio/tree/main/plugins/editor#readme",
   "repository": {
     "type": "git",

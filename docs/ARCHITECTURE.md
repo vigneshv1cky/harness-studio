@@ -1,9 +1,9 @@
 # Architecture
 
-How Harness Studio is put together, for contributors. Harness Studio is [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) at a pinned commit ([HARNESS_PIN.md](HARNESS_PIN.md)), changed in two ways:
+How Harness Studio is put together, for contributors. Harness Studio is [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) through its own fork, [harness-studio-core](https://github.com/vigneshv1cky/harness-studio-core), at a pinned commit ([HARNESS_PIN.md](HARNESS_PIN.md)), changed in two ways:
 
 - **Plugins** in [`plugins/`](../plugins) add features through Harness's own extension points. They are ordinary Harness plugins and also work in a stock Harness install.
-- **Patches** in [`patches/`](../patches) and [`desktop/patches/`](../desktop/patches) change Harness itself where no extension point exists: the name, the bundled plugins, the sandbox's network limits, DevTools access to the Browser pane, and so on. The build scripts apply them to a fresh clone, so the app can be rebuilt on a new Harness commit.
+- **Commits on the fork's `studio` branch** change Harness itself where no extension point exists: the name, the bundled plugins, the sandbox's network limits, DevTools access to the Browser pane, and so on. They started as the patch files in [`patches/`](../patches) and [`desktop/patches/`](../desktop/patches), one commit per patch, which stay as a fallback for now. Upstream releases are merged into `studio` ([FORK_PLAN.md](FORK_PLAN.md)).
 
 Everything below describes the desktop app. The plugins also run in Harness's Web app, except where noted.
 
@@ -97,18 +97,20 @@ plugins/<name>/
 | [Terminal](../plugins/terminal) | full-screen programs for the agent | — |
 | [Editor](../plugins/editor) | file open, check and save | Editor tab |
 
-## Patches
+## The fork
 
 ```mermaid
 flowchart TB
-  Pin["Harness at the pinned commit"] --> Brand["patches/harness-studio-brand.patch<br/>name, mark, wording"]
-  Brand --> Account["patches/harness-studio-account.patch<br/>no DeepSeek account, no feedback upload"]
-  Account --> D["desktop/patches/01 … 19, in order<br/>identity, bundled plugins, telemetry off, Linux,<br/>plan mode, network limits, CLI, DevTools, …"]
-  D --> Build["desktop/build-mac.sh · build-linux.sh<br/>pack the ten plugins, run Harness's packaging"]
+  Up["DeepSeek Harness (upstream master)"] -- "merged on purpose" --> Base["upstream base on studio"]
+  Base --> Brand["harness-studio-brand<br/>name, mark, wording"]
+  Brand --> Account["harness-studio-account<br/>no DeepSeek account, no feedback upload"]
+  Account --> D["01 … 29, in order<br/>identity, bundled plugins, telemetry off, Linux,<br/>plan mode, network limits, CLI, DevTools, computer use, chat, …"]
+  D --> Icons["Harness Studio icons"]
+  Icons --> Build["desktop/build-mac.sh · build-linux.sh<br/>clone the pinned studio commit, pack the ten plugins, run Harness's packaging"]
   Build --> Smoke["desktop/smoke-mac.sh · smoke-linux.sh<br/>start a copy on a throwaway home and check it"]
 ```
 
-Each patch is a plain `git apply` diff and must apply to a clean clone with all earlier patches applied. What each one changes is in the table in [desktop/README.md](../desktop/README.md#patches). A patch carries the matching Harness tests when it changes tested behaviour.
+Each commit is titled with the name of the patch it came from; what each one changes is in the table in [desktop/README.md](../desktop/README.md#patches). A commit carries the matching Harness tests when it changes tested behaviour.
 
 ## Data on disk
 
@@ -131,5 +133,5 @@ A different home folder can be chosen with `DSH_HOME`.
 ## Where to start
 
 - A new tool or pane: start from the closest plugin above and its README.
-- A change Harness has no extension point for: a new patch after the last one in `desktop/patches/`, with tests, and a row in the desktop README's table.
+- A change Harness has no extension point for: a commit on the fork's `studio` branch, with tests, a row in the desktop README's table, and a new `Pinned commit:` in [HARNESS_PIN.md](HARNESS_PIN.md).
 - Harness's own architecture: `docs/architecture.md` inside a Harness checkout.

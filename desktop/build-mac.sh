@@ -1,19 +1,19 @@
 #!/bin/sh
-# Build the Harness Studio desktop app for macOS (Apple Silicon) from the Harness commit pinned in
-# docs/HARNESS_PIN.md:
+# Build the Harness Studio desktop app for macOS (Apple Silicon) from the commit of Harness Studio's Harness fork
+# pinned in docs/HARNESS_PIN.md:
 #
 #   desktop/build-mac.sh
 #
-# Clones Harness into dist/build/harness (replacing any earlier copy), applies patches/harness-studio-brand.patch
-# and desktop/patches/*.patch in order, copies the logo, bundles the eight plugins, and runs Harness's
-# unsigned macOS packaging. Writes dist/Harness-Studio-<version>-mac-arm64.dmg and a .sha256 file beside it.
-# When desktop/.env.signing exists, the app is signed with your Developer ID and notarised instead
-# (see desktop/README.md). HARNESS_UPSTREAM overrides the repository cloned (a local mirror, for example).
+# Clones the fork into dist/build/harness (replacing any earlier copy) at the pinned commit, which must be on
+# its studio branch, bundles the ten plugins, and runs Harness's unsigned macOS packaging. Writes
+# dist/Harness-Studio-<version>-mac-arm64.dmg and a .sha256 file beside it. When desktop/.env.signing exists,
+# the app is signed with your Developer ID and notarised instead (see desktop/README.md). HARNESS_UPSTREAM
+# overrides the Harness repository cloned (a local clone of the fork, for example).
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 work="$root/dist/build"
 harness="$work/harness"
-upstream="${HARNESS_UPSTREAM:-https://github.com/deepseek-ai/deepseek-harness.git}"
+upstream="${HARNESS_UPSTREAM:-https://github.com/vigneshv1cky/harness-studio-core.git}"
 pin=$(sed -n 's/^Pinned commit: \([0-9a-f]\{40\}\).*/\1/p' "$root/docs/HARNESS_PIN.md")
 version=$(cat "$root/desktop/VERSION")
 
@@ -28,11 +28,8 @@ rm -rf "$harness"
 mkdir -p "$work"
 git clone --quiet --no-checkout "$upstream" "$harness"
 git -C "$harness" checkout --quiet "$pin"
-for patch in "$root/patches/harness-studio-brand.patch" "$root/patches/harness-studio-account.patch" "$root"/desktop/patches/*.patch; do
-  echo "build-mac: applying $(basename "$patch")"
-  git -C "$harness" apply "$patch" || fail "$(basename "$patch") no longer applies to $pin; refresh it (desktop/README.md)"
-done
-"$root/scripts/copy-logo.sh" "$harness"
+# Builds use only commits published on the fork's studio branch (docs/HARNESS_PIN.md).
+git -C "$harness" branch -r --contains "$pin" | grep -q ' origin/studio$' || fail "$pin is not on the studio branch of $upstream"
 mkdir -p "$harness/harness-studio-plugins"
 (cd "$root" && npm pack --silent --pack-destination "$harness/harness-studio-plugins" ./plugins/devpreview ./plugins/connectors ./plugins/compact ./plugins/sessions ./plugins/remember ./plugins/hooks ./plugins/undo ./plugins/watch ./plugins/terminal ./plugins/editor >/dev/null)
 

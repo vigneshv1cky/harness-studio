@@ -40,7 +40,7 @@ jobs:
         run: |
           pin=$(sed -n 's/^Pinned commit: \([0-9a-f]\{40\}\).*/\1/p' docs/HARNESS_PIN.md)
           curl -fsSL -o dist/color-blocks.docx \
-            "https://raw.githubusercontent.com/deepseek-ai/deepseek-harness/$pin/scripts/fixtures/office-render/color-blocks.docx"
+            "https://raw.githubusercontent.com/vigneshv1cky/harness-studio-core/$pin/scripts/fixtures/office-render/color-blocks.docx"
 
       - name: Smoke-test the installer
         run: desktop/smoke-windows.sh dist/Harness-Studio-*-win-x64-setup.exe dist/smoke dist/color-blocks.docx

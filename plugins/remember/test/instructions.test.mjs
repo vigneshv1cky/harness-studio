@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, test } from 'node:test'
 import { DEFAULT_LIMIT, createInstructionsService, notesIn, readLimit, renderSystemPrompt } from '../instructions.js'
+import { applySystemPromptAdditions, createSystemPromptAdditions, systemPromptPath } from '../system-prompt.js'
 
-let base, home, project, outside, service
+let base, home, project, outside, service, opened
 
 beforeEach(async () => {
   base = await mkdtemp(path.join(tmpdir(), 'instructions-'))
@@ -13,7 +14,12 @@ beforeEach(async () => {
   project = path.join(base, 'project')
   outside = path.join(base, 'outside')
   for (const dir of [home, path.join(project, '.git'), path.join(project, 'web'), outside]) await mkdir(dir, { recursive: true })
-  service = createInstructionsService({ home, workspaces: () => [{ path: path.join(project, 'web'), title: 'web' }] }).actions
+  opened = []
+  service = createInstructionsService({
+    home,
+    workspaces: () => [{ path: path.join(project, 'web'), title: 'web' }],
+    openFile: async file => { opened.push(file) },
+  }).actions
 })
 
 afterEach(async () => { await rm(base, { recursive: true, force: true }) })
@@ -57,47 +63,16 @@ test('the limit is saved for the loader, 0 meaning no limit, and nonsense is ref
   await assert.rejects(service.setLimit({ maxBytes: 12 }), /at least 4 KB/)
 })
 
-test('only instruction files in the personal or workspace folders can be read or written', async () => {
+test('only instruction files in the personal or workspace folders can be opened', async () => {
   await writeFile(path.join(outside, 'AGENTS.md'), 'secret')
   await writeFile(path.join(outside, 'notes.txt'), 'secret')
-  await assert.rejects(service.read({ file: path.join(outside, 'AGENTS.md') }), /not in your personal folder/)
-  await assert.rejects(service.read({ file: path.join(project, 'web', 'notes.txt') }), /Only instruction files/)
-  await assert.rejects(service.write({ file: path.join(project, '..', 'outside', 'AGENTS.md'), content: 'x' }), /not in your personal folder/)
+  await assert.rejects(service.open({ file: path.join(outside, 'AGENTS.md') }), /not in your personal folder/)
+  await assert.rejects(service.open({ file: path.join(project, 'web', 'notes.txt') }), /Only instruction files/)
   await symlink(path.join(outside, 'AGENTS.md'), path.join(project, 'web', 'AGENTS.local.md'))
-  await assert.rejects(service.read({ file: path.join(project, 'web', 'AGENTS.local.md') }), /links outside/)
-  const { hash } = await service.read({ file: path.join(home, 'AGENTS.md') })
-  await service.write({ file: path.join(home, 'AGENTS.md'), content: 'Be brief.\n', hash })
-  assert.equal((await service.read({ file: path.join(home, 'AGENTS.md') })).content, 'Be brief.\n')
-})
-
-test('a save over a file that changed since it was opened is refused, and nothing is lost', async () => {
-  const file = path.join(home, 'AGENTS.md')
-  await writeFile(file, 'Rules.\n')
-  const opened = await service.read({ file })
-  // The remember tool saves a note while the editor is open.
-  await writeFile(file, 'Rules.\n\n## Remembered\n\n- Use pnpm (2026-10-18)\n')
-  await assert.rejects(service.write({ file, content: 'Rules, edited.\n', hash: opened.hash }), /changed since you opened it/)
-  assert.match(await readFile(file, 'utf8'), /Use pnpm/)
-  await assert.rejects(service.write({ file, content: 'x' }), /Reopen the file/)
-  const fresh = await service.read({ file })
-  await service.write({ file, content: 'Rules, edited.\n', hash: fresh.hash })
-  assert.equal(await readFile(file, 'utf8'), 'Rules, edited.\n')
-})
-
-test('page writes wait for the remember tool\'s queued write to the same file', async () => {
-  const { queueFileWrite } = await import('../memory.js')
-  const file = path.join(home, 'AGENTS.md')
-  await writeFile(file, 'one\n')
-  const { hash } = await service.read({ file })
-  let release
-  const held = queueFileWrite(file, () => new Promise(resolve => { release = resolve }))
-  const saving = service.write({ file, content: 'two\n', hash })
-  await new Promise(resolve => setTimeout(resolve, 20))
-  assert.equal(await readFile(file, 'utf8'), 'one\n', 'the page write waits its turn')
-  release()
-  await held
-  await saving
-  assert.equal(await readFile(file, 'utf8'), 'two\n')
+  await assert.rejects(service.open({ file: path.join(project, 'web', 'AGENTS.local.md') }), /links outside/)
+  await service.open({ file: path.join(home, 'AGENTS.md') })
+  assert.equal(await readFile(path.join(home, 'AGENTS.md'), 'utf8'), '', 'a missing file is created empty before it opens')
+  assert.deepEqual(opened, [path.join(home, 'AGENTS.md')])
 })
 
 test('deleting a note removes only its line, and only inside the Remembered section', async () => {
@@ -121,12 +96,11 @@ test('a CLAUDE.md is never listed; a folder with only one still gets a Create ro
   assert.equal(view.sentBytes, 0)
 })
 
-test('the page cannot read, change or open a CLAUDE.md', async () => {
+test('the page cannot open a CLAUDE.md', async () => {
   const claude = path.join(project, 'CLAUDE.md')
   await writeFile(claude, 'Claude rules.\n')
-  await assert.rejects(service.read({ file: claude }), /Only instruction files/)
-  await assert.rejects(service.write({ file: claude, content: 'x', hash: 'h' }), /Only instruction files/)
   await assert.rejects(service.open({ file: claude }), /Only instruction files/)
+  assert.deepEqual(opened, [], 'nothing was opened')
 })
 
 test('the system prompt view renders sections in order, fills known variables and keeps literal sections literal', async () => {
@@ -147,4 +121,56 @@ test('the system prompt view renders sections in order, fills known variables an
   const { actions } = createInstructionsService({ home: '/nowhere', workspaces: () => [], assemble: async () => assembly })
   assert.equal((await actions.systemPrompt()).text, rendered.text)
   assert.equal(await createInstructionsService({ home: '/nowhere', workspaces: () => [] }).actions.systemPrompt(), null)
+})
+
+test('additions are appended after every section, kept literal, and leave tools, contexts and variables alone', () => {
+  const assembly = {
+    sections: [{ name: 'identity', text: 'Harness.' }, { name: 'plan-policy', text: 'Plan mode is on.' }],
+    contexts: [{ name: 'directory', text: '/work' }],
+    tools: [{ name: 'bash' }],
+    variables: { model: 'x' },
+  }
+  const added = applySystemPromptAdditions(assembly, 'Be terse. {{not a variable}}')
+  assert.deepEqual(added.sections, [...assembly.sections, { name: 'harness-studio/system-prompt-additions', text: 'Be terse. {{not a variable}}', interpolate: false }])
+  assert.equal(added.contexts, assembly.contexts)
+  assert.equal(added.tools, assembly.tools)
+  assert.equal(added.variables, assembly.variables)
+  assert.equal(applySystemPromptAdditions(assembly, '  \n'), assembly, 'blank text adds nothing')
+  assert.equal(applySystemPromptAdditions(assembly, undefined), assembly)
+})
+
+test('the additions file opens in the text editor, is read from disk, and can be removed', async () => {
+  const assembly = { sections: [{ name: 'identity', text: 'Harness prompt.' }], variables: {}, tools: [] }
+  const openedFiles = []
+  const actions = createInstructionsService({
+    home, workspaces: () => [], assemble: async () => assembly, openFile: async file => { openedFiles.push(file) },
+  }).actions
+
+  const initial = await actions.systemPrompt()
+  assert.equal(initial.additions, false)
+  assert.equal(initial.text, 'Harness prompt.')
+
+  await actions.openPromptAdditions()
+  assert.deepEqual(openedFiles, [systemPromptPath(home)], 'the additions file opens in the text editor')
+  assert.equal(await readFile(systemPromptPath(home), 'utf8'), '', 'a missing additions file is created empty')
+
+  await writeFile(systemPromptPath(home), 'My rules.')
+  const saved = await actions.systemPrompt()
+  assert.equal(saved.additions, true)
+  assert.equal(saved.text, 'Harness prompt.\n\nMy rules.', 'Harness\'s prompt stays, the additions follow it')
+  assert.equal(saved.additionsBytes, Buffer.byteLength('My rules.'))
+
+  await actions.removePromptAdditions()
+  assert.equal((await actions.systemPrompt()).text, 'Harness prompt.')
+  await assert.rejects(readFile(systemPromptPath(home), 'utf8'), /ENOENT/)
+})
+
+test('a subagent keeps its own prompt; every other session gets the additions at the end', async () => {
+  const additions = createSystemPromptAdditions({ home })
+  await additions.write('Mine.', null)
+  const subagentAssembly = { sections: [{ name: 'subagent', text: 'Delegated role.' }] }
+  const subagent = await additions.apply(subagentAssembly, { agent: { session: { header: { origin: 'subagent' } } } }, async () => subagentAssembly)
+  assert.deepEqual(subagent.sections, subagentAssembly.sections)
+  const main = await additions.apply({ sections: [{ name: 'identity', text: 'Harness.' }] }, {}, async () => ({ sections: [{ name: 'identity', text: 'Harness.' }] }))
+  assert.deepEqual(main.sections, [{ name: 'identity', text: 'Harness.' }, { name: 'harness-studio/system-prompt-additions', text: 'Mine.', interpolate: false }])
 })

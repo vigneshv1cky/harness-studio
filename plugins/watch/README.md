@@ -13,6 +13,7 @@ Watch is one of the plugins built into the Harness Studio app and is always on.
 | `command` | A shell command every `interval_seconds` (at least 5, default 30), through Harness's own command runner under the session's sandbox mode and network policy. The next run starts after the previous one ends; each run has a time limit (default 30 s, at most 120 s) and keeps 64 KB of output. | Exit code and output (standard output, then standard error) |
 | `port` | A connection attempt to a port on this computer (`localhost`, `127.0.0.1` or `::1`) every `interval_seconds` (default 10). | Up or down |
 | `files` | The operating system's file events for files or folders inside the session folder (folders include everything under them except `.git` and `node_modules`), grouped over a 2-second quiet window. Paths outside the session folder (links resolved), and paths the session's sandbox keeps from being read, are refused, since watching runs outside the sandbox. On Linux, folders are watched one by one, at most 2,000 per watch, and new folders are added as they appear. | Which paths changed (at most 200 per batch, counted after ignored and unmatched paths are dropped) |
+| `dashboard` | A dashboard of the Preview plugin (`dashboards/<name>/`), refreshed every `interval_seconds` (at least 60, default 15 minutes) by running its refresh scripts, only while the person's approval still matches their exact content, under the session's sandbox (never with full access). The Dashboards pane's **Keep fresh** adds one for 7 days. It never wakes the agent: its result shows only in the Watches list. | How many sources refreshed and which failed |
 
 `when` chooses what counts as news:
 
@@ -37,7 +38,7 @@ Watches belong to the top-level session; helper agents cannot create them. A wat
 
 ## Tools
 
-- `watch_create` — `kind`, `label`, `command` / `port` + `host` / `paths`, `when`, `pattern`, `interval_seconds`, `timeout_seconds`, `cooldown_seconds`, `max_wakes`, `lifetime_minutes`. Runs the first check before returning and shows it as the baseline; a command that cannot run (for example because no sandbox is usable) is refused.
+- `watch_create` — `kind`, `label`, `command` / `port` + `host` / `paths` / `dashboard`, `when`, `pattern`, `interval_seconds`, `timeout_seconds`, `cooldown_seconds`, `max_wakes`, `lifetime_minutes`. Runs the first check before returning and shows it as the baseline; a command that cannot run (for example because no sandbox is usable) is refused.
 - `watch_list` — the session's watches with their latest result and notices used.
 - `watch_remove` — `watch_id`, or `all: true`.
 
@@ -45,7 +46,7 @@ A short line in the system prompt tells the agent to use a watch instead of poll
 
 ## In the app
 
-An eye button in the session header, just left of Harness's Schedule clock, shows how many watches the session has. It opens a list with what each watch checks, its latest result, when it last checked and last sent a notice, and how many notices it has used, with a remove button per row and Remove all. **+ Add a watch** adds a command, port or files watch without asking the agent; the agent is told when you add or remove one, without being woken.
+An eye button in the session header, just left of Harness's Schedule clock, shows how many watches the session has; with none running it steps out of the header, and **Watches** in the Preview plugin's Panes menu opens the same list (it sends a `harness-studio:open-watches` window event with the Session id). It opens a list with what each watch checks, its latest result, when it last checked and last sent a notice, and how many notices it has used, with a remove button per row and Remove all. **+ Add a watch** adds a command, port or files watch without asking the agent; the agent is told when you add or remove one, without being woken.
 
 ## Where watches are kept
 

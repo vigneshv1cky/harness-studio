@@ -1,0 +1,86 @@
+<!-- hs-dashboard-runtime: Harness Studio dashboard runtime v1. Copy unchanged. -->
+<style>
+  :root { --hs-ink: #1d1d1f; --hs-muted: #6e6e73; --hs-grid: #e5e5ea; --hs-card: #ffffff; --hs-bg: #f5f5f7; --hs-up: #1a7f37; --hs-down: #c62828;
+    --hs-series: #2a6fdb, #e07b39, #2e9e6b, #9b59b6, #c8a400, #d14d72; }
+  @media (prefers-color-scheme: dark) { :root { --hs-ink: #f5f5f7; --hs-muted: #a1a1a6; --hs-grid: #3a3a3c; --hs-card: #1c1c1e; --hs-bg: #000000; } }
+  .hs-chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+  .hs-chart text { fill: var(--hs-muted); font: 11px system-ui, sans-serif; }
+  .hs-kpi { display: flex; flex-direction: column; gap: 4px; }
+  .hs-kpi-label { color: var(--hs-muted); font: 500 12px system-ui, sans-serif; }
+  .hs-kpi-value { color: var(--hs-ink); font: 600 28px system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+  .hs-kpi-delta { font: 500 12px system-ui, sans-serif; } .hs-kpi-delta.up { color: var(--hs-up); } .hs-kpi-delta.down { color: var(--hs-down); }
+  .hs-table { width: 100%; border-collapse: collapse; font: 13px system-ui, sans-serif; color: var(--hs-ink); }
+  .hs-table th, .hs-table td { padding: 6px 8px; border-bottom: 1px solid var(--hs-grid); text-align: left; }
+  .hs-table td.num, .hs-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  #hs-dashboard-status { font: 12px system-ui, sans-serif; color: var(--hs-muted); }
+  html[data-hs-snapshot] [data-hs-refresh] { display: none !important; }
+</style>
+<script>
+(() => {
+  // Data reaches the page from the Dashboards pane in Harness Studio, or from a saved snapshot. The page cannot
+  // fetch anything itself; it can only ask the pane to refresh.
+  const listeners = []
+  let last
+  const deliver = message => { last = message; for (const fn of listeners) { try { fn(message) } catch (error) { console.error(error) } } status(message) }
+  const status = message => {
+    const el = document.getElementById('hs-dashboard-status')
+    if (!el) return
+    const times = Object.values(message.data || {}).map(d => d && d.updated).filter(Boolean)
+    const when = message.snapshot ? 'Snapshot of ' + new Date(message.savedAt).toLocaleString() : times.length ? 'Updated ' + new Date(Math.min(...times)).toLocaleString() : 'No data yet'
+    const failed = Object.entries(message.errors || {}).map(([id, e]) => id + ': ' + e)
+    el.textContent = when + (failed.length ? ' · Failed: ' + failed.join('; ') : '')
+  }
+  const fmt = (v, f) => typeof f === 'function' ? f(v) : typeof v === 'number' ? v.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(v ?? '')
+  const series = i => getComputedStyle(document.documentElement).getPropertyValue('--hs-series').split(',').map(s => s.trim()).filter(Boolean)[i % 6] || '#2a6fdb'
+  const el = target => typeof target === 'string' ? document.querySelector(target) : target
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+  const scale = (values, height) => { const max = Math.max(0, ...values); const min = Math.min(0, ...values); const span = max - min || 1; return { y: v => height - (v - min) / span * height, max, min } }
+
+  window.hsDashboard = {
+    /** Call fn with { data: { source: { value, updated } | { error } }, errors, snapshot, savedAt } now (if any) and on every refresh. */
+    onData(fn) { listeners.push(fn); if (last) fn(last) },
+    /** Ask the pane to run this dashboard's approved refresh scripts. */
+    refresh() { if (parent !== window) parent.postMessage({ source: 'hs-dashboard', type: 'refresh' }, '*') },
+    /** A line chart: { labels: [...], series: [{ name, values: [...] }], format, height }. */
+    line(target, { labels, series: lines, format, height = 220 }) {
+      const w = 640, h = height, pad = 28, all = lines.flatMap(s => s.values), s = scale(all, h - pad), n = Math.max(1, labels.length - 1)
+      const x = i => pad + i / n * (w - pad * 2)
+      const grid = [s.min, (s.min + s.max) / 2, s.max].map(v => `<line x1="${pad}" x2="${w - pad}" y1="${s.y(v)}" y2="${s.y(v)}" stroke="var(--hs-grid)"/><text x="0" y="${s.y(v) + 4}">${esc(fmt(v, format))}</text>`).join('')
+      const paths = lines.map((l, i) => `<path d="${l.values.map((v, j) => (j ? 'L' : 'M') + x(j).toFixed(1) + ' ' + s.y(v).toFixed(1)).join(' ')}" fill="none" stroke="${series(i)}" stroke-width="2"/>`).join('')
+      const ticks = labels.map((l, i) => i % Math.ceil(labels.length / 6) === 0 ? `<text x="${x(i)}" y="${h - 4}" text-anchor="middle">${esc(l)}</text>` : '').join('')
+      const legend = lines.length > 1 ? `<div style="display:flex;gap:12px;font:12px system-ui;color:var(--hs-muted)">${lines.map((l, i) => `<span><span style="display:inline-block;width:10px;height:3px;background:${series(i)};vertical-align:middle"></span> ${esc(l.name)}</span>`).join('')}</div>` : ''
+      el(target).innerHTML = `<div class="hs-chart">${legend}<svg viewBox="0 0 ${w} ${h}" role="img">${grid}${paths}${ticks}</svg></div>`
+    },
+    /** A bar chart: { labels: [...], values: [...], format, height }. */
+    bar(target, { labels, values, format, height = 220 }) {
+      const w = 640, h = height, pad = 28, s = scale(values, h - pad), bw = (w - pad * 2) / Math.max(1, values.length)
+      const bars = values.map((v, i) => `<rect x="${pad + i * bw + bw * 0.15}" y="${Math.min(s.y(v), s.y(0))}" width="${bw * 0.7}" height="${Math.abs(s.y(0) - s.y(v))}" rx="3" fill="${series(0)}"><title>${esc(labels[i])}: ${esc(fmt(v, format))}</title></rect>`
+        + `<text x="${pad + i * bw + bw / 2}" y="${h - 4}" text-anchor="middle">${esc(labels[i])}</text>`).join('')
+      el(target).innerHTML = `<div class="hs-chart"><svg viewBox="0 0 ${w} ${h}" role="img"><line x1="${pad}" x2="${w - pad}" y1="${s.y(0)}" y2="${s.y(0)}" stroke="var(--hs-grid)"/>${bars}</svg></div>`
+    },
+    /** A headline number: { label, value, delta (a fraction, e.g. 0.05 for +5%), format }. */
+    kpi(target, { label, value, delta, format }) {
+      const d = typeof delta === 'number' ? `<span class="hs-kpi-delta ${delta >= 0 ? 'up' : 'down'}">${delta >= 0 ? '▲' : '▼'} ${Math.abs(delta * 100).toFixed(1)}%</span>` : ''
+      el(target).innerHTML = `<div class="hs-kpi"><span class="hs-kpi-label">${esc(label)}</span><span class="hs-kpi-value">${esc(fmt(value, format))}</span>${d}</div>`
+    },
+    /** A table: rows as objects; columns [{ key, label, format }] (defaults to the first row's keys). */
+    table(target, rows, columns) {
+      const cols = columns || Object.keys(rows[0] || {}).map(key => ({ key, label: key }))
+      const num = c => rows.every(r => typeof r[c.key] === 'number')
+      el(target).innerHTML = `<table class="hs-table"><thead><tr>${cols.map(c => `<th class="${num(c) ? 'num' : ''}">${esc(c.label || c.key)}</th>`).join('')}</tr></thead><tbody>${rows.map(r => `<tr>${cols.map(c => `<td class="${num(c) ? 'num' : ''}">${esc(fmt(r[c.key], c.format))}</td>`).join('')}</tr>`).join('')}</tbody></table>`
+    },
+  }
+
+  addEventListener('message', event => {
+    const m = event.data
+    if (event.source === parent && parent !== window && m && m.source === 'hs-dashboard-pane' && m.type === 'data') deliver(m)
+  })
+  addEventListener('DOMContentLoaded', () => {
+    // A saved snapshot cannot refresh: elements marked data-hs-refresh are hidden.
+    if (window.hsDashboardSnapshot) { document.documentElement.setAttribute('data-hs-snapshot', ''); deliver({ ...window.hsDashboardSnapshot, snapshot: true }) }
+    else if (parent !== window) parent.postMessage({ source: 'hs-dashboard', type: 'ready' }, '*')
+    else status({ data: {}, errors: { page: 'open this dashboard in Harness Studio\'s Dashboards pane to see live data' } })
+  })
+})()
+</script>
+<!-- /hs-dashboard-runtime -->

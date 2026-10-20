@@ -1,20 +1,27 @@
 /**
  * Host half of Compact. The Client module owns all styling and zoom; this half saves the "Network for
- * commands" setting from Settings → General, in `<harness home>/harness-studio/network.json`, which the
+ * commands" setting from Settings → Permissions, in `<harness home>/harness-studio/network.json`, which the
  * sandbox policy reads before each command (desktop patch 16). The client reaches it through Harness's
  * authenticated Remote channel (`harnessStudioSettings/call`). It also asks before web fetch or a page
- * the agent opens reaches a site that is not on that list (site-approval.js), and lists where Harness Studio
- * keeps your data for Settings → General → Your data (data.js), and on the first start writes Harness Studio's
+ * the agent opens reaches a site that is not on that list (site-approval.js), keeps long turns and repeated results
+ * in check (turn-guard.js), and lists where Harness Studio
+ * keeps your data for Settings → Data (data.js), downloads ffmpeg on first use (ffmpeg.js), transcribes audio and
+ * video files with Harness's local speech recognizer (transcribe.js), and on the first start writes Harness Studio's
  * default reply style as the person's global AGENTS.md when they have none (default-instructions.js).
  */
 import { randomBytes } from 'node:crypto'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { applySiteApproval, createSiteList } from './site-approval.js'
 import { createDataInventory } from './data.js'
 import { applyComputerUse } from './computer-use.js'
 import { writeDefaultInstructions } from './default-instructions.js'
+import { applyTurnGuard, createTurnBudgetSetting } from './turn-guard.js'
+import { applyCloudLoginGuard, createCloudLoginsSetting } from './cloud-logins.js'
+import { applyStudioSkills } from './studio-skills.js'
+import { applyFfmpeg } from './ffmpeg.js'
+import { applyTranscribe } from './transcribe.js'
 
 export const name = 'harness-studio-compact'
 
@@ -76,6 +83,21 @@ export function apply(ctx) {
     writeFile, readFile, rename, mkdir, rm, dirname: path.dirname, randomSuffix: () => randomBytes(6).toString('hex'),
   })
   const gate = typeof ctx.on === 'function' ? applySiteApproval(ctx, setting, sites) : undefined
+  // Long turns and repeated results (turn-guard.js): a reminder at half the step budget, a pause at it.
+  const turnBudget = createTurnBudgetSetting(path.join(home, 'harness-studio', 'turn-budget.json'), {
+    writeFile, readFile, rename, mkdir, rm, dirname: path.dirname, randomSuffix: () => randomBytes(6).toString('hex'),
+  })
+  if (typeof ctx.on === 'function') applyTurnGuard(ctx, turnBudget)
+  // Cloud logins for commands (cloud-logins.js): Harness's sandbox policy reads the same file before each command.
+  const cloudLogins = createCloudLoginsSetting(path.join(home, 'harness-studio', 'cloud-logins.json'), {
+    readFile, writeFile, rename, mkdir, rm, stat, dirname: path.dirname, join: path.join, home: os.homedir(),
+  })
+  if (typeof ctx.on === 'function') applyCloudLoginGuard(ctx, cloudLogins)
+  // The design board and charts-and-diagrams skills (studio-skills.js), loaded by the agent when it picks them.
+  applyStudioSkills(ctx)
+  // ffmpeg on first use (ffmpeg.js) and local transcription of audio and video files (transcribe.js).
+  const ffmpeg = applyFfmpeg(ctx, { home })
+  applyTranscribe(ctx, { ffmpeg })
   const data = createDataInventory({ home })
   writeDefaultInstructions(home).catch(error => console.warn(`harness-studio-compact: default instructions not written: ${error.message}`))
   const actions = {
@@ -90,6 +112,10 @@ export function apply(ctx) {
       return sites.add(host)
     },
     forgetSite: ({ host }) => sites.remove(host),
+    getTurnBudget: () => turnBudget.get(),
+    setTurnBudget: request => turnBudget.set({ pauseAfter: Number(request?.pauseAfter) }),
+    getCloudLogins: () => cloudLogins.get(),
+    setCloudLogins: request => cloudLogins.set({ enabled: request?.enabled }),
     ...applyComputerUse(ctx),
   }
 

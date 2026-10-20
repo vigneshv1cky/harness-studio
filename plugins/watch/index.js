@@ -30,6 +30,8 @@ export const name = 'harness-studio-watch'
 export const inject = ['tools', 'agents', 'systemPrompt']
 
 export const WATCH_SERVICE = 'harnessStudioWatch'
+/** The Preview plugin's dashboards (plugins/devpreview/dashboards.js), for dashboard watches. */
+export const DASHBOARDS_SERVICE = 'harnessStudioDashboards'
 const REMOTE_METHODS_MARKER = '@deepseek-ai/dsh-typert-protocol/remote-methods'
 /** How often every watch is checked against archived sessions and its lifetime. */
 const SWEEP_MS = 30_000
@@ -101,11 +103,30 @@ export function apply(ctx) {
   // ---- one check --------------------------------------------------------------------------------------
   async function check(watch, agent) {
     if (watch.spec.kind === 'port') return probePort(watch.spec)
+    if (watch.spec.kind === 'dashboard') return refreshDashboard(watch.spec, agent)
     const shell = ctx.get('shell')
     if (!shell) return { exitCode: null, output: '', error: 'Harness\'s command runner is not available' }
     const policy = ctx.get('sandboxPolicy')?.resolve({ session: agent.session })
     const rt = runtime.get(watch.id)
     return runCommand(shell, watch.spec, { cwd: await folderOf(agent), sandboxPolicy: policy, signal: rt?.abort.signal })
+  }
+
+  /**
+   * Refresh a dashboard through the Preview plugin (its dashboards.js), which runs only the refresh scripts the
+   * person approved at their current content. The result lists each source as ok or failed, without times, so it
+   * stays the same while nothing changes.
+   */
+  async function refreshDashboard(spec, agent) {
+    const dashboards = ctx.get(DASHBOARDS_SERVICE)
+    if (!dashboards) return { exitCode: null, output: '', error: 'dashboards need Harness Studio\'s Preview plugin' }
+    try {
+      const summary = await dashboards.refreshFor({ agent, name: spec.dashboard })
+      const failed = Object.entries(summary.errors ?? {})
+      const lines = [`${summary.saved} of ${summary.sources} sources refreshed`, ...failed.map(([id, error]) => `${id}: ${String(error).split('\n')[0]}`)]
+      return { exitCode: failed.length === 0 ? 0 : 1, output: lines.join('\n') }
+    } catch (error) {
+      return { exitCode: null, output: '', error: String(error?.message ?? error).split('\n')[0] }
+    }
   }
 
   /** Run `fn` after the watch's earlier work, so its state is never folded twice at once. */
@@ -234,7 +255,10 @@ export function apply(ctx) {
       queue(watch.id, async rt => {
         const current = store.get(watch.id)
         if (!current) return
-        if (current.spec.kind === 'files') {
+        if (current.spec.kind === 'dashboard') {
+          // Its refresh runs the dashboard's scripts; a turn ending is no reason to run them again.
+          current.state = rebaseline(current.spec, current.state)
+        } else if (current.spec.kind === 'files') {
           rt.ignoreUntil = now() + LIMITS.filesTurnGraceMs
           current.state = rebaseline(current.spec, current.state)
         } else {
@@ -366,7 +390,8 @@ export function apply(ctx) {
       parameters: {
         type: 'object',
         properties: {
-          kind: { type: 'string', enum: ['command', 'port', 'files'], description: 'What to watch.' },
+          kind: { type: 'string', enum: ['command', 'port', 'files', 'dashboard'], description: 'What to watch. "dashboard" keeps a dashboard\'s data fresh while it is closed: it runs the dashboard\'s approved refresh scripts every interval_seconds (default 15 minutes, at least 60) and never notifies you.' },
+          dashboard: { type: 'string', description: 'For kind dashboard: the dashboard\'s folder name in dashboards/. Its refresh scripts must already be approved by the user in the Dashboards pane.' },
           label: { type: 'string', description: 'A short name shown in notices and in the user\'s list, e.g. "dev server" or "lint".' },
           command: { type: 'string', description: 'For kind command: the shell command. Keep its output stable (no timestamps or timings), since any difference counts as a change; e.g. "git status --porcelain" or "npm run lint --silent 2>&1 | tail -n 30".' },
           port: { type: 'integer', description: 'For kind port: the port number.' },

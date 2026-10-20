@@ -307,6 +307,33 @@ window.__ModuleLoader__.load({
       .hs-table tr:last-child td { border-bottom: none; }
       .hs-table-note { margin: 10px 0 0; font-size: 12px; color: var(--dsw-alias-label-tertiary); }
       .hs-files-embedded > * { flex: 1; min-height: 0; }
+      .hs-files-embedded.hs-video [data-video-preview] { flex-direction: column; justify-content: center; }
+      .hs-files-embedded.hs-video [data-video-preview] video { flex: none; max-height: calc(100% - 64px); border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+      .hs-files-embedded.hs-video [data-video-preview] audio { flex: none; }
+      .hs-files-embedded.hs-video [data-media-preview="audio"] .hs-video-marks { border-top: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md, 8px); margin-top: 8px; padding-top: 0; overflow: hidden; }
+      .hs-video-marks { flex: none; box-sizing: border-box; max-width: 100%; padding: 0 10px 8px; border: 0.5px solid var(--dsw-alias-border-l2); border-top: none; border-radius: 0 0 var(--dsw-radius-md, 8px) var(--dsw-radius-md, 8px); background: var(--dsw-alias-bg-layer-1, var(--dsw-alias-bg-base)); font-family: var(--dsw-font, -apple-system, BlinkMacSystemFont, system-ui, sans-serif); font-size: 12px; color: var(--dsw-alias-label-secondary); white-space: normal; }
+      .hs-video-marks.hs-narrow .hs-video-row { flex-wrap: wrap; row-gap: 6px; }
+      .hs-video-marks.hs-narrow .hs-video-row button kbd { display: none; }
+      .hs-video-marks.hs-tiny .hs-video-time { min-width: 0; margin-right: auto; }
+      .hs-video-marks.hs-tiny .hs-video-row .hs-video-add { flex: 1 0 100%; justify-content: center; margin-left: 0; }
+      .hs-video-marks.hs-tiny .hs-video-row .hs-video-chip, .hs-video-marks.hs-tiny .hs-video-note { flex: 1 0 100%; justify-content: space-between; }
+      .hs-video-track { position: relative; height: 4px; margin: 0 -10px 8px; background: var(--dsw-alias-border-l2); }
+      .hs-video-track > .hs-range { position: absolute; top: 0; bottom: 0; background: var(--dsw-alias-button-info-fill); opacity: .85; }
+      .hs-video-track > .hs-head { position: absolute; top: -3px; width: 2px; height: 10px; margin-left: -1px; border-radius: 1px; background: var(--dsw-alias-label-primary); }
+      .hs-video-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+      .hs-video-time { min-width: 64px; color: var(--dsw-alias-label-primary); font-variant-numeric: tabular-nums; }
+      .hs-video-row button { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border: 1px solid var(--dsw-alias-border-l2); border-radius: 8px; background: transparent; color: var(--dsw-alias-label-primary); font: inherit; white-space: nowrap; cursor: pointer; }
+      .hs-video-row button:hover { background: var(--dsw-alias-interactive-bg-hover); }
+      .hs-video-row button kbd { font: inherit; font-size: 10.5px; color: var(--dsw-alias-label-tertiary); }
+      .hs-video-row .hs-video-chip { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 4px 0 9px; border-radius: 12px; background: color-mix(in srgb, var(--dsw-alias-button-info-fill) 14%, transparent); color: var(--dsw-alias-label-primary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .hs-video-row .hs-video-chip button { height: 18px; width: 18px; padding: 0; justify-content: center; border: none; border-radius: 9px; color: var(--dsw-alias-label-secondary); }
+      .hs-video-row .hs-video-add { margin-left: auto; font-weight: 600; transition: background-color 80ms, border-color 80ms; }
+      .hs-video-row .hs-video-add:disabled { opacity: .45; cursor: default; }
+      .hs-video-row .hs-video-add:disabled:hover { background: transparent; }
+      .hs-video-row .hs-video-add.hs-ready { --hs-add-fill: var(--dsw-static-deepseek-500, #3b82f6); border-color: transparent; background: var(--hs-add-fill); color: #fff; }
+      .hs-video-row .hs-video-add.hs-ready:hover { background: color-mix(in srgb, var(--hs-add-fill) 86%, #000); }
+      .hs-video-row .hs-video-add.hs-ready:active { background: color-mix(in srgb, var(--hs-add-fill) 74%, #000); }
+      .hs-video-note { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .hs-files-editor > .hse-root { flex: 1; min-height: 0; }
       .hs-files-editor .hse-preview { display: flex; flex-direction: column; }
       /* The Files tab edits in place, so the preview's Edit (which opens an Editor tab) is not offered here; under the
@@ -487,18 +514,114 @@ window.__ModuleLoader__.load({
       return h('div', { className: 'hs-md-doc' }, h(MarkdownText, { text, labels: MARKDOWN_LABELS }))
     }
 
-    // Files the editor cannot show (PDFs, images, spreadsheets, Office documents, web pages) open in Harness's own
+    // Files the editor cannot show (PDFs, images, videos, audio, spreadsheets, Office documents, web pages) open in Harness's own
     // file preview, the Factory its right-panel file tabs show too.
     const PREVIEW_FACTORY = 'sidebar.right.document.preview'
     // Files only Harness's viewers can show, and text files that also have a rendered form (shown with a Rendered /
     // Source switch, Source being the editor).
-    const VIEWER_ONLY = /\.(pdf|png|jpe?g|gif|webp|bmp|ico|xlsx|xls|docx?|pptx?)$/i
+    const VIEWER_ONLY = /\.(pdf|png|jpe?g|gif|webp|bmp|ico|mp4|m4v|mov|webm|mp3|m4a|aac|wav|ogg|opus|flac|xlsx|xls|docx?|pptx?)$/i
     const VIEWER_RENDERED = /\.(html?|svg)$/i
     // CSV and TSV render here as a table in the app's table style, from the editor's text.
     const TABULAR = /\.(csv|tsv)$/i
     const TABLE_ROWS_SHOWN = 1000
     const encodePath = path => path.split('/').map(part => encodeURIComponent(part).replace(/%3A/gi, ':')).join('/')
     const sessionFileAddress = (sessionId, path) => 'dsh-resource://file/session/' + encodeURIComponent(sessionId).replace(/%3A/gi, ':') + '/' + encodePath(path)
+
+    // ---- marking moments in a video or audio file --------------------------------------------------------------------
+    // Under a video or audio player in this pane: the current time to a tenth of a second, Set start and Set end (also the I and O
+    // keys while the player has focus), a track showing the marked part, and Add to message, usable once both are set,
+    // which puts the marked part ("[clip.mp4, 1:10.4 to 1:25.0] ") into the message box, so the agent knows exactly
+    // which part to cut, caption or turn into a GIF. The agent does the editing.
+    const VIDEO_FILE = /\.(mp4|m4v|mov|webm|mp3|m4a|aac|wav|ogg|opus|flac)$/i
+    const videoTime = seconds => {
+      const minutes = Math.floor(seconds / 60)
+      return minutes + ':' + (seconds - minutes * 60).toFixed(1).padStart(4, '0')
+    }
+    function VideoMarks({ sessionId, path, containerRef }) {
+      const [marks, setMarks] = useState({})
+      const [clock, setClock] = useState({ now: 0, duration: 0 })
+      const [note, setNote] = useState()
+      const [frame, setFrame] = useState()
+      const [width, setWidth] = useState()
+      const timer = useRef()
+      useEffect(() => () => clearTimeout(timer.current), [])
+      useEffect(() => { setMarks({}); setNote(undefined) }, [path])
+      const video = () => containerRef.current && containerRef.current.querySelector('[data-video-preview] :is(video, audio)')
+      // Follow the player's time; the video element is replaced when the file reloads, so look for it again.
+      useEffect(() => {
+        let current
+        const read = () => { const v = video(); if (v) setClock({ now: v.currentTime || 0, duration: Number.isFinite(v.duration) ? v.duration : 0 }) }
+        const attach = () => {
+          const v = video()
+          if (v === current) return
+          if (current) for (const type of ['timeupdate', 'seeked', 'loadedmetadata']) current.removeEventListener(type, read)
+          current = v
+          if (v) { for (const type of ['timeupdate', 'seeked', 'loadedmetadata']) v.addEventListener(type, read); read() }
+        }
+        // A timer, not animation frames: frames stop while the window is hidden or covered, and the bar must still
+        // find a player that appeared meanwhile. Ten checks a second also keep the playhead moving smoothly.
+        const tick = () => {
+          attach()
+          const v = current
+          if (v && !v.paused) read()
+          // The player frame hosts the bar directly under the video or audio player, at the player's own width.
+          const host = containerRef.current && containerRef.current.querySelector('[data-video-preview]')
+          setFrame(previous => previous === host ? previous : host || undefined)
+          if (v) { const w = Math.round(v.getBoundingClientRect().width); setWidth(previous => previous === w ? previous : w) }
+        }
+        tick()
+        const interval = setInterval(tick, 100)
+        return () => { clearInterval(interval); if (current) for (const type of ['timeupdate', 'seeked', 'loadedmetadata']) current.removeEventListener(type, read) }
+      }, [path])
+      const say = text => { clearTimeout(timer.current); setNote(text); timer.current = setTimeout(() => setNote(undefined), 3000) }
+      const now = () => { const v = video(); return v && Number.isFinite(v.currentTime) ? v.currentTime : undefined }
+      const mark = which => { const time = now(); if (time !== undefined) setMarks(previous => ({ ...previous, [which]: time })) }
+      // I and O while focus is in the player or this bar, as in video editors.
+      useEffect(() => {
+        const box = containerRef.current
+        if (!box) return
+        const onKey = event => {
+          if (event.metaKey || event.ctrlKey || event.altKey || event.isComposing) return
+          if (!event.target.closest('[data-video-preview], .hs-video-marks')) return
+          if (event.key === 'i' || event.key === 'I') { event.preventDefault(); mark('start') }
+          if (event.key === 'o' || event.key === 'O') { event.preventDefault(); mark('end') }
+        }
+        box.addEventListener('keydown', onKey)
+        return () => box.removeEventListener('keydown', onKey)
+      }, [path])
+      const flat = String(path).replace(/[\u0000-\u001f\u007f\u2028\u2029[\]]+/g, ' ')
+      const { start, end } = marks
+      const range = start !== undefined && end !== undefined ? [Math.min(start, end), Math.max(start, end)] : undefined
+      const single = range ? undefined : (start ?? end)
+      const add = () => {
+        if (!range) return
+        const reference = '[' + flat + ', ' + videoTime(range[0]) + ' to ' + videoTime(range[1]) + '] '
+        const input = composers.get(String(sessionId))
+        if (input) { input.insertText(reference, input.captureInsertion()); setMarks({}) }
+        say(input ? 'Added to your message. Say what to do with it.' : 'Open the conversation to add this')
+      }
+      const percent = seconds => clock.duration > 0 ? Math.min(100, Math.max(0, seconds / clock.duration * 100)) + '%' : '0%'
+      const track = h('div', { className: 'hs-video-track', 'aria-hidden': true },
+        range ? h('span', { className: 'hs-range', style: { left: percent(range[0]), width: 'calc(' + percent(range[1]) + ' - ' + percent(range[0]) + ')' } })
+          : single !== undefined ? h('span', { className: 'hs-range', style: { left: percent(single), width: '2px' } }) : null,
+        h('span', { className: 'hs-head', style: { left: percent(clock.now) } }))
+      const chip = range ? videoTime(range[0]) + ' → ' + videoTime(range[1]) + ' · ' + (range[1] - range[0]).toFixed(1) + ' s'
+        : single !== undefined ? (start !== undefined ? 'Start ' : 'End ') + videoTime(single) : undefined
+      if (!frame) return null
+      // Narrow: the buttons wrap and drop their key hints; tiny: short labels, and the chip and Add take full rows.
+      const tiny = width !== undefined && width < 320
+      return ReactDOM.createPortal(h('div', { className: 'hs-video-marks' + (width !== undefined && width < 460 ? ' hs-narrow' : '') + (tiny ? ' hs-tiny' : ''), style: width ? { width: Math.max(width, 220) } : undefined }, track,
+        h('div', { className: 'hs-video-row' },
+          h('span', { className: 'hs-video-time', title: 'Current time' }, videoTime(clock.now)),
+          h('button', { type: 'button', onClick: () => mark('start'), title: 'Set the start of the part you want (I)' }, tiny ? 'Start' : 'Set start', h('kbd', null, 'I')),
+          h('button', { type: 'button', onClick: () => mark('end'), title: 'Set the end of the part you want (O)' }, tiny ? 'End' : 'Set end', h('kbd', null, 'O')),
+          note ? h('span', { className: 'hs-video-note', title: note }, note)
+            : chip ? h('span', { className: 'hs-video-chip' }, chip, h('button', { type: 'button', onClick: () => setMarks({}), 'aria-label': 'Clear the marks', title: 'Clear the marks' }, '×')) : null,
+          // Usable once both a start and an end are set; greyed out until then.
+          h('button', { type: 'button', className: 'hs-video-add' + (range ? ' hs-ready' : ''), onClick: add, disabled: !range,
+            title: range ? 'Put the marked part in your message' : 'Set a start and an end first' },
+          'Add to message'))), frame)
+    }
 
     /**
      * Harness's file preview for one file, inside this pane. The preview expects to be a tab of its own, so it gets
@@ -525,7 +648,10 @@ window.__ModuleLoader__.load({
           },
         }), [info])
       }, [useTabInfo, path, navigation, signal])
-      return h('div', { className: 'hs-files-embedded' + (inEditor ? ' hs-in-editor' : '') }, renderFactorySlot(PREVIEW_FACTORY, { useTabInfo: useFileTabInfo, displayPath }))
+      const container = useRef(null)
+      return h('div', { ref: container, className: 'hs-files-embedded' + (inEditor ? ' hs-in-editor' : '') + (VIDEO_FILE.test(path) ? ' hs-video' : '') },
+        renderFactorySlot(PREVIEW_FACTORY, { useTabInfo: useFileTabInfo, displayPath }),
+        VIDEO_FILE.test(path) ? h(VideoMarks, { sessionId, path: displayPath || path, containerRef: container }) : null)
     }
 
     /** Rows of a CSV or TSV text: quoted fields may hold the separator, doubled quotes and line breaks. */
@@ -2559,14 +2685,8 @@ window.__ModuleLoader__.load({
     const ICON_MORE = 'M8 3.5h.01M8 8h.01M8 12.5h.01'
 
     const extraStyles = {
-      bar: {
-        position: 'absolute', left: '50%', bottom: 14, transform: 'translateX(-50%)', zIndex: 5, display: 'flex', alignItems: 'center', gap: 2,
-        padding: 4, borderRadius: 12, background: 'var(--dsw-alias-bg-base)', border: '1px solid var(--dsw-alias-border-l2)', boxShadow: '0 4px 16px rgba(0,0,0,.12)',
-      },
       barButton: { width: 32, height: 30, display: 'grid', placeItems: 'center', border: 'none', borderRadius: 8, background: 'transparent', color: 'var(--dsw-alias-label-secondary)', cursor: 'pointer', padding: 0 },
-      barActive: { background: 'color-mix(in srgb, var(--dsw-alias-button-info-fill) 18%, transparent)', color: 'var(--dsw-alias-button-info-fill)' },
-      sep: { width: 1, height: 18, margin: '0 3px', background: 'var(--dsw-alias-border-l2)' },
-      card: { position: 'absolute', left: 10, right: 10, bottom: 60, zIndex: 6, maxHeight: '45%', overflow: 'auto', borderRadius: 12, border: '1px solid var(--dsw-alias-border-l2)', boxShadow: '0 4px 16px rgba(0,0,0,.12)', background: 'var(--dsw-alias-bg-base)', color: 'var(--dsw-alias-label-primary)', font: '13px/1.5 system-ui, sans-serif' },
+      card: { position: 'absolute', left: 10, right: 10, bottom: 10, zIndex: 6, maxHeight: '45%', overflow: 'auto', borderRadius: 12, border: '1px solid var(--dsw-alias-border-l2)', boxShadow: '0 4px 16px rgba(0,0,0,.12)', background: 'var(--dsw-alias-bg-base)', color: 'var(--dsw-alias-label-primary)', font: '13px/1.5 system-ui, sans-serif' },
       menu: {
         position: 'fixed', zIndex: 2147483000, minWidth: 220, padding: 4, borderRadius: 12, background: 'var(--dsw-alias-bg-base)', color: 'var(--dsw-alias-label-primary)',
         border: '1px solid var(--dsw-alias-border-l2)', boxShadow: '0 8px 24px rgba(0,0,0,.14)', font: '13px/1.4 system-ui, sans-serif',
@@ -2737,9 +2857,23 @@ window.__ModuleLoader__.load({
           h('canvas', { ref: canvasRef, style: { maxWidth: '100%', cursor: 'crosshair', touchAction: 'none' }, onPointerDown: down, onPointerMove: move, onPointerUp: up, onPointerCancel: up })))
     }
 
-    function BrowserOverlay({ viewport, sessionId, inputActions, sendSelection, clearSelection }) {
+    /** A 28px button in the Browser pane's header, drawn like the header's own buttons. */
+    function HeaderToolButton({ label, icon, active, disabled, onClick, testId }) {
+      const [hover, setHover] = useState(false)
+      const look = {
+        width: 28, height: 28, padding: 6, display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none',
+        border: 'none', borderRadius: 8, cursor: disabled ? 'default' : 'pointer', appearance: 'none', opacity: disabled ? 0.45 : 1,
+        color: active ? 'var(--dsw-alias-button-info-fill)' : 'var(--dsw-alias-label-secondary)',
+        background: active ? 'color-mix(in srgb, var(--dsw-alias-button-info-fill) 18%, transparent)' : hover && !disabled ? 'var(--dsw-alias-interactive-bg-hover)' : 'transparent',
+      }
+      return h('button', {
+        type: 'button', style: look, title: label, 'aria-label': label, 'aria-pressed': active === undefined ? undefined : active, 'aria-disabled': disabled || undefined,
+        'data-testid': testId, onMouseEnter: () => setHover(true), onMouseLeave: () => setHover(false), onClick: disabled ? undefined : onClick,
+      }, h(Icon, { d: icon }))
+    }
+
+    function BrowserOverlay({ viewport, headerHost, sessionId, inputActions, sendSelection, clearSelection }) {
       const [frame, setFrame] = useState(() => frameOf(viewport))
-      const [hidden, setHidden] = useState(false)
       const [picking, setPicking] = useState(false)
       const [selection, setSelection] = useState(undefined)
       const [sendState, setSendState] = useState({ kind: 'idle' })
@@ -2815,12 +2949,11 @@ window.__ModuleLoader__.load({
         selection ? h('div', { style: extraStyles.card },
           h(SafeBoundary, { label: 'Selection card', resetKey: selection, fallback: h('div', { style: { ...styles.card, ...styles.muted } }, 'This element cannot be shown.') },
             h(SelectionCard, { selection, onClear: clear, onSend: send, sendState }))) : null,
-        note ? h('div', { style: { ...extraStyles.empty, top: 'auto', bottom: 58 } }, note) : null,
-        hidden ? null : h('div', { style: { ...extraStyles.bar, ...(frame ? null : { opacity: 0.5 }) }, role: 'toolbar', 'aria-label': 'Page tools', 'data-testid': 'studio-browser-bar', title: frame ? undefined : 'Open a page to use these tools' },
-          h('button', { type: 'button', style: { ...extraStyles.barButton, ...(picking ? extraStyles.barActive : null) }, title: picking ? 'Stop picking (Esc)' : 'Pick an element for the agent', 'aria-label': 'Pick an element', 'aria-pressed': picking, onClick: togglePick }, h(Icon, { d: ICON_PICK_BAR })),
-          h('button', { type: 'button', style: extraStyles.barButton, title: 'Annotate the page', 'aria-label': 'Annotate', onClick: startAnnotate }, h(Icon, { d: ICON_PEN })),
-          h('span', { style: extraStyles.sep }),
-          h('button', { type: 'button', style: extraStyles.barButton, title: 'Hide these tools', 'aria-label': 'Hide page tools', onClick: () => setHidden(true) }, h(Icon, { d: ICON_CLOSE }))),
+        note ? h('div', { style: { ...extraStyles.empty, top: 'auto', bottom: 14 } }, note) : null,
+        // Pick and Annotate sit in the pane's header, beside Dev servers and More, so nothing floats over the page.
+        headerHost ? ReactDOM.createPortal(h('span', { style: { display: 'contents' }, role: 'group', 'aria-label': 'Page tools', 'data-testid': 'studio-browser-bar' },
+          h(HeaderToolButton, { label: !frame ? 'Pick an element (open a page first)' : picking ? 'Stop picking (Esc)' : 'Pick an element for the agent', icon: ICON_PICK_BAR, active: picking, disabled: !frame, onClick: togglePick }),
+          h(HeaderToolButton, { label: frame ? 'Annotate the page' : 'Annotate (open a page first)', icon: ICON_PEN, disabled: !frame, onClick: startAnnotate })), headerHost) : null,
         empty ? h('div', { style: extraStyles.empty }, 'Preview your app instead? ', h(DetectLink, { onFound: url => openInAddressBar(viewport, url) })) : null)
     }
 
@@ -2832,22 +2965,64 @@ window.__ModuleLoader__.load({
       }, state === 'busy' ? 'Detecting…' : state === 'none' ? 'No dev server found — retry' : 'Detect dev server')
     }
 
+    // Header menus (Panes, Dev servers, More) take the values of Harness's own menus (ui-primitives Menu.module.css
+    // and MenuSurface.module.css): a 16px card, slightly see-through over Harness's menu blur, with the prominent elevation, compact 28px rows
+    // with 8px corners, 14px icons in the menu-icon colour, a trailing check for the selected row, 11px group labels
+    // and a hairline separator.
+    const MENU_CSS = `
+      .hs-menu { position: fixed; z-index: 2147483000; box-sizing: border-box; min-width: 168px; max-width: 360px; padding: 4px;
+        display: flex; flex-direction: column; isolation: isolate; border-radius: var(--dsw-radius-lg, 16px);
+        --dsw-elevation-stroke-color: var(--dsw-alias-border-l1); box-shadow: var(--dsw-elevation-prominent);
+        color: var(--dsw-alias-label-primary); font-size: 13px; line-height: 20px; }
+      .hs-menu::before { content: ''; position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none;
+        background: color-mix(in srgb, var(--dsw-alias-bg-base) 78%, transparent); backdrop-filter: var(--dsw-menu-backdrop-filter, blur(40px) saturate(150%)); }
+      .hs-menu-item { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 28px; box-sizing: border-box; padding: 4px 8px;
+        border: none; border-radius: var(--dsw-radius-sm, 8px); background: transparent; cursor: pointer; font: inherit; font-size: 13px;
+        line-height: 20px; color: var(--dsw-alias-label-primary); text-align: left; }
+      .hs-menu-item:hover:not(:disabled), .hs-menu-item:focus-visible:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); outline: none; }
+      .hs-menu-item:disabled { opacity: .4; cursor: not-allowed; }
+      .hs-menu-item.hs-menu-note { cursor: default; color: var(--dsw-alias-label-tertiary); }
+      .hs-menu-item.hs-menu-note:hover { background: transparent; }
+      .hs-menu-item.hs-menu-danger { color: var(--dsw-alias-state-error-primary); }
+      .hs-menu-icon { display: inline-flex; flex: none; width: 14px; height: 14px; align-items: center; justify-content: center; color: var(--dsw-alias-menu-icon); }
+      .hs-menu-icon svg, .hs-menu-check svg { width: 14px; height: 14px; }
+      .hs-menu-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .hs-menu-check { display: inline-flex; flex: none; color: var(--dsw-alias-label-primary); }
+      .hs-menu-hint { flex: none; margin-left: auto; color: var(--dsw-alias-label-tertiary); font-size: 12px; }
+      .hs-menu-label { padding: 4px 8px 2px; font-size: 11px; line-height: 15px; color: var(--dsw-alias-label-tertiary); }
+      .hs-menu-sep { height: .5px; margin: 3px 2px; background: var(--dsw-alias-border-l2); flex: none; }
+    `
+
     /** A header button that opens a menu below it. */
     function HeaderMenuButton({ label, icon, testId, children }) {
       const [open, setOpen] = useState(false)
       useChangesStyles() // the shared sheet removes the mouse-click focus square
+      useEffect(() => { installStyles('hs-menu-css', MENU_CSS) }, [])
+      const fromKeyboard = useRef(false)
       const [at, setAt] = useState({ top: 0, right: 0 })
       const ref = useRef(null)
       useEffect(() => {
         if (!open) return undefined
         // A press on the menu or on its own button is not "outside" (the button's click toggles it).
         const close = (event) => { if (!(event.target instanceof Element) || !(event.target.closest('[data-studio-menu]') || ref.current?.contains(event.target))) setOpen(false) }
-        const key = (event) => { if (event.key === 'Escape') setOpen(false) }
+        const rows = () => [...document.querySelectorAll('[data-studio-menu] [role^="menuitem"]:not(:disabled)')]
+        const key = (event) => {
+          if (event.key === 'Escape') { setOpen(false); ref.current?.focus(); return }
+          const list = rows()
+          if (!list.length || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return
+          event.preventDefault()
+          const at = list.indexOf(document.activeElement)
+          const next = event.key === 'Home' ? 0 : event.key === 'End' ? list.length - 1
+            : event.key === 'ArrowDown' ? (at + 1) % list.length : (at <= 0 ? list.length - 1 : at - 1)
+          list[next].focus()
+        }
+        if (fromKeyboard.current) requestAnimationFrame(() => rows()[0]?.focus())
         window.addEventListener('pointerdown', close, true)
         window.addEventListener('keydown', key, true)
         return () => { window.removeEventListener('pointerdown', close, true); window.removeEventListener('keydown', key, true) }
       }, [open])
-      const toggle = () => {
+      const toggle = (event) => {
+        fromKeyboard.current = event.detail === 0 // Enter or Space on the button
         const rect = ref.current.getBoundingClientRect()
         setAt({ top: rect.bottom + 4, right: window.innerWidth - rect.right })
         setOpen(!open)
@@ -2863,15 +3038,33 @@ window.__ModuleLoader__.load({
       return h(React.Fragment, null,
         h('button', { ref, type: 'button', style: look, onMouseEnter: () => setHover(true), onMouseLeave: () => setHover(false), 'data-studio-menu-button': '', 'data-testid': testId, title: label, 'aria-label': label, 'aria-expanded': open, onClick: toggle },
           h(Icon, { d: icon })),
-        open ? ReactDOM.createPortal(h('div', { style: { ...extraStyles.menu, top: at.top, right: at.right }, 'data-studio-menu': '', role: 'menu' }, children(() => setOpen(false))), document.body) : null)
+        open ? ReactDOM.createPortal(h('div', { className: 'hs-menu', style: { top: at.top, right: at.right }, 'data-studio-menu': '', 'data-menu-material': 'translucent', role: 'menu', 'aria-label': label }, children(() => setOpen(false))), document.body) : null)
     }
 
-    function MenuItem({ label, hint, onClick, danger }) {
+    /**
+     * The Panes menu beside the header's pane icons: every pane with its icon, ticked while open (choosing one opens or
+     * closes it), then Watches, which opens the Watches plugin's list for this Session.
+     */
+    function PanesMenu({ sessionId, lit, open, anyHiddenOpen }) {
+      const row = (key, icon, label, on, onClick) => h('button', {
+        key, type: 'button', role: on === undefined ? 'menuitem' : 'menuitemcheckbox', 'aria-checked': on === undefined ? undefined : on, className: 'hs-menu-item', onClick,
+      }, h('span', { className: 'hs-menu-icon' }, h(Icon, { d: icon })), h('span', { className: 'hs-menu-text' }, label),
+      on ? h('span', { className: 'hs-menu-check' }, h(Icon, { d: ICON_TICK })) : null)
+      return h('span', { style: { position: 'relative', display: 'inline-grid' } },
+        h(HeaderMenuButton, { label: 'Panes', icon: ICON_PANES, testId: 'harness-studio-panes-menu' }, close => [
+          ...PANE_BUTTONS.map(button => row(button.kind, button.d, button.label, lit(button.kind), () => { close(); open(button.kind) })),
+          h('div', { key: 'sep', className: 'hs-menu-sep', role: 'separator' }),
+          row('watches', ICON_EYE, 'Watches', undefined, () => { close(); window.dispatchEvent(new CustomEvent('harness-studio:open-watches', { detail: { sessionId: String(sessionId) } })) }),
+        ]),
+        // A pane open from the menu (not one of the icons) marks the menu button, so an open pane is never invisible.
+        anyHiddenOpen ? h('span', { 'aria-hidden': true, style: { position: 'absolute', top: 4, right: 4, width: 6, height: 6, borderRadius: 3, background: 'var(--dsw-alias-button-info-fill)', pointerEvents: 'none' } }) : null)
+    }
+
+    function MenuItem({ label, hint, checked, onClick, danger }) {
       return h('button', {
-        type: 'button', role: 'menuitem', style: { ...extraStyles.item, ...(danger ? { color: 'var(--dsw-alias-state-error-primary)' } : null) }, onClick,
-        onMouseEnter: e => { e.currentTarget.style.background = 'var(--dsw-alias-interactive-bg-hover)' },
-        onMouseLeave: e => { e.currentTarget.style.background = 'transparent' },
-      }, label, hint ? h('span', { style: extraStyles.itemHint }, hint) : null)
+        type: 'button', role: checked === undefined ? 'menuitem' : 'menuitemradio', 'aria-checked': checked, className: 'hs-menu-item' + (danger ? ' hs-menu-danger' : ''), onClick,
+      }, h('span', { className: 'hs-menu-text' }, label), hint ? h('span', { className: 'hs-menu-hint' }, hint) : null,
+      checked ? h('span', { className: 'hs-menu-check' }, h(Icon, { d: ICON_TICK })) : null)
     }
 
     function ServersMenu({ viewport }) {
@@ -2903,16 +3096,16 @@ window.__ModuleLoader__.load({
       const remove = (url) => { const next = saved.filter(s => s !== url); saveServers(next); setSaved(next) }
       const local = (detected || []).filter(url => !saved.includes(url))
       return h(React.Fragment, null,
-        h('div', { style: extraStyles.menuLabel }, 'Running on this computer'),
-        detected === undefined ? h('div', { style: { ...extraStyles.item, cursor: 'default', color: 'var(--dsw-alias-label-tertiary)' } }, 'Looking…')
-          : local.length === 0 ? h('div', { style: { ...extraStyles.item, cursor: 'default', color: 'var(--dsw-alias-label-tertiary)' } }, 'No dev servers found')
+        h('div', { className: 'hs-menu-label' }, 'Running on this computer'),
+        detected === undefined ? h('div', { className: 'hs-menu-item hs-menu-note' }, 'Looking…')
+          : local.length === 0 ? h('div', { className: 'hs-menu-item hs-menu-note' }, 'No dev servers found')
           : local.map(url => h(MenuItem, { key: url, label: url.replace(/^http:\/\//, '').replace(/\/$/, ''), onClick: () => open(url) })),
-        saved.length ? h('div', { style: extraStyles.menuSep }) : null,
-        saved.length ? h('div', { style: extraStyles.menuLabel }, 'Saved') : null,
+        saved.length ? h('div', { className: 'hs-menu-sep', role: 'separator' }) : null,
+        saved.length ? h('div', { className: 'hs-menu-label' }, 'Saved') : null,
         saved.map(url => h('div', { key: url, style: { display: 'flex', alignItems: 'center' } },
           h(MenuItem, { label: url.replace(/^https?:\/\//, '').replace(/\/$/, ''), onClick: () => open(url) }),
           h('button', { type: 'button', title: 'Remove', 'aria-label': 'Remove ' + url, style: { ...extraStyles.barButton, width: 24, height: 24 }, onClick: () => remove(url) }, h(Icon, { d: ICON_CLOSE })))),
-        h('div', { style: extraStyles.menuSep }),
+        h('div', { className: 'hs-menu-sep', role: 'separator' }),
         adding
           ? h('form', { style: { display: 'flex', gap: 4, padding: 4 }, onSubmit: e => { e.preventDefault(); add() } },
             h('input', { style: extraStyles.menuInput, autoFocus: true, placeholder: 'localhost:5173', value: draft, onChange: e => setDraft(e.target.value), spellCheck: false }),
@@ -2953,10 +3146,10 @@ window.__ModuleLoader__.load({
           link.download = 'screenshot-' + new Date().toISOString().replace(/[:.]/g, '-') + '.png'
           link.click()
         }) }) : null,
-        h('div', { style: extraStyles.menuSep }),
-        h('div', { style: extraStyles.menuLabel }, 'Viewport'),
-        VIEWPORTS.map(option => h(MenuItem, { key: option.id, label: option.label, hint: mode === option.id ? '✓' : undefined, onClick: () => setViewport(option) })),
-        webview ? h('div', { style: extraStyles.menuSep }) : null,
+        h('div', { className: 'hs-menu-sep', role: 'separator' }),
+        h('div', { className: 'hs-menu-label' }, 'Viewport'),
+        VIEWPORTS.map(option => h(MenuItem, { key: option.id, label: option.label, checked: mode === option.id, onClick: () => setViewport(option) })),
+        webview ? h('div', { className: 'hs-menu-sep', role: 'separator' }) : null,
         webview ? h(MenuItem, { label: 'Hard reload', onClick: run(() => webview.reloadIgnoringCache()) }) : null,
         webview ? h(MenuItem, { label: 'Open developer tools', onClick: run(() => webview.openDevTools()) }) : null,
         webview ? h(MenuItem, { label: 'Clear page data', danger: true, onClick: run(() => webview.executeJavaScript('try { localStorage.clear(); sessionStorage.clear() } catch (e) {}; location.reload()').catch(() => {})) }) : null)
@@ -3030,7 +3223,7 @@ window.__ModuleLoader__.load({
         menuHost.style.display = 'contents'
       }, [pane.viewport, menuHost])
       return h(React.Fragment, null,
-        ReactDOM.createPortal(h(React.Fragment, null, h(EmptyBrowser, { viewport: pane.viewport }), h(BrowserOverlay, { viewport: pane.viewport, ...rest })), overlayHost),
+        ReactDOM.createPortal(h(React.Fragment, null, h(EmptyBrowser, { viewport: pane.viewport }), h(BrowserOverlay, { viewport: pane.viewport, headerHost: menuHost, ...rest })), overlayHost),
         ReactDOM.createPortal(h(React.Fragment, null, h(ServersMenu, { viewport: pane.viewport }), h(MoreMenu, { viewport: pane.viewport })), menuHost))
     }
 
@@ -3039,15 +3232,513 @@ window.__ModuleLoader__.load({
       return h(React.Fragment, null, panes.map(pane => h(SafeBoundary, { key: pane.key, label: 'Browser pane extras' }, h(BrowserPaneExtras, { pane, ...props }))))
     }
 
+    // ---- Design pane: the agent's design boards beside the chat ---------------------------------------
+    // A board is one HTML file the design-board skill writes at designs/<topic>.board.html. The pane shows one
+    // board in a frame that may run scripts and nothing else (an opaque origin: no access to the app, its storage
+    // or the helper), as Harness's own interactive HTML preview does; the helper hands it over with the current
+    // board viewer in place and a policy that keeps its scripts off the network (board.js). The on-screen
+    // Session's header lists the boards every couple of seconds; after the first listing, which only records
+    // them, a new or changed board opens this pane on itself and reloads, keeping the zoom it had. Clicking a
+    // screen's label, or an artboard while Pick is on, puts a reference to that screen in the message box.
+    const DESIGN_TAB_ID = '@harness-studio/design'
+    const DESIGN_KIND = 'studio-design'
+    const DESIGN_FOLDER = 'designs'
+    const ICON_DESIGN = 'M2 3.5h5v9H2zM9 3.5h5v5H9zM9 10.5h5v2H9z'
+    const BOARD_POLL_MS = 2000
+    const FROM_BOARD = 'hs-design-board'
+    const TO_BOARD = 'hs-design-pane'
+
+    // Per Session: the boards last listed (newest first), the one shown, a counter that reloads it, whether its
+    // viewer reports clicks, Pick, the zoom each board was left at, and the change times already seen (undefined
+    // until the first listing).
+    const designs = new Map()
+    const designListeners = new Set()
+    function designOf(sessionId) {
+      const key = String(sessionId)
+      let d = designs.get(key)
+      if (!d) { d = { boards: [], board: undefined, reload: 0, linked: true, picking: false, views: new Map(), seen: undefined, error: undefined }; designs.set(key, d) }
+      return d
+    }
+    function changeDesign(sessionId, patch) {
+      Object.assign(designOf(sessionId), patch)
+      for (const listener of designListeners) listener(String(sessionId))
+    }
+    function useDesign(sessionId) {
+      const [, setTick] = useState(0)
+      useEffect(() => {
+        const listener = id => { if (id === String(sessionId)) setTick(n => n + 1) }
+        designListeners.add(listener)
+        return () => { designListeners.delete(listener) }
+      }, [sessionId])
+      return designOf(sessionId)
+    }
+    // The message box of each Session's conversation, recorded by its header, for references from the pane.
+    const composers = new Map()
+
+    const boardTitle = name => name.replace(/\.board\.html$/, '')
+
+    /**
+     * List the Session's boards. After the first listing, the newest board that is new or changed is shown and
+     * reloaded, and with `sidebar` its pane is opened when it is not showing.
+     */
+    async function pollBoards(sessionId, cwd, sidebar, signal) {
+      const result = await gitGet('/boards', { cwd }, signal)
+      if (signal.aborted) return
+      const d = designOf(sessionId)
+      if (!result.ok) { if (d.error !== result.message) changeDesign(sessionId, { error: result.message }); return }
+      const boards = Array.isArray(result.value.boards) ? result.value.boards : []
+      const seen = new Map(boards.map(board => [board.name, board.modified]))
+      const changed = d.seen === undefined ? undefined : boards.find(board => d.seen.get(board.name) !== board.modified)
+      const patch = { boards, seen, error: undefined }
+      if (changed) Object.assign(patch, { board: changed.name, reload: d.reload + 1 })
+      else if (d.board === undefined || !seen.has(d.board)) patch.board = boards[0] && boards[0].name
+      const same = !changed && ('board' in patch ? patch.board : d.board) === d.board && d.error === undefined
+        && boards.length === d.boards.length && boards.every((board, i) => board.name === d.boards[i].name && board.modified === d.boards[i].modified)
+      if (same) d.seen = seen
+      else changeDesign(sessionId, patch)
+      if (changed && sidebar && !shownKinds(sidebar, sessionId).includes(DESIGN_KIND)) togglePane(sidebar, sessionId, DESIGN_KIND)
+    }
+
+    /**
+     * A poll's signal: the loop's own, and a 10-second limit, so one request that never answers cannot stop the
+     * loop (its next check is scheduled only after this one ends).
+     */
+    const POLL_TIMEOUT_MS = 10000
+    const pollSignal = signal => (typeof AbortSignal.any === 'function' && typeof AbortSignal.timeout === 'function' ? AbortSignal.any([signal, AbortSignal.timeout(POLL_TIMEOUT_MS)]) : signal)
+
+    /** While this Session is on screen and the window visible, list its boards every BOARD_POLL_MS. */
+    function useBoardWatch(sessionId, sidebar, cwd) {
+      useEffect(() => {
+        if (cwd === undefined) return
+        const controller = new AbortController()
+        let timer
+        const tick = async () => {
+          try {
+            const onScreen = !sidebar || !sidebar.mounted || sidebar.mounted.getSnapshot() === sessionId
+            if (onScreen && document.visibilityState === 'visible') await pollBoards(sessionId, cwd, sidebar, pollSignal(controller.signal))
+          } catch (error) {
+            console.warn('[harness-studio] pollBoards:', error)
+          } finally {
+            if (!controller.signal.aborted) timer = setTimeout(tick, BOARD_POLL_MS)
+          }
+        }
+        tick()
+        return () => { controller.abort(); clearTimeout(timer) }
+      }, [sessionId, sidebar, cwd])
+    }
+
+    /** The message-box reference for one artboard, or undefined when the board sent something else. */
+    function boardReference(board, screen, width) {
+      const flat = v => String(v).replace(/[\u0000-\u001f\u007f\u2028\u2029[\]]+/g, ' ').replace(/\s+/g, ' ').trim()
+      if (typeof screen !== 'string' || !Number.isInteger(width) || width < 100 || width > 10000) return undefined
+      const name = flat(screen).slice(0, 120)
+      return name === '' ? undefined : '[' + DESIGN_FOLDER + '/' + flat(board) + ', ' + name + ' at ' + width + ' px] '
+    }
+
+    const DESIGN_CSS = `
+      .hs-design { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); }
+      .hs-design-frame { flex: 1; min-height: 0; width: 100%; border: 0; display: block; background: #ebebe8; }
+      .hs-design-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 24px; text-align: center; color: var(--dsw-alias-label-tertiary); font-size: 12px; }
+      .hs-design-empty strong { color: var(--dsw-alias-label-primary); font-weight: 500; font-size: 13px; }
+      .hs-design-note { padding: 6px 12px; font-size: 12px; color: var(--dsw-alias-label-tertiary); border-bottom: 1px solid var(--dsw-alias-border-l2); }
+      .hs-design-title { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+      .hs-design-select { min-width: 0; max-width: 220px; height: 24px; padding: 0 4px; border-radius: 6px; border: 1px solid var(--dsw-alias-border-l2);
+        background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary); font: inherit; font-size: 12px; text-overflow: ellipsis; }
+      .hs-design-pick { height: 24px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--dsw-alias-border-l2); background: transparent;
+        color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+      .hs-design-pick:hover { color: var(--dsw-alias-label-primary); }
+      .hs-design-pick.hs-on { background: color-mix(in srgb, var(--dsw-alias-button-info-fill) 18%, transparent); color: var(--dsw-alias-button-info-fill); border-color: transparent; }
+      .hs-design-pick:disabled { opacity: .5; cursor: default; }
+    `
+    function useDesignStyles() {
+      useEffect(() => { installStyles('hs-design-css', DESIGN_CSS) }, [])
+    }
+
+    /** The pane header: "Design", the board list and Pick. */
+    function DesignTitle({ sessionId }) {
+      useDesignStyles()
+      const d = useDesign(sessionId)
+      const stop = event => event.stopPropagation()
+      return h('span', { className: 'hs-design-title' },
+        'Design',
+        d.boards.length > 0 ? h('select', {
+          className: 'hs-design-select', value: d.board || '', 'aria-label': 'Design board', title: 'Boards in ' + DESIGN_FOLDER + '/, newest first',
+          onPointerDown: stop, onMouseDown: stop, onClick: stop, onKeyDown: stop,
+          onChange: event => changeDesign(sessionId, { board: event.target.value, picking: false }),
+        }, d.boards.map(board => h('option', { key: board.name, value: board.name }, boardTitle(board.name)))) : null,
+        d.board ? h('button', {
+          type: 'button', className: 'hs-design-pick' + (d.picking ? ' hs-on' : ''), 'aria-pressed': d.picking, disabled: !d.linked,
+          title: d.linked ? 'Pick a screen to reference it in your message' : 'This board\'s viewer was changed, so screens cannot be picked',
+          onPointerDown: stop, onClick: event => { event.stopPropagation(); changeDesign(sessionId, { picking: !d.picking }) },
+        }, 'Pick') : null)
+    }
+
+    function DesignPane({ sessionId, useSessions }) {
+      useDesignStyles()
+      const cwd = useSessions(sessions => sessions.byId[sessionId]?.cwd)
+      const d = useDesign(sessionId)
+      const frameRef = useRef(null)
+      const [doc, setDoc] = useState(undefined) // { name, url, linked } | { name, error }
+      const [note, setNote] = useState(undefined)
+      const later = useOneTimer()
+      // A fresh listing whenever the pane opens.
+      useEffect(() => {
+        if (cwd === undefined) return
+        const controller = new AbortController()
+        pollBoards(sessionId, cwd, undefined, controller.signal)
+        return () => controller.abort()
+      }, [sessionId, cwd])
+      // Load the board shown, again on every change; a board reopens at the zoom and position it was left at.
+      useEffect(() => {
+        if (cwd === undefined || d.board === undefined) { setDoc(undefined); return }
+        const controller = new AbortController()
+        const name = d.board
+        let url
+        gitGet('/board', { cwd, name }, controller.signal).then(result => {
+          if (controller.signal.aborted) return
+          if (!result.ok) { setDoc({ name, error: result.message }); return }
+          url = URL.createObjectURL(new Blob([result.value.html], { type: 'text/html;charset=utf-8' }))
+          const view = designOf(sessionId).views.get(name)
+          const hash = view && !view.fitted ? '#hs-view=' + [view.scale, view.x, view.y].map(n => Number(n.toFixed(4))).join(',') : ''
+          setDoc({ name, url: url + hash, linked: result.value.linked === true })
+          changeDesign(sessionId, { linked: result.value.linked === true, picking: false })
+        })
+        return () => { controller.abort(); if (url) URL.revokeObjectURL(url) }
+      }, [sessionId, cwd, d.board, d.reload])
+      const docRef = useRef(doc)
+      docRef.current = doc
+      const post = on => { const frame = frameRef.current; if (frame && frame.contentWindow) frame.contentWindow.postMessage({ source: TO_BOARD, type: 'pick', on }, '*') }
+      useEffect(() => { post(d.picking) }, [d.picking])
+      // Only the shown board's own frame is listened to, and only for the three things its viewer sends.
+      useEffect(() => {
+        const onMessage = event => {
+          const frame = frameRef.current
+          const current = docRef.current
+          if (!frame || !current || event.source !== frame.contentWindow) return
+          const data = event.data
+          if (data === null || typeof data !== 'object' || data.source !== FROM_BOARD) return
+          if (data.type === 'view') {
+            if ([data.scale, data.x, data.y].every(Number.isFinite) && data.scale > 0) designOf(sessionId).views.set(current.name, { scale: data.scale, x: data.x, y: data.y, fitted: data.fitted === true })
+          } else if (data.type === 'pick') {
+            if (designOf(sessionId).picking !== (data.on === true)) changeDesign(sessionId, { picking: data.on === true })
+          } else if (data.type === 'screen') {
+            const text = boardReference(current.name, data.screen, data.width)
+            const input = composers.get(String(sessionId))
+            if (text && input) input.insertText(text, input.captureInsertion())
+            setNote(text === undefined ? undefined : input ? 'Added to your message: ' + text.trim() : 'Open the conversation to reference a screen')
+            later(() => setNote(undefined), 3000)
+          }
+        }
+        window.addEventListener('message', onMessage)
+        return () => window.removeEventListener('message', onMessage)
+      }, [sessionId, later])
+
+      const empty = (title, detail) => h('div', { className: 'hs-design-empty' }, h(Icon, { d: ICON_DESIGN }), h('strong', null, title), detail ? h('div', null, detail) : null)
+      let body
+      if (cwd === undefined) body = empty('This session has no folder')
+      else if (d.boards.length === 0) body = d.error ? empty('Could not list the boards', d.error)
+        : empty('No design boards yet', 'Ask the agent to draft screens. Boards it saves in ' + DESIGN_FOLDER + '/ show here and reload as it edits them.')
+      else if (doc === undefined) body = empty('Loading…')
+      else if (doc.error) body = empty('Could not show ' + doc.name, doc.error)
+      else body = h('iframe', {
+        key: doc.url, ref: frameRef, src: doc.url, sandbox: 'allow-scripts', referrerPolicy: 'no-referrer', className: 'hs-design-frame',
+        title: 'Design board ' + boardTitle(doc.name), onLoad: () => { if (designOf(sessionId).picking) post(true) },
+      })
+      const message = note || (doc && doc.url && !doc.linked ? 'This board\'s viewer was changed, so clicking a screen cannot add a reference.' : undefined)
+      return h('div', { className: 'hs-design', 'data-testid': 'studio-design' },
+        message ? h('div', { className: 'hs-design-note', role: 'status' }, message) : null,
+        body)
+    }
+
+    // ---- Dashboards pane: live dashboards beside the chat ------------------------------------------------
+    // A dashboard is a folder the dashboards skill writes in dashboards/<name>/ (dashboards.js on the Host): a page,
+    // refresh scripts and their last data. The pane shows the page in a frame that may run scripts and nothing else
+    // (an opaque origin with a policy that keeps it off the network) and sends it data by message. Opening a dashboard
+    // whose refresh scripts the person approved at their current content refreshes it through the local helper,
+    // which runs only those scripts under the session's sandbox; otherwise the pane shows the scripts' full text and
+    // asks. The page can only ask for a refresh. The on-screen Session's header lists the dashboards every few
+    // seconds; after the first listing a new or changed dashboard opens this pane on itself.
+    const DASHBOARDS_TAB_ID = '@harness-studio/dashboards'
+    const DASHBOARDS_KIND = 'studio-dashboards'
+    const DASHBOARDS_FOLDER = 'dashboards'
+    const ICON_DASHBOARDS = 'M2.5 13.5h11M4 11V8M7 11V4.5M10 11V6.5M13 11V3'
+    const DASHBOARD_POLL_MS = 3000
+    const FROM_DASHBOARD = 'hs-dashboard'
+    const TO_DASHBOARD = 'hs-dashboard-pane'
+    /** A dashboard opened again within this long is not refreshed again. */
+    const REFRESH_FRESH_MS = 30000
+    /** The least time between two refreshes the page asks for. */
+    const PAGE_REFRESH_GAP_MS = 10000
+
+    // Per Session: the dashboards last listed, the one shown, a counter that reloads it, and the change times seen.
+    const dashboardStates = new Map()
+    const dashboardListeners = new Set()
+    function dashboardOf(sessionId) {
+      const key = String(sessionId)
+      let d = dashboardStates.get(key)
+      if (!d) { d = { list: [], name: undefined, reload: 0, dataTick: 0, seen: undefined, error: undefined, refreshedAt: new Map() }; dashboardStates.set(key, d) }
+      return d
+    }
+    function changeDashboards(sessionId, patch) {
+      Object.assign(dashboardOf(sessionId), patch)
+      for (const listener of dashboardListeners) listener(String(sessionId))
+    }
+    function useDashboards(sessionId) {
+      const [, setTick] = useState(0)
+      useEffect(() => {
+        const listener = id => { if (id === String(sessionId)) setTick(n => n + 1) }
+        dashboardListeners.add(listener)
+        return () => { dashboardListeners.delete(listener) }
+      }, [sessionId])
+      return dashboardOf(sessionId)
+    }
+
+    async function pollDashboards(sessionId, cwd, sidebar, signal) {
+      const result = await gitGet('/dashboards', { cwd }, signal)
+      if (signal.aborted) return
+      const d = dashboardOf(sessionId)
+      if (!result.ok) { if (d.error !== result.message) changeDashboards(sessionId, { error: result.message }); return }
+      const list = Array.isArray(result.value.dashboards) ? result.value.dashboards : []
+      const seen = new Map(list.map(item => [item.name, item.modified]))
+      const changed = d.seen === undefined ? undefined : list.find(item => d.seen.get(item.name) !== item.modified)
+      const patch = { list, seen, error: undefined }
+      if (changed) Object.assign(patch, { name: changed.name, reload: d.reload + 1 })
+      else if (d.name === undefined || !seen.has(d.name)) patch.name = list[0] && list[0].name
+      // New data for the dashboard shown (a watch refreshed it): show it, without opening the pane.
+      const shown = list.find(item => item.name === d.name)
+      const before = d.list.find(item => item.name === d.name)
+      if (!changed && shown && before && shown.updated !== before.updated) patch.dataTick = d.dataTick + 1
+      const same = !changed && !('dataTick' in patch) && ('name' in patch ? patch.name : d.name) === d.name && d.error === undefined
+        && list.length === d.list.length && list.every((item, i) => item.name === d.list[i].name && item.modified === d.list[i].modified)
+      if (same) d.seen = seen
+      else changeDashboards(sessionId, patch)
+      if (changed && sidebar && !shownKinds(sidebar, sessionId).includes(DASHBOARDS_KIND)) togglePane(sidebar, sessionId, DASHBOARDS_KIND)
+    }
+
+    function useDashboardWatch(sessionId, sidebar, cwd) {
+      useEffect(() => {
+        if (cwd === undefined) return
+        const controller = new AbortController()
+        let timer
+        const tick = async () => {
+          try {
+            const onScreen = !sidebar || !sidebar.mounted || sidebar.mounted.getSnapshot() === sessionId
+            if (onScreen && document.visibilityState === 'visible') await pollDashboards(sessionId, cwd, sidebar, pollSignal(controller.signal))
+          } catch (error) {
+            console.warn('[harness-studio] pollDashboards:', error)
+          } finally {
+            if (!controller.signal.aborted) timer = setTimeout(tick, DASHBOARD_POLL_MS)
+          }
+        }
+        tick()
+        return () => { controller.abort(); clearTimeout(timer) }
+      }, [sessionId, sidebar, cwd])
+    }
+
+    const DASHBOARDS_CSS = `
+      .hs-dash-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--dsw-alias-border-l2); font-size: 12px; color: var(--dsw-alias-label-tertiary); }
+      .hs-dash-bar .hs-grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .hs-dash-bar .hs-error { color: var(--dsw-alias-state-error-primary); }
+      .hs-dash-approve { padding: 12px; border-bottom: 1px solid var(--dsw-alias-border-l2); display: flex; flex-direction: column; gap: 8px; max-height: 55%; overflow: auto; font-size: 12px; }
+      .hs-dash-approve strong { font-size: 13px; color: var(--dsw-alias-label-primary); }
+      .hs-dash-approve p { margin: 0; color: var(--dsw-alias-label-secondary); line-height: 1.45; }
+      .hs-dash-approve details { border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; }
+      .hs-dash-approve summary { padding: 4px 8px; cursor: pointer; font-family: var(--dsw-font-mono, ui-monospace, monospace); }
+      .hs-dash-approve pre { margin: 0; padding: 8px; max-height: 260px; overflow: auto; font-size: 12px; white-space: pre-wrap; word-break: break-word; border-top: 1px solid var(--dsw-alias-border-l2); }
+      .hs-dash-actions { display: flex; gap: 8px; }
+      .hs-dash-button { height: 24px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--dsw-alias-border-l2); background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+      .hs-dash-button:hover { color: var(--dsw-alias-label-primary); }
+      .hs-dash-button.hs-primary { background: var(--dsw-alias-button-info-fill); border-color: transparent; color: #fff; }
+      .hs-dash-button:disabled { opacity: .5; cursor: default; }
+      .hs-dash-frame { flex: 1; min-height: 0; width: 100%; border: 0; display: block; background: var(--dsw-alias-bg-base); }
+    `
+    function useDashboardStyles() {
+      useEffect(() => { installStyles('hs-design-css', DESIGN_CSS); installStyles('hs-dash-css', DASHBOARDS_CSS) }, [])
+    }
+
+    const timeOf = ms => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+
+    function DashboardsTitle({ sessionId }) {
+      useDashboardStyles()
+      const d = useDashboards(sessionId)
+      const stop = event => event.stopPropagation()
+      return h('span', { className: 'hs-design-title' },
+        'Dashboards',
+        d.list.length > 0 ? h('select', {
+          className: 'hs-design-select', value: d.name || '', 'aria-label': 'Dashboard', title: 'Dashboards in ' + DASHBOARDS_FOLDER + '/, newest first',
+          onPointerDown: stop, onMouseDown: stop, onClick: stop, onKeyDown: stop,
+          onChange: event => changeDashboards(sessionId, { name: event.target.value }),
+        }, d.list.map(item => h('option', { key: item.name, value: item.name }, item.title ? item.title + ' (' + item.name + ')' : item.name))) : null)
+    }
+
+    function DashboardsPane({ sessionId, useSessions }) {
+      useDashboardStyles()
+      const cwd = useSessions(sessions => sessions.byId[sessionId]?.cwd)
+      const d = useDashboards(sessionId)
+      const frameRef = useRef(null)
+      const [doc, setDoc] = useState(undefined) // the last /dashboard answer, plus { url } | { error }
+      const [busy, setBusy] = useState(false)
+      const [note, setNote] = useState(undefined)
+      const [errors, setErrors] = useState({})
+      const later = useOneTimer()
+      const say = (text, ms = 6000) => { setNote(text); later(() => setNote(undefined), ms) }
+      const docRef = useRef(doc)
+      docRef.current = doc
+      const errorsRef = useRef(errors)
+      errorsRef.current = errors
+      const lastPageRefresh = useRef(0)
+
+      useEffect(() => {
+        if (cwd === undefined) return
+        const controller = new AbortController()
+        pollDashboards(sessionId, cwd, undefined, controller.signal)
+        return () => controller.abort()
+      }, [sessionId, cwd])
+
+      const post = (value, errs) => {
+        const frame = frameRef.current
+        if (frame && frame.contentWindow && value) frame.contentWindow.postMessage({ source: TO_DASHBOARD, type: 'data', data: value.data, errors: errs || {} }, '*')
+      }
+
+      // Read the dashboard: the page (a new frame only when the page itself changed), its data and its approval.
+      const load = async (name, signal) => {
+        const result = await gitGet('/dashboard', { cwd, name }, signal)
+        if (signal && signal.aborted) return undefined
+        if (!result.ok) { setDoc({ name, error: result.message }); return undefined }
+        const value = result.value
+        setDoc(previous => {
+          if (previous && previous.name === name && previous.url && previous.modified === value.modified) { post(value, errorsRef.current); return { ...value, url: previous.url } }
+          if (previous && previous.url) URL.revokeObjectURL(previous.url)
+          return { ...value, url: URL.createObjectURL(new Blob([value.html], { type: 'text/html;charset=utf-8' })) }
+        })
+        return value
+      }
+
+      const refresh = async (name, why) => {
+        setBusy(true)
+        const result = await gitPost('/dashboard/refresh', { session: sessionId, name })
+        setBusy(false)
+        // Refused (for example, a script changed since it was approved): show the dashboard again, with its approval card.
+        if (!result.ok) { say('Not refreshed: ' + result.message); await load(name); return }
+        dashboardOf(sessionId).refreshedAt.set(name, Date.now())
+        setErrors(result.value.errors || {})
+        errorsRef.current = result.value.errors || {}
+        const failed = Object.keys(result.value.errors || {})
+        say(failed.length ? 'Refreshed ' + result.value.saved + ' of ' + result.value.sources + ' sources; ' + failed.join(', ') + ' failed' : (why || 'Refreshed') + ' at ' + timeOf(Date.now()), 4000)
+        await load(name)
+      }
+
+      // Opening a dashboard: show its saved data at once, then refresh it when its scripts are approved.
+      useEffect(() => {
+        if (cwd === undefined || d.name === undefined) { setDoc(undefined); return }
+        const controller = new AbortController()
+        const name = d.name
+        setErrors({})
+        load(name, controller.signal).then(value => {
+          if (!value || controller.signal.aborted) return
+          const last = dashboardOf(sessionId).refreshedAt.get(name) || 0
+          if (value.approval.approved && Date.now() - last > REFRESH_FRESH_MS) refresh(name, 'Refreshed on open')
+        })
+        return () => controller.abort()
+      }, [sessionId, cwd, d.name, d.reload])
+      useEffect(() => () => { const current = docRef.current; if (current && current.url) URL.revokeObjectURL(current.url) }, [])
+      // Data saved since it was shown (a watch's refresh, or the agent testing a script): read it again.
+      useEffect(() => {
+        if (cwd === undefined || d.name === undefined || d.dataTick === 0) return
+        const controller = new AbortController()
+        load(d.name, controller.signal)
+        return () => controller.abort()
+      }, [d.dataTick])
+
+      // Only the shown dashboard's own frame is listened to, and only for "ready" and "refresh".
+      useEffect(() => {
+        const onMessage = event => {
+          const frame = frameRef.current
+          const current = docRef.current
+          if (!frame || !current || !current.url || event.source !== frame.contentWindow) return
+          const data = event.data
+          if (data === null || typeof data !== 'object' || data.source !== FROM_DASHBOARD) return
+          if (data.type === 'ready') post(current, errorsRef.current)
+          else if (data.type === 'refresh') {
+            if (!current.approval.approved) { say('Approve the refresh scripts above first'); return }
+            if (Date.now() - lastPageRefresh.current < PAGE_REFRESH_GAP_MS) return
+            lastPageRefresh.current = Date.now()
+            refresh(current.name)
+          }
+        }
+        window.addEventListener('message', onMessage)
+        return () => window.removeEventListener('message', onMessage)
+      }, [sessionId, cwd])
+
+      const approve = async () => {
+        const result = await gitPost('/dashboard/approve', { cwd, name: doc.name, hash: doc.approval.hash })
+        if (!result.ok) { say(result.message); await load(doc.name); return }
+        await refresh(doc.name, 'Approved and refreshed')
+      }
+      const snapshot = async () => {
+        const result = await gitPost('/dashboard/snapshot', { cwd, name: doc.name })
+        say(result.ok ? 'Saved ' + result.value.path + ': one file with the data as it is now, no refresh, ready to send' : 'Not saved: ' + result.message, 9000)
+      }
+      const keepFresh = async () => {
+        const result = await gitPost('/dashboard/keep-fresh', { session: sessionId, name: doc.name, minutes: 15 })
+        say(result.ok ? 'Keeps refreshing every 15 minutes for 7 days while closed (listed under Watches)' : 'Not kept fresh: ' + result.message, 9000)
+      }
+
+      const empty = (title, detail) => h('div', { className: 'hs-design-empty' }, h(Icon, { d: ICON_DASHBOARDS }), h('strong', null, title), detail ? h('div', null, detail) : null)
+      if (cwd === undefined) return h('div', { className: 'hs-design' }, empty('This session has no folder'))
+      if (d.list.length === 0) {
+        return h('div', { className: 'hs-design', 'data-testid': 'studio-dashboards' }, d.error ? empty('Could not list the dashboards', d.error)
+          : empty('No dashboards yet', 'Ask the agent for a dashboard. Dashboards it makes in ' + DASHBOARDS_FOLDER + '/ show here and fetch fresh data each time they open.'))
+      }
+      if (doc === undefined) return h('div', { className: 'hs-design' }, empty('Loading…'))
+      if (doc.error) return h('div', { className: 'hs-design' }, empty('Could not show ' + doc.name, doc.error))
+
+      const approval = doc.approval
+      const times = Object.values(doc.data || {}).map(v => v && v.updated).filter(Boolean)
+      const failed = Object.entries(errors)
+      const status = busy ? 'Refreshing…' : note || (failed.length ? null : times.length ? 'Updated ' + timeOf(Math.min(...times)) : 'No data yet')
+      const card = approval.problem
+        ? h('div', { className: 'hs-dash-approve', role: 'alert' }, h('strong', null, 'This dashboard\'s refresh scripts cannot run'), h('p', null, approval.problem))
+        : !approval.approved && approval.files.length > 0
+          ? h('div', { className: 'hs-dash-approve', role: 'region', 'aria-label': 'Approve refresh scripts' },
+            h('strong', null, 'Run this dashboard\'s refresh scripts?'),
+            h('p', null, 'Each time this dashboard opens, or you refresh it, the app runs these files from ' + DASHBOARDS_FOLDER + '/' + doc.name + '/refresh/ with the same sandbox and network setting as the agent\'s commands, and shows what they print. Approval covers exactly this text: any change to these files asks again. Read them before approving.'),
+            approval.files.map(file => h('details', { key: file.name, open: approval.files.length <= 2 },
+              h('summary', null, file.name + ' · ' + file.size.toLocaleString() + ' bytes'),
+              h('pre', null, file.text + (file.truncated ? '\n… (shown in part; open the file to read the rest)' : '')))),
+            h('div', { className: 'hs-dash-actions' },
+              h('button', { type: 'button', className: 'hs-dash-button hs-primary', onClick: approve }, 'Approve and refresh'),
+              h('button', { type: 'button', className: 'hs-dash-button', onClick: () => say('Not run. The dashboard shows its last saved data.') }, 'Don\'t run')))
+          : null
+      return h('div', { className: 'hs-design', 'data-testid': 'studio-dashboards' },
+        h('div', { className: 'hs-dash-bar' },
+          h('span', { className: 'hs-grow', role: 'status', title: status || '' },
+            status, failed.length && !busy && !note ? h('span', { className: 'hs-error' }, 'Failed: ' + failed.map(([id, e]) => id + ' (' + String(e).split('\n')[0] + ')').join('; ')) : null),
+          h('button', { type: 'button', className: 'hs-dash-button', disabled: busy || !approval.approved, onClick: () => refresh(doc.name), title: approval.approved ? 'Run the refresh scripts now' : 'Approve the refresh scripts first' }, 'Refresh'),
+          h('button', { type: 'button', className: 'hs-dash-button', disabled: !approval.approved, onClick: keepFresh, title: 'Refresh every 15 minutes while this dashboard is closed, for 7 days' }, 'Keep fresh'),
+          h('button', { type: 'button', className: 'hs-dash-button', onClick: snapshot, title: 'Save one HTML file with the data as it is now, to send to someone' }, 'Save snapshot')),
+        card,
+        h('iframe', {
+          key: doc.url, ref: frameRef, src: doc.url, sandbox: 'allow-scripts', referrerPolicy: 'no-referrer', className: 'hs-dash-frame',
+          title: 'Dashboard ' + (doc.title || doc.name), onLoad: () => post(docRef.current, errorsRef.current),
+        }))
+    }
+
     // ---- pane toolbar: one icon per right-sidebar pane, in the conversation header ----------------
     // Like Claude Code desktop's header icons: a click opens that pane (or focuses the one already
     // open), and clicking the pane that is showing collapses the sidebar.
+    // Header icons for the panes used most; every pane is also listed in the Panes menu beside them.
+    const PANE_ICONS = ['terminal', 'browser', FILES_KIND]
+    const ICON_PANES = 'M3 3h4v4H3zM9 3h4v4H9zM3 9h4v4H3zM9 9h4v4H9z'
+    const ICON_TICK = 'M3.5 8.5l3 3 6-7'
     const PANE_BUTTONS = [
       { kind: DETAILS_KIND, label: 'Session details', d: ICON_DETAILS, divider: true },
       { kind: 'terminal', label: 'Terminal', d: 'M3.5 4.5L7 8l-3.5 3.5M8.5 11.5h4' },
       { kind: CHANGES_KIND, label: 'Changes', d: ICON_CHANGES },
       { kind: 'browser', label: 'Browser', d: 'M14 8A6 6 0 1 1 2 8a6 6 0 0 1 12 0zM2 8h12M8 2c1.7 1.6 2.5 3.6 2.5 6S9.7 12.4 8 14M8 2C6.3 3.6 5.5 5.6 5.5 8s.8 4.4 2.5 6' },
       { kind: FILES_KIND, label: 'Files', d: 'M2 4.5A1.5 1.5 0 0 1 3.5 3H6l1.5 1.5h5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z' },
+      { kind: DESIGN_KIND, label: 'Design', d: ICON_DESIGN },
+      { kind: DASHBOARDS_KIND, label: 'Dashboards', d: ICON_DASHBOARDS },
     ]
     const toolbarStyles = {
       bar: { display: 'flex', alignItems: 'center', gap: 2 },
@@ -3340,8 +4031,37 @@ window.__ModuleLoader__.load({
       const s = surfaceOf(sidebar, sessionId)
       if (!s || !s.layout.expanded) return []
       const fill = filledColumn(arrangementOf(sessionId))
-      return dockPanesOf(s.layout).filter((pane, index) => fill === undefined || String(index) === fill)
+      const panes = dockPanesOf(s.layout)
+      const solo = panes.length === 2 ? fullscreenGrid()?.getAttribute(SOLO_ATTR) : undefined
+      return panes.filter((pane, index) => (fill === undefined || String(index) === fill) && (solo == null || String(index) === solo))
         .map(pane => kindOfTab(s.layout, pane.activeTabId)).filter(kind => kind && kind !== 'guide')
+    }
+
+    // ---- full screen shows one pane --------------------------------------------------------------------
+    // A sidebar in full screen shows one pane alone (STACK_CSS hides the other while the grid carries
+    // data-hs-solo). Expanding from a pane's own button picks that pane (watchPaneExpand); this keeps the rule
+    // when full screen starts another way (Harness's shortcut) and when a second pane opens or a pane changes
+    // while in full screen, such as the Design pane opening on a board the agent wrote: the pane that arrived
+    // is the one shown. The hidden pane is not closed, and both show again, stacked, when full screen ends.
+    const fullscreenPanes = new Map() // sessionId → the docked panes (id and shown tab) last seen in full screen
+    const fullscreenGrid = () => { const grid = visibleLayout(); return grid && inFullscreen(grid) ? grid : undefined }
+    function soloInFullscreen(sidebar, sessionId) {
+      const key = String(sessionId)
+      const s = surfaceOf(sidebar, sessionId)
+      const grid = fullscreenGrid()
+      if (!s || !grid || !s.layout.expanded) { fullscreenPanes.delete(key); return }
+      const panes = dockPanesOf(s.layout).map(pane => pane.id + ':' + pane.activeTabId)
+      const before = fullscreenPanes.get(key)
+      fullscreenPanes.set(key, panes)
+      // One pane fills the screen anyway; a choice left from two panes must not hide the next one to open.
+      if (panes.length !== 2) { grid.removeAttribute(SOLO_ATTR); return }
+      const arrived = before ? panes.findIndex(pane => !before.includes(pane)) : -1
+      if (arrived !== -1) grid.setAttribute(SOLO_ATTR, String(arrived))
+      else if (!grid.hasAttribute(SOLO_ATTR)) {
+        // Full screen began with two panes and no choice: the one being used, else the bottom one.
+        const focused = document.activeElement?.closest?.('[data-dockkit-column]')?.getAttribute('data-dockkit-column')
+        grid.setAttribute(SOLO_ATTR, focused === '0' ? '0' : '1')
+      }
     }
 
     function closeTabIn(sidebar, sessionId, actions, tabId) {
@@ -3439,6 +4159,15 @@ window.__ModuleLoader__.load({
       const s = surfaceOf(sidebar, sessionId)
       if (!s) { sidebar.openTab(kind); return }
       const panes = dockPanesOf(s.layout)
+      // In full screen a pane the other one is hiding comes forward instead of closing.
+      const solo = s.layout.expanded && panes.length === 2 ? fullscreenGrid() : undefined
+      const hiddenIndex = solo ? panes.findIndex(pane => kindOfTab(s.layout, pane.activeTabId) === kind) : -1
+      if (solo && hiddenIndex !== -1 && solo.getAttribute(SOLO_ATTR) !== String(hiddenIndex)) {
+        solo.setAttribute(SOLO_ATTR, String(hiddenIndex))
+        fullscreenPanes.set(String(sessionId), panes.map(pane => pane.id + ':' + pane.activeTabId))
+        for (const listener of [...arrangementListeners]) listener()
+        return
+      }
       const showing = s.layout.expanded ? panes.find(pane => kindOfTab(s.layout, pane.activeTabId) === kind) : undefined
       const fill = filledColumn(arrangementOf(sessionId))
       if (showing) {
@@ -3959,7 +4688,82 @@ window.__ModuleLoader__.load({
       return { x: Math.round(point.x * scale), y: Math.round(point.y * scale) }
     }
 
-    const BROWSER_OPS = new Set(['open', 'back', 'forward', 'reload', 'read', 'click', 'type', 'console', 'network', 'response', 'leave'])
+    /** The page's own size in CSS pixels: the width its media queries see, and its height. */
+    const pageSize = webview => webview.executeJavaScript('({ width: window.innerWidth, height: window.innerHeight })')
+
+    /**
+     * Give the page exactly `width` CSS pixels (browser_resize), laid out like the More menu's viewports. The
+     * frame is sized in the window's units, which differ from the page's under the theme's whole-app zoom, so
+     * its width is corrected from what the page then reports, a few rounds at most. No width: fit the pane.
+     */
+    async function resizePage(pane, webview, width, signal) {
+      const fit = width === undefined
+      pane.viewport.setAttribute('data-studio-viewport', fit ? 'responsive' : 'custom')
+      pane.viewport.style.overflowX = fit ? '' : 'auto'
+      webview.style.maxWidth = fit ? '' : 'none'
+      webview.style.margin = fit ? '' : '0 auto'
+      webview.style.flex = fit ? '' : 'none'
+      let frameWidth = width
+      for (let round = 0; round < 4; round++) {
+        webview.style.width = fit ? '' : `${frameWidth}px`
+        await sleep(150, signal)
+        checkAborted(signal)
+        const size = await pageSize(webview)
+        if (fit || size.width === width || !(size.width > 0)) return size
+        frameWidth = frameWidth * width / size.width
+      }
+      return pageSize(webview)
+    }
+
+    /** Screenshot limits: the image handed to the Host (its result body holds 2 MB), and how long a capture may take. */
+    const SHOT_MAX_EDGE = 4000
+    const SHOT_MAX_PIXELS = 4000000
+    const SHOT_MAX_BASE64 = 1500000
+    const SHOT_TIMEOUT_MS = 10000
+
+    /**
+     * A screenshot of the visible part of the page (browser_screenshot) as JPEG base64, scaled to the page's CSS
+     * pixels (a sharper screen's extra pixels only cost tokens) and within the limits above. With `scrollY` the
+     * page is scrolled there first, so the agent can step down a long page; the page's scroll position and full
+     * height come back with it. (Capturing beyond the visible part is not offered: inside the pane DevTools
+     * repeats the visible part down the image, and a taller frame is cut off at the window's height.)
+     */
+    async function screenshotPage(webview, scrollY) {
+      if (scrollY !== undefined) {
+        await webview.executeJavaScript(`window.scrollTo({ top: ${Number(scrollY)}, behavior: 'instant' })`)
+        await sleep(200)
+      }
+      const size = await webview.executeJavaScript('({ width: window.innerWidth, height: window.innerHeight, scrollY: Math.round(window.scrollY), pageHeight: document.documentElement.scrollHeight })')
+      // A window that is hidden, minimised or covered by others draws no frames: its capture never finishes,
+      // or fails with a graphics error.
+      const hidden = reason => new Error(`The page could not be captured${reason ? ` (${reason})` : ''}: the Harness window is probably hidden, minimised or covered, so it draws nothing. Ask the user to bring the window to the front, or check the page with browser_read.`)
+      const image = await Promise.race([webview.capturePage(), sleep(SHOT_TIMEOUT_MS).then(() => undefined)])
+        .catch(error => { throw hidden(String(error?.message ?? error).slice(0, 200)) })
+      if (image === undefined) throw hidden()
+      const png = image.toDataURL().replace(/^data:image\/png;base64,/, '')
+      if (png === '') throw new Error('The page could not be captured')
+      const bitmap = await createImageBitmap(new Blob([Uint8Array.from(atob(png), c => c.charCodeAt(0))], { type: 'image/png' }))
+      let scale = Math.min(1, size.width / bitmap.width, SHOT_MAX_EDGE / Math.max(bitmap.width, bitmap.height), Math.sqrt(SHOT_MAX_PIXELS / (bitmap.width * bitmap.height)))
+      const canvas = document.createElement('canvas')
+      for (let attempt = 0; attempt < 6; attempt++) {
+        canvas.width = Math.max(1, Math.round(bitmap.width * scale))
+        canvas.height = Math.max(1, Math.round(bitmap.height * scale))
+        const g = canvas.getContext('2d')
+        g.fillStyle = '#fff'
+        g.fillRect(0, 0, canvas.width, canvas.height)
+        g.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+        const data = canvas.toDataURL('image/jpeg', attempt === 0 ? 0.85 : 0.7).replace(/^data:image\/jpeg;base64,/, '')
+        if (data.length <= SHOT_MAX_BASE64) {
+          bitmap.close()
+          return { ...size, image: { data, mediaType: 'image/jpeg', width: canvas.width, height: canvas.height } }
+        }
+        if (attempt > 0) scale *= 0.75
+      }
+      bitmap.close()
+      throw new Error('The screenshot is too large to send')
+    }
+
+    const BROWSER_OPS = new Set(['open', 'back', 'forward', 'reload', 'read', 'click', 'type', 'console', 'network', 'response', 'leave', 'resize', 'screenshot'])
 
     async function runBrowserCommand(sidebar, sessionId, command, signal) {
       const op = command.op
@@ -3994,8 +4798,13 @@ window.__ModuleLoader__.load({
         }
         return where(frame)
       }
-      const { webview } = await browserWebview(sidebar, sessionId, { signal })
+      const { pane, webview } = await browserWebview(sidebar, sessionId, { signal })
       if (!webview) throw new Error('The Browser pane has no page open. Use browser_open first.')
+      if (op === 'resize') {
+        const width = Number.isInteger(args.width) && args.width > 0 ? args.width : undefined
+        return { ...where(webview), ...await resizePage(pane, webview, width, signal) }
+      }
+      if (op === 'screenshot') return { ...where(webview), ...await screenshotPage(webview, Number.isInteger(args.scroll_y) && args.scroll_y >= 0 ? args.scroll_y : undefined) }
       if (op === 'leave') {
         // The Host found the page on a site the user has not approved: show nothing from it any more.
         webview.stop()
@@ -4244,7 +5053,11 @@ window.__ModuleLoader__.load({
       return blank ? h(PaneToolbar, props) : null
     }
 
-    function PaneToolbar({ sessionId, sidebar, inputActions, sendSelection, clearSelection }) {
+    function PaneToolbar({ sessionId, sidebar, inputActions, sendSelection, clearSelection, useSessions }) {
+      const cwd = useSessions ? useSessions(sessions => sessions.byId[sessionId]?.cwd) : undefined
+      useBoardWatch(sessionId, sidebar, cwd)
+      useDashboardWatch(sessionId, sidebar, cwd)
+      useEffect(() => { if (inputActions) composers.set(String(sessionId), inputActions) }, [sessionId, inputActions])
       useChangesStyles() // the shared sheet removes the mouse-click focus square
       const chromeAnchor = useRef(null)
       useBrowserAgent(sessionId, sidebar, chromeAnchor)
@@ -4269,6 +5082,8 @@ window.__ModuleLoader__.load({
             const panes = dockPanesOf(s.layout)
             if (panes.length > 0 && panes.every(pane => pane.tabs.every(tabId => kindOfTab(s.layout, tabId) === 'guide'))) s.actions.setExpanded(sessionId, false)
           }
+          // Only the Session the sidebar shows lays out full screen.
+          if (!sidebar.mounted || sidebar.mounted.getSnapshot() === sessionId) soloInFullscreen(sidebar, sessionId)
           const next = read()
           // The sidebar opened, closed or switched panes: the Browser pane extras look again.
           if (next !== last) { last = next; notifyDock() }
@@ -4296,11 +5111,12 @@ window.__ModuleLoader__.load({
         // A page can send anything; whatever goes wrong in the extras must not take the pane icons with it.
         h(SafeBoundary, { label: 'Browser pane extras' }, h(BrowserExtras, { sessionId, inputActions, sendSelection, clearSelection })),
         note ? h('span', { role: 'status', style: toolbarStyles.note, title: note }, note) : null,
-        PANE_BUTTONS.flatMap(button => [h('button', {
+        PANE_BUTTONS.filter(button => PANE_ICONS.includes(button.kind)).sort((a, b) => PANE_ICONS.indexOf(a.kind) - PANE_ICONS.indexOf(b.kind)).map(button => h('button', {
           key: button.kind, type: 'button', title: button.label, 'aria-label': button.label, 'aria-pressed': lit(button.kind),
           style: { ...toolbarStyles.button, ...(lit(button.kind) ? toolbarStyles.active : null) },
           onClick: () => open(button.kind),
-        }, h(Icon, { d: button.d })), button.divider ? h('span', { key: button.kind + '-divider', style: toolbarStyles.divider }) : null]).filter(Boolean))
+        }, h(Icon, { d: button.d }))),
+        h(PanesMenu, { sessionId, lit, open, anyHiddenOpen: PANE_BUTTONS.some(button => !PANE_ICONS.includes(button.kind) && lit(button.kind)) }))
     }
 
     return {
@@ -4334,6 +5150,16 @@ window.__ModuleLoader__.load({
         ctx.effect(() => ctx.sidebarRightTabs.register({ id: DETAILS_TAB_ID, kind: DETAILS_KIND, priority: 'extension', title: () => 'Session', keepMounted: false }), 'details pane type')
         ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
           { name: 'sidebar.right.pane.tab', key: DETAILS_TAB_ID, inject: () => ({ sidebar: ctx.sidebarRight }) }, DetailsPane)), 'details pane body')
+
+        ctx.effect(() => ctx.sidebarRightTabs.register({ id: DESIGN_TAB_ID, kind: DESIGN_KIND, priority: 'extension', title: () => 'Design', keepMounted: false }), 'design pane type')
+        ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({ name: 'sidebar.right.pane.tab', key: DESIGN_TAB_ID, inject: () => ({}) }, DesignPane)), 'design pane body')
+        ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register(
+          { name: 'sidebar.right.pane.tab.title', key: DESIGN_TAB_ID }, DesignTitle)), 'design pane title with the board list and Pick')
+
+        ctx.effect(() => ctx.sidebarRightTabs.register({ id: DASHBOARDS_TAB_ID, kind: DASHBOARDS_KIND, priority: 'extension', title: () => 'Dashboards', keepMounted: false }), 'dashboards pane type')
+        ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({ name: 'sidebar.right.pane.tab', key: DASHBOARDS_TAB_ID, inject: () => ({}) }, DashboardsPane)), 'dashboards pane body')
+        ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab.title', () => ctx.slots.register(
+          { name: 'sidebar.right.pane.tab.title', key: DASHBOARDS_TAB_ID }, DashboardsTitle)), 'dashboards pane title with the dashboard list')
 
         if (typeof ctx.sidebarRight.registerResourceHandler === 'function') {
           ctx.effect(() => ctx.sidebarRight.registerResourceHandler(request => openFromConversation(ctx.sidebarRight, request)), 'files from the conversation open in the Files tab')

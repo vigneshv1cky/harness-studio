@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Hooks for Harness Studio, like Claude Code's: your own commands that run before a tool call (and can block it or ask first), after one (and can send the agent feedback), and when the agent is about to finish (and can send it back to work).",
   "license": "MIT",
-  "author": "Vignesh Murugan",
+  "author": { "name": "Vignesh Murugan", "email": "Muruganvignesh0810@gmail.com", "url": "https://github.com/vigneshv1cky" },
   "homepage": "https://github.com/vigneshv1cky/harness-studio/tree/main/plugins/hooks#readme",
   "repository": {
     "type": "git",

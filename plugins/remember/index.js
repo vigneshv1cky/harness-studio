@@ -18,6 +18,8 @@ import path from 'node:path'
 import { QUESTION_ID, cardOptions, cleanNote, localDate, readChoice, withNote } from './logic.js'
 import { INSTRUCTIONS_SERVICE, createInstructionsService } from './instructions.js'
 import { INDEX_LINES, MAX_BODY_CHARS, TYPES, deleteMemory, indexText, memoryDir, memoryProjectRoot, queueFileWrite, readMemory, saveMemory } from './memory.js'
+import { SYSTEM_PROMPT_SECTION, createSystemPromptAdditions } from './system-prompt.js'
+import { createSectionCopies } from './section-copies.js'
 
 export const name = 'harness-studio-remember'
 // The workspace registry is optional: it exists in the app (for the Instructions page) but not in command-line runs.
@@ -70,6 +72,14 @@ function trackedByGit(root, file) {
 export function apply(ctx) {
   const profile = ctx.get('profileContext')
   const home = profile?.home ?? process.env.DSH_HOME ?? path.join(os.homedir(), '.dsh')
+  // Your additions to the system prompt: saved text is appended after every other section for each main session.
+  // Prepend so the section is appended after every other listener has contributed to the assembly.
+  const promptAdditions = createSystemPromptAdditions({ home })
+  ctx.on('system-prompt/assemble', (assembly, context, next) => promptAdditions.apply(assembly, context, next), { prepend: true })
+  // Your copies of single sections (section-copies.js): sent in place of Harness's text for those sections only.
+  // Registered after the additions so it runs first and sees the finished assembly, additions included.
+  const sectionCopies = createSectionCopies({ home, skip: name => name === SYSTEM_PROMPT_SECTION })
+  ctx.on('system-prompt/assemble', (assembly, context, next) => sectionCopies.apply(assembly, context, next), { prepend: true })
   // The Instructions page's Host half (instructions.js), reached through Harness's authenticated Remote channel.
   if (typeof ctx.provide === 'function') {
     const { access } = createInstructionsService({
@@ -78,6 +88,8 @@ export function apply(ctx) {
         try { return ctx.get('workspaceRegistry')?.list?.() ?? [] } catch { return [] }
       },
       assemble: () => ctx.systemPrompt.assemble({}),
+      promptAdditions,
+      sectionCopies,
     })
     ctx.provide(INSTRUCTIONS_SERVICE, access)
   }

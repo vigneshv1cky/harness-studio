@@ -1,6 +1,6 @@
 #!/bin/sh
-# Build the unsigned Harness Studio installer for Windows (x64) from the Harness commit pinned in
-# docs/HARNESS_PIN.md. Harness packages Windows only on a Windows x64 machine, so this runs in
+# Build the unsigned Harness Studio installer for Windows (x64) from the commit of Harness Studio's Harness
+# fork pinned in docs/HARNESS_PIN.md. Harness packages Windows only on a Windows x64 machine, so this runs in
 # Git Bash there; .github/workflows/build-windows.yml runs it on GitHub Actions:
 #
 #   desktop/build-windows.sh
@@ -11,7 +11,7 @@ set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 work="$root/dist/build"
 harness="$work/harness"
-upstream="${HARNESS_UPSTREAM:-https://github.com/deepseek-ai/deepseek-harness.git}"
+upstream="${HARNESS_UPSTREAM:-https://github.com/vigneshv1cky/harness-studio-core.git}"
 pin=$(sed -n 's/^Pinned commit: \([0-9a-f]\{40\}\).*/\1/p' "$root/docs/HARNESS_PIN.md")
 version=$(cat "$root/desktop/VERSION")
 
@@ -26,11 +26,8 @@ mkdir -p "$work"
 # Keep LF line endings: Git for Windows converts text files to CRLF by default, and the patches would not apply.
 git clone --quiet --no-checkout -c core.autocrlf=false -c core.eol=lf "$upstream" "$harness"
 git -C "$harness" checkout --quiet "$pin"
-for patch in "$root/patches/harness-studio-brand.patch" "$root/patches/harness-studio-account.patch" "$root"/desktop/patches/*.patch; do
-  echo "build-windows: applying $(basename "$patch")"
-  git -C "$harness" apply "$patch" || fail "$(basename "$patch") no longer applies to $pin; refresh it (desktop/README.md)"
-done
-"$root/scripts/copy-logo.sh" "$harness"
+# Builds use only commits published on the fork's studio branch (docs/HARNESS_PIN.md).
+git -C "$harness" branch -r --contains "$pin" | grep -q ' origin/studio$' || fail "$pin is not on the studio branch of $upstream"
 mkdir -p "$harness/harness-studio-plugins"
 (cd "$root" && npm pack --silent --pack-destination "$harness/harness-studio-plugins" ./plugins/devpreview ./plugins/connectors ./plugins/compact ./plugins/sessions ./plugins/remember ./plugins/hooks ./plugins/undo ./plugins/watch ./plugins/terminal ./plugins/editor >/dev/null)
 

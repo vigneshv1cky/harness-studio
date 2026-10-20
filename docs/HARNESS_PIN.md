@@ -1,43 +1,33 @@
 # Harness pin
 
+Harness Studio builds on its own fork of DeepSeek Harness. The fork's `studio` branch is upstream Harness plus Harness Studio's changes as ordinary commits, one per change: the brand, the removed DeepSeek account, the desktop changes listed in [desktop/README.md](../desktop/README.md#patches), and the app's icons. Its `master` branch mirrors upstream and is never committed to. How the fork is kept and how an upstream release is merged into it: [FORK_PLAN.md](FORK_PLAN.md).
+
+Fork: https://github.com/vigneshv1cky/harness-studio-core (branch `studio`)
+Pinned commit: 60091b5708d67cfc32c8d896567bbd0e0ecc8595 (upstream 0.2.1-rc.2 merged, plus Harness Studio commits)
+Upstream base: 687f282e8625c6b8d11ff58211a90524be2e4317 (dsh 0.2.1-rc.2, 2026-10-17), the last upstream commit merged into `studio`
 Upstream: https://github.com/deepseek-ai/deepseek-harness
-Pinned commit: 571902028a75c64c1d767f4ae5fd099485f0ddf0 (dsh 0.2.1-alpha.3, 2026-10-14)
 
-Re-create the local copy:
-
-```sh
-git clone https://github.com/deepseek-ai/deepseek-harness.git harness
-git -C harness checkout 571902028a75c64c1d767f4ae5fd099485f0ddf0
-```
-
-Brand the app as Harness Studio (name, window title, sidebar mark, empty-chat heading and app icon): apply the patch, copy the logo into the copy's icons, then rebuild (`pnpm --dir harness run build`, about 5 minutes) and restart the desktop app. The development app keeps its browser data, sign-ins and macOS permissions: those live in fixed folders and under a bundle identifier that the patch leaves unchanged. The downloadable app applies more patches on top; see [desktop/README.md](../desktop/README.md).
+Re-create the local copy, then build it (`pnpm --dir harness install`, then `pnpm --dir harness run build`, about 5 minutes) and restart the desktop app:
 
 ```sh
-git -C harness apply "$PWD/patches/harness-studio-brand.patch"
-```
-
-Then remove the DeepSeek account and feedback (after this, models need a provider API key):
-
-```sh
-git -C harness apply "$PWD/patches/harness-studio-account.patch"
+git clone https://github.com/vigneshv1cky/harness-studio-core.git harness
 ```
 
 ```sh
-scripts/copy-logo.sh harness
-```
-
-**Optional, opt-in:** apply Harness Studio's Browser pane patch to the copy (from the repo root), then rebuild the desktop app. Read [patches/NOTICE.md](../patches/NOTICE.md) first: it explains the trade-offs (Google's sign-in rules, one shared browser store across workspaces) and carries DeepSeek Harness's licence notice.
-
-```sh
-git -C harness apply "$PWD/patches/harness-browser-pane.patch"
+git -C harness checkout c93f4ddf8f19ea801ee43d9338091d1f80617694
 ```
 
 ```sh
-pnpm --dir harness --filter @deepseek-ai/dsh-desktop run build
+git -C harness remote add upstream https://github.com/deepseek-ai/deepseek-harness.git
 ```
 
-| Patch | What it changes | Why it can't be a plugin |
+The development app keeps its sessions, settings, provider keys and browser data inside the copy, in `harness/apps/desktop/.desktop-build/development`. Move that folder into a new copy to keep them. Its macOS permissions follow the "Harness Studio Dev" bundle identifier, which the brand commit leaves unchanged.
+
+A change to Harness itself is a commit on the copy's `studio` branch, pushed to the fork, followed by a new `Pinned commit:` here.
+
+Until the first release built from the fork, [`patches/`](../patches) and [`desktop/patches/`](../desktop/patches) are kept as the fallback for 0.3.0: applied in order to upstream 571902028a75 (0.2.1-alpha.3), then `scripts/copy-logo.sh`, they reproduce the `studio-v0.3.0` tree exactly. They do not include the upstream merges or later commits on `studio`. The former opt-in Browser pane patch (`patches/harness-browser-pane.patch`) is not on the fork; the Browser pane sign-in setting in the app menu (the `04-browser-pane-sign-in-setting` commit) replaces it.
+
+| Commit on `studio` | What it changes | Why it can't be a plugin |
 |---|---|---|
-| `patches/harness-studio-brand.patch` | The macOS development app is built as "Harness Studio Dev.app" (menu bar, Dock and Activity Monitor name), distinct from the installed Harness Studio, and older "Harness Dev.app" and "Harness Studio.app" development bundles are unregistered and removed on the next start; its Dock icon is made from the app's own icon instead of Electron's; the window title and sidebar name fall back to "Harness Studio Dev" instead of "DSH Local Build" (English and Chinese), while official builds such as the downloadable app show their own title, "Harness Studio", with the matching upstream tests and snapshots; the sidebar and the empty-chat heading show Harness Studio's mark instead of the whale (a shared mark component, so local and official builds match), official builds show the plain name instead of DeepSeek's wordmark, and the empty-chat heading reads "What should we build?" instead of DeepSeek's "Into the Unknown"; the app icon artwork is Harness Studio's (the PNG icons are copied by `scripts/copy-logo.sh`, so the patch stays text) | The bundle is generated by the desktop development launcher, and the fallback title, sidebar mark and icons are compiled into the client or the app, none of which plugins can change |
-| `patches/harness-studio-account.patch` | No DeepSeek account: the account interface (sign-in, account menu, Settings → Account, account onboarding) and account-based models are switched off, so models come only from providers configured with a key; the welcome screen shows whenever no provider key is configured and its single action, "Choose a model provider", opens Settings → Models, where no provider is featured; the feedback plugins (thumbs, `/feedback`, the account menu's Feedback item) and the Session-log upload and its setting are switched off; with the matching Harness tests | The welcome window is compiled into the app, and the account and feedback rows are part of Harness's own bundles |
-| `patches/harness-browser-pane.patch` | The Browser pane's storage session reports Claude desktop's identity shape (the app's user-agent string without Electron or dsh-desktop tokens, with a plain `HarnessStudio/1.0` token before Chrome's), set on the session and on every request's header — Google refused both an Electron identity and a bare-Chrome one, and accepted this shape in a test; a preload that reports the screen's size as the page's outer window (an embedded page otherwise reports 0×0, which Google reads as an embedded browser); and one persistent storage partition shared by all workspaces | Both are set in the desktop main process, which plugins cannot reach; Google refuses sign-in from browsers whose identity names an embedding app |
+| `harness-studio-brand` | The macOS development app is built as "Harness Studio Dev.app" (menu bar, Dock and Activity Monitor name), distinct from the installed Harness Studio, and older "Harness Dev.app" and "Harness Studio.app" development bundles are unregistered and removed on the next start; its Dock icon is made from the app's own icon instead of Electron's; the window title and sidebar name fall back to "Harness Studio Dev" instead of "DSH Local Build" (English and Chinese), while official builds such as the downloadable app show their own title, "Harness Studio", with the matching upstream tests and snapshots; the sidebar and the empty-chat heading show Harness Studio's mark instead of the whale (a shared mark component, so local and official builds match), official builds show the plain name instead of DeepSeek's wordmark, and the empty-chat heading reads "What should we build?" instead of DeepSeek's "Into the Unknown"; the app icon artwork is Harness Studio's (the PNG icons are in the separate "Harness Studio icons" commit) | The bundle is generated by the desktop development launcher, and the fallback title, sidebar mark and icons are compiled into the client or the app, none of which plugins can change |
+| `harness-studio-account` | No DeepSeek account: the account interface (sign-in, account menu, Settings → Account, account onboarding) and account-based models are switched off, so models come only from providers configured with a key; the welcome screen shows whenever no provider key is configured and its single action, "Choose a model provider", opens Settings → Models, where no provider is featured; the feedback plugins (thumbs, `/feedback`, the account menu's Feedback item) and the Session-log upload and its setting are switched off; with the matching Harness tests | The welcome window is compiled into the app, and the account and feedback rows are part of Harness's own bundles |

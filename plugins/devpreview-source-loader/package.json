@@ -4,7 +4,7 @@
   "private": true,
   "description": "Development-only webpack/Turbopack loader that stamps data-src=\"file:line:col\" on JSX host elements for the Harness Studio Browser pane.",
   "license": "MIT",
-  "author": "Vignesh Murugan",
+  "author": { "name": "Vignesh Murugan", "email": "Muruganvignesh0810@gmail.com", "url": "https://github.com/vigneshv1cky" },
   "homepage": "https://github.com/vigneshv1cky/harness-studio/tree/main/plugins/devpreview-source-loader#readme",
   "repository": { "type": "git", "url": "git+https://github.com/vigneshv1cky/harness-studio.git", "directory": "plugins/devpreview-source-loader" },
   "bugs": "https://github.com/vigneshv1cky/harness-studio/issues",

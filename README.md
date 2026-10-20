@@ -14,12 +14,18 @@ Harness Studio is a desktop app that works like Claude Code desktop, with whiche
 
 - **Point at your UI, tell the agent what to change.** Open your app's dev server in the Browser pane, pick an element, and say "make this bigger": the agent gets the element's **source file and line**, component, text, styles and HTML.
 - **A browser the agent can use:** it opens pages, reads them, clicks and types in the Browser pane, next to the conversation, with real mouse and keyboard input. In the desktop app it also reads what DevTools shows on your own development pages (localhost and your local network): console errors with stack traces, network requests with their status, and response bodies. It never attaches DevTools to public sites.
+- **Documents, decks and spreadsheets:** the agent writes PowerPoint, Word and Excel files, with editable charts in decks and spreadsheets, renders slides to check its own layout, and exports PDF, using a Python, Node and office converter bundled with the app, so nothing needs installing. Results open in the side pane's preview.
+- **Design boards:** ask the agent to design or mock up screens and it drafts them on one board, each screen and variant side by side at phone, tablet and desktop widths, using your project's own colours and fonts, before any app code changes. The board is a single HTML file with pan and zoom that opens in the preview pane or any browser.
+- **Desktop and mobile apps:** the agent builds Mac, Android and Linux desktop apps (and iPhone apps when Xcode is installed) inside its sandbox, keeping every tool's downloads in the project, then runs them and checks them: Mac apps through computer use, Android apps in a headless emulator with its screenshots, and web-based ones in the Browser pane.
+- **Live dashboards:** ask for a dashboard and the agent builds a page of charts with a small refresh script per data source (a spreadsheet, CSV, a database or warehouse through your own login, or a web API). The Dashboards pane fetches fresh data every time you open it, once you have approved the refresh scripts at their exact text; **Keep fresh** refreshes it while closed, and **Save snapshot** gives you one HTML file with today's data to send.
+- **Charts, icons and diagrams:** editable charts inside PowerPoint and Excel files, and SVG files for standalone charts, icon sets and flow or architecture diagrams, drawn from your data with nothing to install.
+- **Speech to text, on this computer:** the microphone button between the model picker and Send dictates into your message (a menu in the recording bar picks the language), and the agent can transcribe an audio or video file, or a part you marked in the Files tab, with the time each piece was said, in Chinese, English, Cantonese, Japanese or Korean. Recognition is Harness's local SenseVoice model (about 241 MB, downloaded once after you agree); no audio leaves the computer. When the agent needs ffmpeg and you have none, it asks once and downloads a pinned, checksum-checked build into Harness Studio's data folder.
 - **Full-screen programs:** the agent can run vim, less, top, interactive prompts and installers in a real terminal, read the screen and type into it, under the same sandbox as every other command.
 - **Edit files yourself:** press Edit on a file in the Files tab for a code editor with syntax colours and ⌘S; the agent's changes appear in place, and neither of you overwrites the other's unsaved work.
 - **Side panes:** Files, Changes, Session details, Browser and Terminal, stacked with a draggable divider.
 - **Git history:** a Git page in the sidebar shows every workspace's branch, upstream and uncommitted files, and each workspace's commits with a branch graph, search by message, author or changed code, every commit's files and diffs, and blame. Its Branch menu switches branches when nothing is uncommitted.
 - **Connectors:** add MCP servers by URL or command, with OAuth sign-in and per-session on/off.
-- **Separate sessions:** the agent can hand a piece of work to a new session in the sidebar with a written brief, optionally in its own git worktree, and gets that session's report back.
+- **Separate sessions:** the agent can hand a piece of work to a new session in the sidebar with a written brief, optionally in its own git worktree, and gets that session's report back. For a self-contained job whose material is not needed afterwards, such as judging a batch of rendered frames, it uses a helper agent and keeps only the verdict.
 - **Watches:** the agent (or you, from the eye button in the session header) can watch a command's output, a port or files; the checks run on your computer without the model, and the agent is woken with a short notice only when something changes.
 - **Remember:** when you correct the agent or ask it to remember something, it proposes a one-line note; you approve it and choose this project or all your projects, and it's saved as a line in an instruction file you can edit.
 - **Your own Chrome:** an optional paired extension lets the agent browse in your real Chrome, where you are signed in, and lets you pick elements on any page with ⌥⇧S.
@@ -66,7 +72,14 @@ Harness Studio is built on [DeepSeek Harness](https://github.com/deepseek-ai/dee
 
 ## Status
 
-Developer preview, version 0.2.1, built on Harness `0.2.1-alpha.3` (pinned in [docs/HARNESS_PIN.md](docs/HARNESS_PIN.md)). Tested on macOS (Apple Silicon) and Linux (x64 and arm64). Windows isn't available yet.
+Developer preview, version 0.3.1, built on Harness `0.2.1-rc.2` through Harness Studio's fork of it, [harness-studio-core](https://github.com/vigneshv1cky/harness-studio-core) (pinned in [docs/HARNESS_PIN.md](docs/HARNESS_PIN.md)). Tested on macOS (Apple Silicon) and Linux (x64 and arm64). Windows isn't available yet.
+
+Planned, not yet built:
+
+- **A full design canvas**, like Claude Design: frames you drag and resize by hand, comments, and a design-system library. Until then, design boards (above) cover drafting and comparing screens; you change them by asking.
+- **Image generation.** The agent has no image model yet, so it can only draw graphics through code (SVG, HTML or the bundled Python image library).
+- **Slide and document templates**: a gallery of ready-made deck and document designs. For now the agent styles each file from scratch.
+- **Video making, as a separate app.** Animated videos and 3D product shots made as code (with Remotion) were tried in Harness Studio and taken out: rendering needs a 1 GB install and much of an 8 GB machine's memory. They are planned as their own app built from the same fork, so Harness Studio stays light. Video and audio files still play in Files and the preview, where you can mark a part for the agent.
 
 ## Setup
 
@@ -249,7 +262,7 @@ Harness Studio's features are plugins and patches on top of Harness. This reposi
 | [`plugins/connectors`](plugins/connectors) | MCP connectors like Claude Code desktop's: add servers by URL or command in Settings, OAuth sign-in, live status, per-session on/off from the + menu | Inside Harness Studio |
 | [`plugins/sessions`](plugins/sessions) | Separate sessions like Claude Code desktop's: the agent hands work to a new session in the sidebar with a brief, optionally in its own git worktree, and gets its report back | Inside Harness Studio |
 | [`plugins/remember`](plugins/remember) | Auto memory and notes that carry over to new sessions, and the Instructions page | Inside Harness Studio |
-| [`plugins/compact`](plugins/compact) | The look (Claude-like density, whole-app zoom), the About page, Network for commands, asking before new sites, and Your data | Inside Harness Studio |
+| [`plugins/compact`](plugins/compact) | The look (Claude-like density, whole-app zoom), the About page, Network for commands, asking before new sites, Your data, ffmpeg on first use and transcription | Inside Harness Studio |
 | [`plugins/hooks`](plugins/hooks) | Claude Code–style hooks and command rules | Inside Harness Studio |
 | [`plugins/undo`](plugins/undo) | Undo file changes for a turn | Inside Harness Studio |
 | [`plugins/watch`](plugins/watch) | Watches: cheap checks that wake the agent only on change | Inside Harness Studio |
@@ -265,7 +278,7 @@ Harness Studio's features are plugins and patches on top of Harness. This reposi
 | [`patches`](patches) | Patches to Harness's desktop app: one brands the app as Harness Studio (name, title and logo), and an optional one lets the Browser pane sign in to Google and keep sign-ins ([opt-in, read the notice first](patches/NOTICE.md)) | Your Harness build |
 | [`scripts`](scripts) | `embed-companion.mjs`: keeps the copy of the companion inside the Dev Preview plugin in sync; `render-logo.sh` renders the logo in [`assets/logo`](assets/logo) into the extension's and the desktop app's icons, and `copy-logo.sh` copies it into a Harness checkout | Development |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | How Harness Studio is put together: processes, a tool call, plugins, patches and where data is kept, with diagrams | — |
-| [`docs/HARNESS_PIN.md`](docs/HARNESS_PIN.md) | The Harness version this is built and tested against, and how to apply the patch | — |
+| [`docs/HARNESS_PIN.md`](docs/HARNESS_PIN.md) | The commit of the Harness fork this is built and tested against, and how to set up a local copy | — |
 | [`docs/PLAN.md`](docs/PLAN.md) | The original design notes (historical) | — |
 
 ### How picking an element works
@@ -306,7 +319,7 @@ npm pack --pack-destination dist ./plugins/devpreview ./plugins/connectors ./plu
 
 **Harness Desktop:** Plugins → **Add plugin** → enter the absolute path of each `.tgz` in `dist/` → **Install** → **Enable now**. `compact` (the look) is optional.
 
-**Browser pane sign-in patch (optional):** see [docs/HARNESS_PIN.md](docs/HARNESS_PIN.md) and [patches/NOTICE.md](patches/NOTICE.md).
+**Browser pane sign-in:** the desktop app has it as a setting (app menu → **Allow Sign-in in Browser Pane**); see [desktop/README.md](desktop/README.md).
 
 **Web / CLI:**
 
@@ -336,6 +349,22 @@ pnpm dsh web                   # Web app on http://127.0.0.1:3080
 - The Desktop tab carries a copy of the companion so it can add the picker to live websites. After editing `plugins/devpreview-companion/companion.js`, run `node scripts/embed-companion.mjs` (or `--check` to verify it is in sync).
 - Sample apps: `python3 examples/hello-app/serve.py` (port 3000, no-cache) and `cd examples/next-app && npm install && npx next dev -p 3001`.
 - A separate Harness home for testing keeps your real setup untouched: `DSH_HOME=$PWD/.dsh-home dsh plugin --profile web add link:$PWD/plugins/devpreview`, then `DSH_HOME=$PWD/.dsh-home dsh web`.
+
+## Author
+
+Harness Studio is made by **Vignesh Murugan**, and built on a 13-inch MacBook Air with the Apple M1 chip, 8 GB of memory and 512 GB of storage.
+
+- Email: [Muruganvignesh0810@gmail.com](mailto:Muruganvignesh0810@gmail.com)
+- GitHub: [vigneshv1cky](https://github.com/vigneshv1cky)
+- LinkedIn: [vignesh-murugan-data](https://www.linkedin.com/in/vignesh-murugan-data/)
+- Instagram: [vignesh_v1cky](https://www.instagram.com/vignesh_v1cky/)
+- X: [vigneshv1cky](https://x.com/vigneshv1cky)
+
+Bug reports and ideas are welcome in [Issues](https://github.com/vigneshv1cky/harness-studio/issues).
+
+## Support
+
+Harness Studio is free and open source, made by one person in spare time. If it helps you, you can sponsor its development on [GitHub Sponsors](https://github.com/sponsors/vigneshv1cky) or send a one-off thank-you through [PayPal](https://paypal.me/VigneshV1cky). Starring the repository and reporting problems in [Issues](https://github.com/vigneshv1cky/harness-studio/issues) help too.
 
 ## License
 

@@ -1,28 +1,28 @@
 /**
  * The Instructions page's Host half: which instruction files a workspace loads, the saved size limit,
- * reading, editing and opening those files, and the notes Remember saved.
+ * opening those files in the computer's text editor, and the notes Remember saved.
  *
  * The page reaches this through one Remote method, `harnessStudioInstructions/call`, served by Harness's
  * API Gateway like Connectors' helper method: the channel is authenticated by Harness, and the method's one
  * JSON parameter, `request`, carries `{ action, ... }`.
  *
- * Files the page may read, write or open are limited to instruction files (`AGENTS.md` and `AGENTS.local.md`)
- * in the personal folder or in a registered workspace's folders, so the page cannot be used to read
- * or change anything else on the computer. Files written for other agent tools, such as `CLAUDE.md`, are
- * neither read nor listed.
+ * Files the page may open are limited to instruction files (`AGENTS.md` and `AGENTS.local.md`) in the
+ * personal folder or in a registered workspace's folders, plus the system-prompt additions in the Harness
+ * home; a missing file is created empty first. The page can also remove a Remembered note or a memory.
+ * Files written for other agent tools, such as `CLAUDE.md`, are neither read nor listed.
  */
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { HEADING } from './logic.js'
 import { INDEX, deleteMemory, indexText, listMemories, memoryDir, memoryProjectRoot, queueFileWrite } from './memory.js'
+import { SYSTEM_PROMPT_SECTION, applySystemPromptAdditions, createSystemPromptAdditions, systemPromptPath } from './system-prompt.js'
+import { createSectionCopies } from './section-copies.js'
 
 export const INSTRUCTIONS_SERVICE = 'harnessStudioInstructions'
 const REMOTE_METHODS_MARKER = '@deepseek-ai/dsh-typert-protocol/remote-methods'
 export const DEFAULT_LIMIT = 131072
-const MAX_EDIT_BYTES = 1048576
 const BASE = 'AGENTS.md'
 const LOCAL = 'AGENTS.local.md'
 const INSTRUCTION_NAME = /^AGENTS(?:\.local)?\.md$/
@@ -71,8 +71,13 @@ function rememberedRange(lines) {
   return { start, end }
 }
 
-const readText = file => readFile(file, 'utf8').catch(error => (error.code === 'ENOENT' ? '' : Promise.reject(error)))
-const contentHash = content => createHash('sha256').update(content).digest('hex')
+/** Open a file in the computer's text editor: TextEdit on macOS, the default handler elsewhere. */
+function openInEditor(file) {
+  const [command, args] = process.platform === 'darwin' ? ['open', ['-t', file]]
+    : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', file]]
+      : ['xdg-open', [file]]
+  return new Promise((resolve, reject) => execFile(command, args, { timeout: 10000 }, error => (error ? reject(error) : resolve())))
+}
 
 /** Remembered notes: `- text (date)` lines under the `## Remembered` heading. */
 export function notesIn(content) {
@@ -166,10 +171,16 @@ export function renderSystemPrompt(assembly) {
 
 /**
  * Create the page's Remote service.
- * @param {{ home: string, workspaces: () => { path: string, title?: string }[], assemble?: () => Promise<Parameters<typeof renderSystemPrompt>[0]> }} options
- *   `assemble` returns Harness's prompt assembly without a session, for the read-only system prompt view.
+ * @param {{ home: string, workspaces: () => { path: string, title?: string }[], assemble?: () => Promise<Parameters<typeof renderSystemPrompt>[0]>, openFile?: (file: string) => Promise<void>, promptAdditions?: ReturnType<typeof createSystemPromptAdditions>, sectionCopies?: ReturnType<typeof createSectionCopies> }} options
+ *   `assemble` returns the prompt assembly without a session, for the system prompt view, after the plugin's own
+ *   listeners (Your additions and your section copies) have run. `promptAdditions` and `sectionCopies` are the
+ *   plugin's instances, shared with those listeners. `openFile` replaces the text-editor launch in tests.
  */
-export function createInstructionsService({ home, workspaces, assemble }) {
+export function createInstructionsService({
+  home, workspaces, assemble, openFile = openInEditor,
+  promptAdditions = createSystemPromptAdditions({ home }),
+  sectionCopies = createSectionCopies({ home, skip: name => name === SYSTEM_PROMPT_SECTION }),
+}) {
   const folders = () => workspaces().map(w => w.path).filter(Boolean)
 
   /** Refuse anything that is not an instruction file in an allowed folder, checked on the real path. */
@@ -210,47 +221,65 @@ export function createInstructionsService({ home, workspaces, assemble }) {
       }
       return { limit, defaultLimit: DEFAULT_LIMIT, workspaces: list, folder: selected ?? null, files, sentBytes, notes, memory }
     },
-    /** Harness's own system prompt, as a new session starts with it, for reading only. */
+    /**
+     * The system prompt as a new session starts with it: your section copies in place of Harness's text and your
+     * additions at its end. Each section says whether it is your copy; Your additions is not listed as a section.
+     */
     async systemPrompt() {
       if (!assemble) return null
-      return renderSystemPrompt(await assemble())
+      const additions = await promptAdditions.read()
+      const active = additions !== null && additions.content.trim() !== ''
+      let assembly = await assemble()
+      // The plugin's listener has appended the additions already; add them only where it did not run.
+      if (!assembly.sections.some(section => section.name === SYSTEM_PROMPT_SECTION)) assembly = applySystemPromptAdditions(assembly, active ? additions.content : undefined)
+      const rendered = renderSystemPrompt(assembly)
+      const names = assembly.sections.map(section => section.name).filter(name => name !== SYSTEM_PROMPT_SECTION)
+      const edited = await sectionCopies.edited(names)
+      const sections = rendered.sections.filter(section => section.name !== SYSTEM_PROMPT_SECTION).map(section => ({
+        ...section,
+        edited: edited.has(section.name),
+        firstLine: (assembly.sections.find(s => s.name === section.name)?.text ?? '').split('\n').map(line => line.replace(/^#+\s*/, '').trim()).find(Boolean)?.slice(0, 120) ?? '',
+      }))
+      return { ...rendered, sections, additions: active, additionsBytes: active ? Buffer.byteLength(additions.content) : 0 }
+    },
+    /** Open your copy of one section in the text editor, making it from Harness's current text the first time. */
+    async openSection({ name }) {
+      if (!assemble) throw new Error('The system prompt is not available here')
+      if (typeof name !== 'string' || name === SYSTEM_PROMPT_SECTION) throw new Error('That section is not in the system prompt')
+      await assemble() // records Harness's current text for each section
+      await openFile(await sectionCopies.ensure(name))
+      return { opened: true }
+    },
+    /** Delete your copy of one section, so Harness's text is sent again. */
+    async resetSection({ name }) {
+      if (typeof name !== 'string' || name === SYSTEM_PROMPT_SECTION) throw new Error('That section is not in the system prompt')
+      await sectionCopies.reset(name)
+      return { reset: true }
+    },
+    /** Open your additions in the text editor, creating the file empty when it does not exist yet. */
+    async openPromptAdditions() {
+      const file = systemPromptPath(home)
+      await mkdir(path.dirname(file), { recursive: true })
+      if (!(await exists(file))) await writeFile(file, '', 'utf8')
+      await openFile(file)
+      return { opened: true }
+    },
+    /** Remove your additions; Harness's prompt is left as it is. */
+    async removePromptAdditions() {
+      await promptAdditions.reset()
+      return { removed: true }
     },
     async setLimit({ maxBytes }) {
       return { limit: await writeLimit(home, maxBytes) }
     },
-    /** The file's text and a hash of it; the editor sends the hash back with its save. */
-    async read({ file }) {
-      const target = await allowed(file)
-      const content = await readText(target)
-      return { content, hash: contentHash(content) }
-    },
-    /**
-     * Save the editor's text, but only over the text it opened: when the file changed since (a note saved by
-     * the remember tool, an edit elsewhere), nothing is written. Queued with the remember tool's writes.
-     */
-    async write({ file, content, hash }) {
-      const target = await allowed(file)
-      if (typeof content !== 'string' || Buffer.byteLength(content) > MAX_EDIT_BYTES) throw new Error('The text must be under 1 MB')
-      if (typeof hash !== 'string') throw new Error('Reopen the file to edit it; this save did not say which version it started from')
-      return queueFileWrite(target, async () => {
-        if (contentHash(await readText(target)) !== hash) {
-          throw new Error('The file changed since you opened it, so your edit was not saved. Copy your text, reopen the file to see the changes, and edit again.')
-        }
-        await mkdir(path.dirname(target), { recursive: true })
-        await writeFile(target, content, 'utf8')
-        return { saved: true }
-      })
-    },
+    /** Open an instruction file in the text editor, creating it empty when it does not exist yet. */
     async open({ file }) {
       const target = await allowed(file)
       if (!(await exists(target))) {
         await mkdir(path.dirname(target), { recursive: true })
         await writeFile(target, '', 'utf8')
       }
-      const [command, args] = process.platform === 'darwin' ? ['open', ['-t', target]]
-        : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', target]]
-          : ['xdg-open', [target]]
-      await new Promise((resolve, reject) => execFile(command, args, { timeout: 10000 }, error => (error ? reject(error) : resolve())))
+      await openFile(target)
       return { opened: true }
     },
     async deleteMemory({ folder, name }) {
@@ -263,8 +292,7 @@ export function createInstructionsService({ home, workspaces, assemble }) {
       if (name !== INDEX && !/^[a-z0-9][a-z0-9-]{0,63}$/.test(name)) throw new Error('Unknown memory')
       const target = path.join(dir, name === INDEX ? INDEX : `${name}.md`)
       if (!(await exists(target))) throw new Error('That memory no longer exists')
-      const [command, args] = process.platform === 'darwin' ? ['open', ['-t', target]] : ['xdg-open', [target]]
-      await new Promise((resolve, reject) => execFile(command, args, { timeout: 10000 }, error => (error ? reject(error) : resolve())))
+      await openFile(target)
       return { opened: true }
     },
     /** Delete a note's line from the Remembered section only; the same text elsewhere in the file is left alone. */

@@ -16,6 +16,8 @@ export const LOCATIONS = [
   { id: 'memory', label: 'Auto memory', rel: 'memory', what: 'Notes the agent keeps for itself, one folder per project.' },
   { id: 'undo', label: 'Undo copies', rel: 'harness-studio/undo', what: 'Copies of files taken before the agent first changed them in a turn, so Undo can put them back.' },
   { id: 'worktrees', label: 'Separate-session worktrees', rel: 'harness-studio/worktrees', what: 'Git worktrees that separate sessions work in. Remove them from their sessions, not here.' },
+  { id: 'ffmpeg', label: 'ffmpeg', rel: 'harness-studio/ffmpeg', what: 'ffmpeg and ffprobe, downloaded the first time the agent needed them (GPL builds from ffmpeg.martin-riedl.de). If you delete them, the next use asks to download them again.' },
+  { id: 'speech', label: 'Speech model', rel: 'speech-to-text', what: 'The local speech recognizer\'s model for dictation and transcription (about 241 MB). If you delete it, the next use asks to download it again.' },
   { id: 'settings', label: 'Settings and rules', rel: '.', files: ['settings.yaml', 'hooks.json', 'permissions.json'], what: 'Settings, your hooks and your command rules.' },
   { id: 'studio', label: 'Plugin settings', rel: 'harness-studio', files: ['instructions.json', 'sessions.json', 'watches.json', 'network.json', 'hooks-trust.json', 'connectors.json'], what: 'Instruction limits, watches, the network setting, hook approvals and connectors.' },
   { id: 'storages', label: 'Workspaces and schedules', rel: 'storages', what: 'Your workspace list, automation schedules and caches.' },

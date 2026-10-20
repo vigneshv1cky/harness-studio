@@ -1,3 +1,10 @@
 - insert:
     - id: compact
       name: '@harness-studio/compact'
+
+# The harness-studio command uses the model key saved in the app. Harness's headless layer turns the saved-key store
+# off for one-off jobs; this layer comes after it in Harness Studio's command-line profile, so it turns the store back
+# on (in the app's own profile it is on already). A key exported in the launching environment, or in a .env file,
+# still works when nothing is saved.
+- id: credentials
+  disabled: false

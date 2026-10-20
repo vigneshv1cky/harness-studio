@@ -1,6 +1,6 @@
 #!/bin/sh
-# Build the unsigned Harness Studio desktop app for Linux (AppImage and .deb) from the Harness commit
-# pinned in docs/HARNESS_PIN.md. Native packages are installed for the build machine, so run it on Linux
+# Build the unsigned Harness Studio desktop app for Linux (AppImage and .deb) from the commit of Harness
+# Studio's Harness fork pinned in docs/HARNESS_PIN.md. Native packages are installed for the build machine, so run it on Linux
 # with the architecture you want (x64 or arm64); .github/workflows/build-linux.yml runs it on GitHub's
 # Ubuntu runners:
 #
@@ -8,14 +8,14 @@
 #
 # Same steps as desktop/build-mac.sh. Writes dist/Harness-Studio-<version>-linux-<arch>.AppImage and
 # dist/harness-studio_<version>_<debian arch>.deb, each with a .sha256 file. HARNESS_STUDIO_WORK moves the
-# build tree (default dist/build-linux); HARNESS_UPSTREAM overrides the repository cloned.
+# build tree (default dist/build-linux); HARNESS_UPSTREAM overrides the Harness repository cloned.
 # Needs Node.js 24, pnpm, Git, a C toolchain and Python 3 (build-essential python3), and on arm64 the fpm
 # packager (gem install fpm), since electron-builder's bundled one is x64-only.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 work="${HARNESS_STUDIO_WORK:-$root/dist/build-linux}"
 harness="$work/harness"
-upstream="${HARNESS_UPSTREAM:-https://github.com/deepseek-ai/deepseek-harness.git}"
+upstream="${HARNESS_UPSTREAM:-https://github.com/vigneshv1cky/harness-studio-core.git}"
 pin=$(sed -n 's/^Pinned commit: \([0-9a-f]\{40\}\).*/\1/p' "$root/docs/HARNESS_PIN.md")
 version=$(cat "$root/desktop/VERSION")
 
@@ -39,11 +39,8 @@ rm -rf "$harness"
 mkdir -p "$work"
 git clone --quiet --no-checkout "$upstream" "$harness"
 git -C "$harness" checkout --quiet "$pin"
-for patch in "$root/patches/harness-studio-brand.patch" "$root/patches/harness-studio-account.patch" "$root"/desktop/patches/*.patch; do
-  echo "build-linux: applying $(basename "$patch")"
-  git -C "$harness" apply "$patch" || fail "$(basename "$patch") no longer applies to $pin; refresh it (desktop/README.md)"
-done
-"$root/scripts/copy-logo.sh" "$harness"
+# Builds use only commits published on the fork's studio branch (docs/HARNESS_PIN.md).
+git -C "$harness" branch -r --contains "$pin" | grep -q ' origin/studio$' || fail "$pin is not on the studio branch of $upstream"
 mkdir -p "$harness/harness-studio-plugins"
 (cd "$root" && npm pack --silent --pack-destination "$harness/harness-studio-plugins" ./plugins/devpreview ./plugins/connectors ./plugins/compact ./plugins/sessions ./plugins/remember ./plugins/hooks ./plugins/undo ./plugins/watch ./plugins/terminal ./plugins/editor >/dev/null)
 

@@ -8,13 +8,17 @@ import path from 'node:path'
 
 export const SOURCE = 'harness-studio-watch'
 
-export const KINDS = ['command', 'port', 'files']
+export const KINDS = ['command', 'port', 'files', 'dashboard']
+/** A dashboard's folder name in dashboards/ (as the Preview plugin's dashboards.js accepts it). */
+export const DASHBOARD_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/
 export const CONDITIONS = ['change', 'match', 'no_match', 'fails', 'succeeds']
 
 /** Limits; every one is a whole number of seconds unless it says otherwise. */
 export const LIMITS = Object.freeze({
   minInterval: 5,
-  defaultInterval: { command: 30, port: 10, files: 0 },
+  defaultInterval: { command: 30, port: 10, files: 0, dashboard: 15 * 60 },
+  /** A dashboard refresh runs its sources' scripts, so it is never more often than once a minute. */
+  minDashboardInterval: 60,
   maxInterval: 24 * 60 * 60,
   defaultTimeout: 30,
   maxTimeout: 120,
@@ -156,6 +160,9 @@ export function normalizeSpec(args, { cwd, now = Date.now() }) {
     if (!LOCAL_HOSTS.includes(host)) throw new Error('a port watch checks this computer only: host must be localhost, 127.0.0.1 or ::1')
     spec.port = port
     spec.host = host
+  } else if (kind === 'dashboard') {
+    if (typeof args.dashboard !== 'string' || !DASHBOARD_NAME.test(args.dashboard)) throw new Error('dashboard must be the name of a folder in dashboards/')
+    spec.dashboard = args.dashboard
   } else {
     const list = Array.isArray(args.paths) ? args.paths : typeof args.paths === 'string' ? [args.paths] : []
     const paths = list.filter(p => typeof p === 'string' && p.trim() !== '').map(p => path.resolve(cwd, p.trim()))
@@ -164,8 +171,9 @@ export function normalizeSpec(args, { cwd, now = Date.now() }) {
     spec.paths = [...new Set(paths)]
   }
 
-  const condition = args.when ?? 'change'
-  if (!CONDITIONS.includes(condition)) throw new Error(`when must be one of ${CONDITIONS.join(', ')}`)
+  // A dashboard watch only keeps the dashboard's data fresh: it never notifies.
+  const condition = kind === 'dashboard' ? 'never' : args.when ?? 'change'
+  if (condition !== 'never' && !CONDITIONS.includes(condition)) throw new Error(`when must be one of ${CONDITIONS.join(', ')}`)
   if (kind === 'files' && condition !== 'change') throw new Error('a files watch only reports changes; use pattern to choose which paths count')
   if (kind === 'port' && (condition === 'match' || condition === 'no_match')) throw new Error('a port watch takes when: change, succeeds (comes up) or fails (goes down)')
   spec.when = condition
@@ -179,7 +187,7 @@ export function normalizeSpec(args, { cwd, now = Date.now() }) {
 
   spec.interval = kind === 'files'
     ? 0
-    : wholeSeconds(args.interval_seconds, 'interval_seconds', { min: LIMITS.minInterval, max: LIMITS.maxInterval, fallback: LIMITS.defaultInterval[kind] })
+    : wholeSeconds(args.interval_seconds, 'interval_seconds', { min: kind === 'dashboard' ? LIMITS.minDashboardInterval : LIMITS.minInterval, max: LIMITS.maxInterval, fallback: LIMITS.defaultInterval[kind] })
   spec.cooldown = wholeSeconds(args.cooldown_seconds, 'cooldown_seconds', { min: LIMITS.minCooldown, max: LIMITS.maxCooldown, fallback: LIMITS.defaultCooldown })
   spec.maxWakes = wholeSeconds(args.max_wakes, 'max_wakes', { min: 1, max: LIMITS.maxMaxWakes, fallback: LIMITS.defaultMaxWakes })
   const lifetime = wholeSeconds(args.lifetime_minutes, 'lifetime_minutes', { min: 1, max: LIMITS.maxLifetimeMinutes, fallback: LIMITS.defaultLifetimeMinutes })
@@ -190,6 +198,7 @@ export function normalizeSpec(args, { cwd, now = Date.now() }) {
 }
 
 function defaultLabel(spec) {
+  if (spec.kind === 'dashboard') return `dashboard ${spec.dashboard}`
   if (spec.kind === 'port') return `port ${spec.port}`
   if (spec.kind === 'files') return spec.paths.map(p => path.basename(p) || p).join(', ')
   return spec.command.length > 40 ? `${spec.command.slice(0, 39)}…` : spec.command
@@ -197,6 +206,7 @@ function defaultLabel(spec) {
 
 /** One line on what a watch checks, for lists and notices. */
 export function describe(spec) {
+  if (spec.kind === 'dashboard') return `refreshes dashboard ${spec.dashboard}, every ${spec.interval >= 60 && spec.interval % 60 === 0 ? `${spec.interval / 60} min` : `${spec.interval}s`}`
   if (spec.kind === 'port') return `port ${spec.port} on ${spec.host}, every ${spec.interval}s`
   if (spec.kind === 'files') return `changes under ${spec.paths.join(', ')}${spec.pattern ? ` matching /${spec.pattern}/` : ''}`
   return `\`${spec.command}\`, every ${spec.interval}s`
@@ -221,6 +231,7 @@ export function conditionHolds(spec, result) {
     case 'no_match': return !testPattern(spec.pattern, result.output)
     case 'fails': return result.exitCode !== 0
     case 'succeeds': return result.exitCode === 0
+    case 'never': return false
     default: return undefined
   }
 }

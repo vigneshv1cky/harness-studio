@@ -47,6 +47,8 @@ dsh plugin --profile web add /path/to/harness-studio/plugins/sessions
 
 A short system-prompt entry tells the agent when to split work off (independent pieces, not quick ones), to use `proposal` for its own ideas, to use a worktree when two writers could touch the same files, never to poll, and to check a report's claims before calling work done.
 
+A second entry covers Harness's own helper agents (the `subagent` and `subagent_fork` tools, which this plugin does not provide), modelled on Claude Code's wording for its agent tool: hand a self-contained piece to a fresh helper when only its conclusion is needed afterwards, not the files, search results, images or logs it went through, since every step re-sends the whole conversation; start independent pieces together; do quick lookups directly; give a complete brief and do not redo delegated work; pass on what the report says, since you do not see it; and use the fork helper only when the piece needs the conversation, because it copies all of it, images included. Helper agents get neither entry. Harness had only one line on helpers before (start independent ones in one message), and an image-heavy video chat never delegated; see the CHANGELOG.
+
 Only top-level sessions may start sessions (not subagents or teammates), at most 2 levels deep and at most 6 running at once per session.
 
 **Folders.** The agent chooses the folder and the initiation, so neither is trusted on its own:

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "MCP connectors for Harness Studio, like Claude Code desktop's: add servers by URL or command, sign in with OAuth, see live status, and turn each on or off per session from the + menu.",
   "license": "MIT",
-  "author": "Vignesh Murugan",
+  "author": { "name": "Vignesh Murugan", "email": "Muruganvignesh0810@gmail.com", "url": "https://github.com/vigneshv1cky" },
   "homepage": "https://github.com/vigneshv1cky/harness-studio/tree/main/plugins/connectors#readme",
   "repository": { "type": "git", "url": "git+https://github.com/vigneshv1cky/harness-studio.git", "directory": "plugins/connectors" },
   "bugs": "https://github.com/vigneshv1cky/harness-studio/issues",

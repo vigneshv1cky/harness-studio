@@ -1,5 +1,7 @@
 # Notice for the Harness patches
 
+Harness Studio now builds from its fork of Harness, [harness-studio-core](https://github.com/vigneshv1cky/harness-studio-core), whose `studio` branch holds these changes as commits. The patch files here and in [`desktop/patches`](../desktop/patches) are kept as a fallback until the first release built from the fork.
+
 `harness-studio-brand.patch`, `harness-studio-account.patch`, `harness-browser-pane.patch` and the patches in [`desktop/patches`](../desktop/patches) modify source files of [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) and carry lines of that source as patch context. Those lines are covered by DeepSeek Harness's licence:
 
 ```

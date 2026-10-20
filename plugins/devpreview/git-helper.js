@@ -17,6 +17,16 @@
  *   GET /blame?cwd=<abs dir>&hash=<id>&path=<file> → who last changed each line of the file at that commit
  *   GET /branches?cwd=<abs dir>     → the local branches, the current one, and which are checked out elsewhere
  *   POST /switch { cwd, branch }    → switch the work tree to another local branch (JSON; see below)
+ *   GET /boards?cwd=<abs dir>      → the design boards in the folder's designs/, newest first (board.js)
+ *   GET /board?cwd=<abs dir>&name=<file> → one board, prepared for the Design pane's sandboxed frame
+ *   GET /dashboards?cwd=<abs dir>  → the dashboards in the folder's dashboards/, newest first (dashboards.js)
+ *   GET /dashboard?cwd=<abs dir>&name=<folder> → one dashboard: its page prepared for the pane's frame, saved data,
+ *                                    and the refresh files with whether they are approved at their current content
+ *   POST /dashboard/approve { cwd, name, hash } → approve the refresh files, only if they still hash to `hash`
+ *   POST /dashboard/revoke { cwd, name }       → withdraw that approval
+ *   POST /dashboard/refresh { session, name }  → run the approved refresh scripts under that session's sandbox
+ *   POST /dashboard/snapshot { cwd, name }     → save the page with today's data as one HTML file
+ *   POST /dashboard/keep-fresh { session, name, minutes } → a Watches watch that refreshes it while closed
  *   GET /browser/next?session=<id>  → the next Browser pane command for that Session (long poll)
  *   POST /browser/result            → a command's result, { id, ok, value | error } (JSON)
  *
@@ -42,9 +52,13 @@
  *     call turns off fsmonitor, hooks, the pager and external diff commands (and diff drivers and textconv
  *     on diffs), skips looking inside submodules, and blanks every clean/smudge/process filter the
  *     repository configures (see `filterOverrides`);
+ *   - the two board routes read files, not git: only regular files named `*.board.html` directly inside the
+ *     folder's own `designs/` directory (neither the directory nor the file may be a link), at most 8 MB;
  *   - a status request is shared by every caller asking about the same folder while it runs, and git
  *     processes are killed once no request is waiting for them;
- *   - two requests write, and both must be JSON (forcing a browser preflight that other origins fail):
+ *   - the dashboard POST routes (JSON only) write only inside a dashboard folder (its data/ and snapshots/) and the
+ *     approvals file, and run only a dashboard's approved refresh scripts, under the session's sandbox (dashboards.js);
+ *   - two other requests write, and both must be JSON (forcing a browser preflight that other origins fail):
  *     POST /browser/result, which can only settle a command this process issued, and POST /switch, which
  *     changes a repository's checked-out branch only to an existing local branch, and refuses while the
  *     work tree has any uncommitted change (untracked files included) or while the repository configures a
@@ -56,6 +70,7 @@ import { execFile } from 'node:child_process'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { lstat, readFile, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
+import { listBoards, readBoard } from './board.js'
 
 export const SERVICE = 'harness-studio-git'
 export const VERSION = 1
@@ -574,8 +589,8 @@ async function switchBranch(cwd, branch) {
 
 /**
  * Start the helper on the first free port in [BASE_PORT, BASE_PORT + PORT_ATTEMPTS).
- * @param {{ secret: Buffer, origins?: string[], browser?: object, log?: (message: string) => void }} options
- *   `secret` is required: every request but /hello must carry it.
+ * @param {{ secret: Buffer, origins?: string[], browser?: object, dashboards?: object, log?: (message: string) => void }} options
+ *   `secret` is required: every request but /hello must carry it. `dashboards` serves the dashboard routes (index.js).
  * @returns {Promise<{ port: number, close: () => Promise<void> }>}
  */
 export async function startGitHelper(options) {
@@ -634,6 +649,23 @@ export async function startGitHelper(options) {
       }
       if (!hasKey(request, secret)) return send(401, { error: 'missing or wrong helper key' })
       if (options.browser && url.pathname.startsWith('/browser/')) return await browserRoute(request, response, url, send)
+      if (options.dashboards && url.pathname.startsWith('/dashboard/') && request.method === 'POST') {
+        if (!(request.headers['content-type'] ?? '').startsWith('application/json')) return send(415, { error: 'JSON only' })
+        const body = await readJson(request)
+        const d = options.dashboards
+        if (url.pathname === '/dashboard/refresh') {
+          if (typeof body?.session !== 'string' || body.session.length > 200) return send(400, { error: 'session is required' })
+          return send(200, await d.refresh({ sessionId: body.session, name: body?.name }))
+        }
+        if (url.pathname === '/dashboard/approve') return send(200, await d.approve(await directory(body?.cwd), body?.name, body?.hash))
+        if (url.pathname === '/dashboard/revoke') return send(200, await d.revoke(await directory(body?.cwd), body?.name))
+        if (url.pathname === '/dashboard/snapshot') return send(200, await d.snapshot(await directory(body?.cwd), body?.name))
+        if (url.pathname === '/dashboard/keep-fresh') {
+          if (typeof body?.session !== 'string' || body.session.length > 200) return send(400, { error: 'session is required' })
+          return send(200, await d.keepFresh({ sessionId: body.session, name: body?.name, minutes: body?.minutes }))
+        }
+        return send(404, { error: 'not found' })
+      }
       if (url.pathname === '/switch' && request.method === 'POST') {
         if (!(request.headers['content-type'] ?? '').startsWith('application/json')) return send(415, { error: 'JSON only' })
         const body = await readJson(request)
@@ -654,6 +686,10 @@ export async function startGitHelper(options) {
       if (url.pathname === '/commit') return send(200, await commit(await cwd(), url.searchParams.get('hash'), signal))
       if (url.pathname === '/commit-diff') return send(200, await commitDiff(await cwd(), url.searchParams.get('hash'), url.searchParams.get('path'), signal))
       if (url.pathname === '/branches') return send(200, await branches(await cwd(), signal))
+      if (url.pathname === '/boards') return send(200, await listBoards(await cwd()))
+      if (url.pathname === '/board') return send(200, await readBoard(await cwd(), url.searchParams.get('name')))
+      if (options.dashboards && url.pathname === '/dashboards') return send(200, await options.dashboards.list(await cwd()))
+      if (options.dashboards && url.pathname === '/dashboard') return send(200, await options.dashboards.read(await cwd(), url.searchParams.get('name')))
       if (url.pathname === '/blame') return send(200, await blame(await cwd(), url.searchParams.get('hash'), url.searchParams.get('path'), signal))
       return send(404, { error: 'not found' })
     } catch (error) {
