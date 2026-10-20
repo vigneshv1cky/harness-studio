@@ -1,6 +1,6 @@
 // Smoke-test probe for the installed app (desktop/smoke-mac.sh, desktop/smoke-linux.sh): reads the running
 // app through its debugging port, records window titles, visible text and screenshots, chooses a model provider
-// on the welcome screen, checks the Chat font row in Settings → General, opens the Connectors page and the Session
+// on the welcome screen, checks the Chat font row in Settings → Appearance, opens the Connectors page and the Session
 // and Browser panes, and fails unless the workspace shows Harness Studio with its four client plugins, a default
 // workspace, those pages, and no DeepSeek account, feedback or sign-in.
 import { writeFileSync } from 'node:fs'
@@ -56,8 +56,8 @@ if (main) {
   const run = async expression => (await call(main.webSocketDebuggerUrl, 'Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })).result.value
   const click = label => run(`(() => { const b = [...document.querySelectorAll('button,[role=button],a')].find(e => (e.getAttribute('aria-label') ?? e.textContent.trim()) === ${JSON.stringify(label)}); if (!b) return false; b.click(); return true })()`)
   const text = () => run('document.body.innerText')
-  // Settings → General: Compact's "Chat font" row directly follows "Font size" and starts at System.
-  await run(`[...document.querySelectorAll('[role=dialog] button,[role=dialog] [role=tab],[role=dialog] a')].find(e => e.textContent.trim() === 'General')?.click()`)
+  // Settings → Appearance: Compact's "Chat font" row directly follows "Font size" and starts at System.
+  await run(`[...document.querySelectorAll('[role=dialog] button,[role=dialog] [role=tab],[role=dialog] a')].find(e => e.textContent.trim() === 'Appearance')?.click()`)
   await wait(1500)
   report.generalSettings = await run(`document.querySelector('[role=dialog]')?.innerText ?? ''`)
   const general = report.generalSettings.split('\n').map(line => line.trim()).filter(Boolean)
@@ -75,7 +75,9 @@ if (main) {
   await click('Connectors'); await wait(1500)
   report.pages.connectors = (await text()).includes('MCP servers')
   await click('New session'); await wait(2000)
-  await click('Session details'); await wait(2000)
+  // Session details opens from the Panes menu beside the header icons.
+  await run(`document.querySelector('[data-testid="harness-studio-panes-menu"]')?.click()`); await wait(600)
+  await run(`[...document.querySelectorAll('[data-studio-menu] [role^="menuitem"]')].find(e => e.innerText.trim() === 'Session details')?.click()`); await wait(2000)
   report.pages.session = (await text()).includes('Environment')
   report.pages.sessionFolder = await run(`/default-workspace[\\s\\S]*Documents[\\\\/]Harness Studio/.test(document.querySelector('[data-testid=studio-details]')?.innerText ?? '')`)
   await click('Browser'); await wait(2500)
@@ -96,7 +98,7 @@ const problems = [
   w && w.feedbackUi && 'the feedback interface is loaded',
   w && w.signInText && 'a DeepSeek sign-in prompt is visible',
   ...Object.entries(report.pages ?? {}).filter(([, shown]) => !shown).map(([page]) => `${page} did not appear`),
-  report.chatFont && !report.chatFont.afterFontSize && 'Settings → General has no Chat font row right after Font size',
+  report.chatFont && !report.chatFont.afterFontSize && 'Settings → Appearance has no Chat font row right after Font size',
   report.chatFont && !report.chatFont.system && 'the Chat font row is not set to System',
 ].filter(Boolean)
 if (problems.length > 0) { console.error(`smoke: ${problems.join('; ')}`); process.exit(1) }

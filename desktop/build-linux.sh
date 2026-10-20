@@ -44,7 +44,10 @@ git -C "$harness" branch -r --contains "$pin" | grep -q ' origin/studio$' || fai
 mkdir -p "$harness/harness-studio-plugins"
 (cd "$root" && npm pack --silent --pack-destination "$harness/harness-studio-plugins" ./plugins/devpreview ./plugins/connectors ./plugins/compact ./plugins/sessions ./plugins/remember ./plugins/hooks ./plugins/undo ./plugins/watch ./plugins/terminal ./plugins/editor >/dev/null)
 
-(cd "$harness" && pnpm install --frozen-lockfile && pnpm --filter @deepseek-ai/dsh-desktop run "package:linux:$arch:unsigned")
+# The app, the AppImage and .deb metadata and the sidebar carry Harness Studio's version; the bundled Harness runtime
+# keeps its own, which the plugins' engines ranges are checked against.
+(cd "$harness" && pnpm install --frozen-lockfile \
+  && HARNESS_STUDIO_VERSION="$version" pnpm --filter @deepseek-ai/dsh-desktop run "package:linux:$arch:unsigned")
 
 artifacts="$harness/apps/desktop/.desktop-build/targets/linux-$arch/unsigned-artifacts"
 mkdir -p "$root/dist"

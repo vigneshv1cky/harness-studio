@@ -1103,7 +1103,20 @@ window.__ModuleLoader__.load({
         ['Instagram', 'https://www.instagram.com/vignesh_v1cky/', 'vignesh_v1cky'],
         ['X', 'https://x.com/vigneshv1cky', 'vigneshv1cky'],
       ],
+      // The same pages as the repository's Sponsor button (.github/FUNDING.yml) and the README's Support section.
+      support: [
+        ['GitHub Sponsors', 'https://github.com/sponsors/vigneshv1cky'],
+        ['Ko-fi', 'https://ko-fi.com/vigneshmurugan'],
+        ['PayPal', 'https://paypal.me/VigneshV1cky'],
+      ],
     }
+    // Harness Studio's release version, shown beside the name at the top of the sidebar in place of Harness's own
+    // version and commit. Keep equal to desktop/VERSION (test/version.test.mjs checks it).
+    const STUDIO_VERSION = '0.3.2'
+    // Same layout and values as Harness's local-build brand (SidebarRoot.module.css), with Studio's version.
+    const BrandName = () => h('span', { 'data-studio-brand': '', style: { flex: 'none', display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center', gap: '1px', height: '24px', whiteSpace: 'nowrap' } },
+      h('span', { style: { fontSize: '12px', lineHeight: '13px', letterSpacing: 0 } }, 'Harness Studio'),
+      h('span', { style: { flex: 'none', display: 'inline-flex', alignItems: 'center', height: '10px', padding: '0 3px', borderRadius: '2px', color: 'var(--dsw-alias-label-primary-inverted)', background: 'var(--dsw-alias-label-primary)', fontFamily: 'var(--ds-font-family-code)', fontSize: '6px', fontWeight: 500, lineHeight: '10px', whiteSpace: 'nowrap' } }, STUDIO_VERSION))
     let layout
     const openAbout = () => {
       try { layout?.selectPanel('about') } catch (error) { console.warn('[harness-studio] About page unavailable', error) }
@@ -1386,10 +1399,11 @@ window.__ModuleLoader__.load({
       .hsa-dev-links { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 6px; font-size: 13px; }
       .hsa-dev-item { display: inline-flex; align-items: baseline; gap: 5px; }
       .hsa-dev-label { color: var(--dsw-alias-label-tertiary); }
-      .hsa-dev-links a { color: var(--dsw-alias-label-link, var(--dsw-alias-accent-primary, #3b82f6)); text-decoration: none; border-radius: 3px; }
-      .hsa-dev-links a:hover { text-decoration: underline; }
-      .hsa-dev-links a:focus { text-decoration: none; outline: none; }
-      .hsa-dev-links a:focus-visible { outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 2px; }
+      .hsa-dev-support { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; margin-top: 8px; padding-top: 8px; border-top: 0.5px solid var(--dsw-alias-border-l2); font-size: 13px; }
+      .hsa-dev-links a, .hsa-dev-support a { color: var(--dsw-alias-label-link, var(--dsw-alias-accent-primary, #3b82f6)); text-decoration: none; border-radius: 3px; }
+      .hsa-dev-links a:hover, .hsa-dev-support a:hover { text-decoration: underline; }
+      .hsa-dev-links a:focus, .hsa-dev-support a:focus { text-decoration: none; outline: none; }
+      .hsa-dev-links a:focus-visible, .hsa-dev-support a:focus-visible { outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary)); outline-offset: 2px; }
       .hsa-section { scroll-margin-top: 16px; margin-top: 16px; padding-top: 32px; border-top: 0.5px solid var(--dsw-alias-border-l2); }
       .hsa-h2 { margin: 0; display: flex; align-items: baseline; gap: 10px; font-size: 18px; font-weight: 600; line-height: 26px; }
       .hsa-num { flex: none; min-width: 26px; height: 26px; padding: 0 6px; box-sizing: border-box; border-radius: 13px; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; color: var(--dsw-alias-label-secondary); background: color-mix(in srgb, var(--dsw-alias-label-primary) 8%, transparent); }
@@ -1491,7 +1505,10 @@ window.__ModuleLoader__.load({
               h('div', { className: 'hsa-dev-links' },
                 ...DEVELOPER.links.map(([label, href, text]) => h('span', { key: label, className: 'hsa-dev-item' },
                   h('span', { className: 'hsa-dev-label' }, label),
-                  h('a', { href, target: '_blank', rel: 'noreferrer', 'aria-label': label + ': ' + text }, text)))))),
+                  h('a', { href, target: '_blank', rel: 'noreferrer', 'aria-label': label + ': ' + text }, text)))),
+              h('div', { className: 'hsa-dev-support', 'data-about-support': '' },
+                h('span', { className: 'hsa-dev-label' }, 'Support Harness Studio'),
+                ...DEVELOPER.support.map(([label, href]) => h('a', { key: label, href, target: '_blank', rel: 'noreferrer' }, label))))),
           jumpMenu,
           ...ABOUT.map(section => h('section', { key: section.id, className: 'hsa-section', 'data-about-section': section.id },
             h('h2', { className: 'hsa-h2' }, h('span', { className: 'hsa-num' }, section.title.split('. ')[0]), section.title.split('. ').slice(1).join('. ')),
@@ -2269,6 +2286,47 @@ window.__ModuleLoader__.load({
       }
       return scored.sort((a, b) => a.score - b.score || a.title.localeCompare(b.title)).slice(0, 40)
     }
+    // An empty model list (Harness's "No models available.") says where models come from and offers a button that
+    // opens Settings → Models. The hint goes inside the list's own status line, so it leaves with it and with a search.
+    function watchEmptyModels() {
+      const EMPTY = 'No models available.'
+      const openModels = () => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+        document.querySelector('[data-studio-settings]')?.click()
+        const started = Date.now()
+        const tick = () => {
+          const cell = [...document.querySelectorAll('[data-shortcut-modal="settings"] nav [class*="_navCell"]')].find(c => c.innerText.trim() === 'Models')
+          if (cell) cell.click()
+          else if (Date.now() - started < 3000) setTimeout(tick, 80)
+        }
+        tick()
+      }
+      const scan = () => {
+        for (const status of document.querySelectorAll('[role="status"][class*="_empty"]')) {
+          const own = [...status.childNodes].filter(node => !(node instanceof Element && node.classList.contains('hs-models-hint'))).map(node => node.textContent).join('').trim()
+          const hint = status.querySelector(':scope > .hs-models-hint')
+          if (own !== EMPTY) { hint?.remove(); continue }
+          if (hint) continue
+          const box = document.createElement('div')
+          box.className = 'hs-models-hint'
+          box.style.cssText = 'margin-top: 4px;'
+          box.append('Add a model provider and its API key in Settings → Models.')
+          const button = document.createElement('button')
+          button.type = 'button'
+          button.textContent = 'Open Settings → Models'
+          button.dataset.studioAddModel = ''
+          button.style.cssText = 'display: block; margin-top: 6px; padding: 0; border: none; background: none; font: inherit; cursor: pointer; color: var(--dsw-alias-label-link, var(--dsw-alias-accent-primary, #3b82f6));'
+          button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); openModels() })
+          box.append(button)
+          status.append(box)
+        }
+      }
+      const observer = new MutationObserver(scan)
+      observer.observe(document.body, { childList: true, subtree: true, characterData: true })
+      scan()
+      return () => { observer.disconnect(); document.querySelectorAll('.hs-models-hint').forEach(node => node.remove()) }
+    }
+
     function watchSettingsSearch() {
       const style = document.createElement('style')
       style.id = 'hs-settings-search'
@@ -2432,11 +2490,15 @@ window.__ModuleLoader__.load({
         ctx.effect(watchQueue, 'queued messages listed one row each')
         ctx.effect(watchPromptHistory, 'Up and Down recall sent prompts in the message box')
         ctx.effect(watchSettingsSearch, 'Search field at the top of the Settings page list')
+        ctx.effect(watchEmptyModels, 'Empty model list points to Settings → Models')
         ctx.effect(watchApprovalCards, 'Always allow for this website on new-site approvals')
         ctx.effect(() => ctx.slots.inject('settings.permissions.item', () => ctx.slots.register({
           name: 'settings.permissions.item', id: 'always-allowed-sites', order: -18.5, inject: () => ({}),
         }, SitesRow)), 'Always-allowed sites row in Settings → Permissions, after Long turns')
         ctx.effect(() => () => { layout = undefined }, 'About row target')
+        ctx.effect(() => ctx.slots.inject('sidebar.brand.name', () => ctx.slots.register({
+          name: 'sidebar.brand.name', inject: () => ({}),
+        }, BrandName)), 'Harness Studio and its release version beside the sidebar logo')
         ctx.effect(() => ctx.slots.inject('main', () => ctx.slots.register({
           name: 'main', key: 'about', inject: () => ({}),
         }, AboutPage)), 'About page')

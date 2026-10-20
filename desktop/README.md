@@ -32,7 +32,7 @@ Needs a Mac with Apple Silicon, Node.js 24 (`nvm use 24`), pnpm (`corepack enabl
 desktop/build-mac.sh
 ```
 
-The script clones Harness Studio's Harness fork into `dist/build/harness` (replacing an earlier copy) at the commit pinned in [docs/HARNESS_PIN.md](../docs/HARNESS_PIN.md), which must be on the fork's `studio` branch, packs the ten plugins into the app, and runs Harness's own unsigned macOS packaging. It writes `dist/Harness-Studio-<version>-mac-arm64.dmg` and a `.sha256` file; the version is in [VERSION](VERSION), and the About panel shows the Harness version it is built on.
+The script clones Harness Studio's Harness fork into `dist/build/harness` (replacing an earlier copy) at the commit pinned in [docs/HARNESS_PIN.md](../docs/HARNESS_PIN.md), which must be on the fork's `studio` branch, packs the ten plugins into the app, and runs Harness's own unsigned macOS packaging. It writes `dist/Harness-Studio-<version>-mac-arm64.dmg` and a `.sha256` file; the version is in [VERSION](VERSION). The app carries that version everywhere: the About window, the disk image's name, the sidebar, and on Linux the AppImage and .deb metadata. The Harness runtime inside keeps Harness's own version, which plugins' `engines` ranges are checked against.
 
 [smoke-mac.sh](smoke-mac.sh) checks a DMG without touching your own Harness Studio data: it runs a copy of the app on a throwaway home folder and checks the welcome screen, the built-in plugins and their pages, the first-use workspace (including that an existing `deepseek-harness` one is kept), the `harness-studio://` link and Office to PDF:
 

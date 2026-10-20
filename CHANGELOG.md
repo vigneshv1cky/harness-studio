@@ -2,6 +2,16 @@
 
 Changes to the downloadable Harness Studio app. The plugins in [`plugins`](plugins) keep their own versions.
 
+## 0.3.2 — 2026-10-20
+
+### Changed
+- **Support link on the About page:** a Support Harness Studio line under the Made by card links to [GitHub Sponsors](https://github.com/sponsors/vigneshv1cky), [Ko-fi](https://ko-fi.com/vigneshmurugan) and [PayPal](https://paypal.me/VigneshV1cky).
+- **Empty model list says what to do:** when no model provider is set up, the model picker's "No models available." now adds "Add a model provider and its API key in Settings → Models." with a button that opens that page.
+
+### Fixed
+- **Version beside the sidebar logo:** it showed the underlying Harness version and commit (such as 0.2.1-rc.2 and a commit id); it now shows the Harness Studio release, such as 0.3.1.
+- **App version everywhere:** the Mac About window, the disk image's name ("Harness Studio 0.2.1-rc.2-arm64"), the app's own version and, on Linux, the AppImage and .deb metadata showed the underlying Harness version (0.2.1-rc.2); they now show the Harness Studio release. Harness inside keeps its own version, which plugins' version ranges are checked against.
+
 ## 0.3.1 — 2026-10-20
 
 ### Added

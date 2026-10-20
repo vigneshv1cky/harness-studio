@@ -36,7 +36,7 @@ mkdir -p "$harness/harness-studio-plugins"
 system32="$(cygpath -u "$SYSTEMROOT")/System32"
 (cd "$harness" && export PATH="$system32:$PATH" && pnpm install --frozen-lockfile \
   && pnpm --filter @deepseek-ai/dsh-desktop run render:tray-icon \
-  && pnpm --filter @deepseek-ai/dsh-desktop run package:win:x64:unsigned)
+  && HARNESS_STUDIO_VERSION="$version" pnpm --filter @deepseek-ai/dsh-desktop run package:win:x64:unsigned)
 
 exe="$root/dist/Harness-Studio-$version-win-x64-setup.exe"
 rm -f "$exe" "$exe.sha256"

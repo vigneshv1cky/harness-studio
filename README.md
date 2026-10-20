@@ -72,7 +72,7 @@ Harness Studio is built on [DeepSeek Harness](https://github.com/deepseek-ai/dee
 
 ## Status
 
-Developer preview, version 0.3.1, built on Harness `0.2.1-rc.2` through Harness Studio's fork of it, [harness-studio-core](https://github.com/vigneshv1cky/harness-studio-core) (pinned in [docs/HARNESS_PIN.md](docs/HARNESS_PIN.md)). Tested on macOS (Apple Silicon) and Linux (x64 and arm64). Windows isn't available yet.
+Developer preview, version 0.3.2, built on Harness `0.2.1-rc.2` through Harness Studio's fork of it, [harness-studio-core](https://github.com/vigneshv1cky/harness-studio-core) (pinned in [docs/HARNESS_PIN.md](docs/HARNESS_PIN.md)). Tested on macOS (Apple Silicon) and Linux (x64 and arm64). Windows isn't available yet.
 
 Planned, not yet built:
 
