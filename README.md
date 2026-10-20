@@ -364,7 +364,7 @@ Bug reports and ideas are welcome in [Issues](https://github.com/vigneshv1cky/ha
 
 ## Support
 
-Harness Studio is free and open source, made by one person in spare time. If it helps you, you can sponsor its development on [GitHub Sponsors](https://github.com/sponsors/vigneshv1cky) or send a one-off thank-you through [PayPal](https://paypal.me/VigneshV1cky). Starring the repository and reporting problems in [Issues](https://github.com/vigneshv1cky/harness-studio/issues) help too.
+Harness Studio is free and open source, made by one person in spare time. If it helps you, you can sponsor its development on [GitHub Sponsors](https://github.com/sponsors/vigneshv1cky) or send a one-off thank-you through [Ko-fi](https://ko-fi.com/vigneshmurugan) or [PayPal](https://paypal.me/VigneshV1cky). Starring the repository and reporting problems in [Issues](https://github.com/vigneshv1cky/harness-studio/issues) help too.
 
 ## License
 
