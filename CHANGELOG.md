@@ -2,6 +2,11 @@
 
 Changes to the downloadable Harness Studio app. The plugins in [`plugins`](plugins) keep their own versions.
 
+## 0.3.4 — 2026-10-21
+
+### Fixed
+- **Switching models or providers mid-chat:** when a provider refuses a request as too long or too large, the chat is condensed and the request retried, up to three times, with the condensing request kept within 70%, 50%, then 35% of the refused size so it cannot be refused itself; the turn fails only if the last retry is refused too. After a switch, condensing measures the new model's window, does not reuse the previous provider's token counts (the context meter shows an estimate until the new provider reports its own), and the new model writes the summary, including a `/compact` right after the switch. DeepSeek now accepts history from other providers: tool-call ids are rewritten to the characters it allows, unpaired tool calls and results are repaired instead of failing the request, and only readable reasoning is passed on.
+
 ## 0.3.3 — 2026-10-20
 
 ### Changed

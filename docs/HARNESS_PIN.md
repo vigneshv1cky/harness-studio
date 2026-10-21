@@ -3,7 +3,7 @@
 Harness Studio builds on its own fork of DeepSeek Harness. The fork's `studio` branch is upstream Harness plus Harness Studio's changes as ordinary commits, one per change: the brand, the removed DeepSeek account, the desktop changes listed in [desktop/README.md](../desktop/README.md#patches), and the app's icons. Its `master` branch mirrors upstream and is never committed to. How the fork is kept and how an upstream release is merged into it: [FORK_PLAN.md](FORK_PLAN.md).
 
 Fork: https://github.com/vigneshv1cky/harness-studio-core (branch `studio`)
-Pinned commit: 5072abbc69c44badcb637194a83aa5634c0f15bb (upstream 0.2.1-rc.2 merged, plus Harness Studio commits)
+Pinned commit: fd1df6da2772ff836ae2dcc68d49b74c127f460f (upstream 0.2.1-rc.2 merged, plus Harness Studio commits)
 Upstream base: 687f282e8625c6b8d11ff58211a90524be2e4317 (dsh 0.2.1-rc.2, 2026-10-17), the last upstream commit merged into `studio`
 Upstream: https://github.com/deepseek-ai/deepseek-harness
 
@@ -14,7 +14,7 @@ git clone https://github.com/vigneshv1cky/harness-studio-core.git harness
 ```
 
 ```sh
-git -C harness checkout 5072abbc69c44badcb637194a83aa5634c0f15bb
+git -C harness checkout fd1df6da2772ff836ae2dcc68d49b74c127f460f
 ```
 
 ```sh

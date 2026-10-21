@@ -1127,7 +1127,7 @@ window.__ModuleLoader__.load({
     }
     // Harness Studio's release version, shown beside the name at the top of the sidebar in place of Harness's own
     // version and commit. Keep equal to desktop/VERSION (test/version.test.mjs checks it).
-    const STUDIO_VERSION = '0.3.3'
+    const STUDIO_VERSION = '0.3.4'
     // The development copy names its window "Harness Studio Dev" (Harness's development-app script), so its
     // version reads "dev" too and the two copies can be told apart at a glance.
     const isDevCopy = () => /Harness Studio Dev\b/.test(document.title)
