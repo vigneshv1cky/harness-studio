@@ -28,6 +28,35 @@ export function targetOf(name, args) {
   return undefined
 }
 
+/**
+ * The messages the user can rewind to: each message the user sent that was taken in at the first step of its
+ * turn and not rewound away since, oldest first, with whether that turn has ended.
+ * @param {readonly any[]} events - a session's log.
+ * @returns {Array<{ turn: number, seq: number, text: string, closed: boolean }>}
+ */
+export function rewindPoints(events) {
+  const points = []
+  const ended = new Set()
+  let turn
+  let step = 0
+  for (const event of events) {
+    if (event.type === 'system/message' && event.data?.step === 0 && typeof event.surfaceOp === 'object'
+      && (event.data.message?.content?.length ?? 0) === 0) {
+      // An in-place rewind: the turns from data.turn on are gone from the chat.
+      const rewound = event.data.turn
+      for (let i = points.length - 1; i >= 0; i--) if (points[i].turn >= rewound) points.splice(i, 1)
+    } else if (event.type === 'turn/start') { turn = event.data.turn; step = 0 }
+    else if (event.type === 'turn/end') ended.add(event.data.turn)
+    else if (event.type === 'step/start') step++
+    else if (event.type === 'user/message' && event.surfaceOp === 'append' && turn !== undefined && step === 1
+      && event.data?.source?.kind === 'user') {
+      const text = (event.data.content ?? []).filter(part => part?.type === 'text').map(part => part.text).join('')
+      points.push({ turn, seq: event.seq, text })
+    }
+  }
+  return points.map(point => ({ ...point, closed: ended.has(point.turn) }))
+}
+
 function notice(text, summary) {
   const message = { content: [{ type: 'text', text }], source: { kind: SOURCE, form: 'notice', summary }, role: 'user', id: randomUUID() }
   Object.freeze(message.content[0])
@@ -85,6 +114,20 @@ export function apply(ctx) {
 
   const actions = {
     list: ({ sessionId }) => store.list(sessionId),
+    changes({ sessionId, turn }) {
+      if (!Number.isInteger(turn)) throw new Error('turn must be a whole number')
+      return store.changes(sessionId, turn)
+    },
+    async messages({ sessionId }) {
+      const query = ctx.get('sessionQuery')
+      if (query === undefined) throw new Error('Harness did not provide session reading')
+      const observation = await query.observeSession(sessionId, { projectionMode: 'none' })
+      try {
+        return rewindPoints(observation.events)
+      } finally {
+        observation[Symbol.dispose]?.()
+      }
+    },
     async restore({ sessionId, turn }) {
       if (!Number.isInteger(turn)) throw new Error('turn must be a whole number')
       const result = await store.restore(sessionId, turn)

@@ -3,8 +3,8 @@ import { lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'n
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, test } from 'node:test'
-import { apply, targetOf } from '../index.js'
-import { MAX_FILE_BYTES, createStore } from '../store.js'
+import { apply, rewindPoints, targetOf } from '../index.js'
+import { MAX_FILE_BYTES, createStore, lineChanges } from '../store.js'
 
 let base, home, work
 
@@ -122,4 +122,66 @@ test('a helper agent\'s edits count towards the main conversation\'s turn, and r
   assert.equal(await read('shared.md'), 'original')
   assert.equal(await read('outside.txt'), 'must not change')
   assert.equal((await lstat(path.join(work, 'shared.md'))).isSymbolicLink(), false)
+})
+
+test('the messages to rewind to are the ones the user sent at the first step of a turn', () => {
+  const user = (seq, text, kind = 'user') => ({ seq, type: 'user/message', surfaceOp: 'append', data: { content: [{ type: 'text', text }], source: { kind } } })
+  const events = [
+    { seq: 0, type: 'approval/policy', data: {} },
+    { seq: 1, type: 'turn/start', data: { turn: 1 } },
+    { seq: 2, type: 'step/start', data: { step: 1 } },
+    user(3, 'first'),
+    user(4, 'workspace instructions', 'context'),
+    { seq: 5, type: 'step/end', data: {} },
+    { seq: 6, type: 'step/start', data: { step: 2 } },
+    user(7, 'steered mid-turn'),
+    { seq: 8, type: 'turn/end', data: { turn: 1 } },
+    { seq: 9, type: 'turn/start', data: { turn: 2 } },
+    { seq: 10, type: 'step/start', data: { step: 1 } },
+    { seq: 11, type: 'user/message', surfaceOp: 'append', data: { content: [{ type: 'text', text: 'sec' }, { type: 'image' }, { type: 'text', text: 'ond' }], source: { kind: 'user' } } },
+  ]
+  assert.deepEqual(rewindPoints(events), [
+    { turn: 1, seq: 3, text: 'first', closed: true },
+    { turn: 2, seq: 11, text: 'second', closed: false },
+  ])
+})
+
+test('messages rewound away in place are no longer offered', () => {
+  const user = (seq, text) => ({ seq, type: 'user/message', surfaceOp: 'append', data: { content: [{ type: 'text', text }], source: { kind: 'user' } } })
+  const turn = (seq, n, text) => [
+    { seq, type: 'turn/start', data: { turn: n } }, { seq: seq + 1, type: 'step/start', data: {} }, user(seq + 2, text),
+    { seq: seq + 3, type: 'turn/end', data: { turn: n } },
+  ]
+  const events = [
+    ...turn(0, 1, 'one'), ...turn(4, 2, 'two'),
+    { seq: 8, type: 'system/message', surfaceOp: { op: 'replace', startSeq: 6, endSeq: 6 }, data: { turn: 2, step: 0, message: { role: 'system', content: [] } } },
+    ...turn(9, 3, 'three'),
+  ]
+  assert.deepEqual(rewindPoints(events).map(point => point.text), ['one', 'three'])
+})
+
+test('counts added and removed lines like a line diff', () => {
+  assert.deepEqual(lineChanges('a\nb\nc\n', 'a\nb\nc\n'), { added: 0, removed: 0 })
+  assert.deepEqual(lineChanges('a\nb\nc\n', 'a\nX\nc\n'), { added: 1, removed: 1 })
+  assert.deepEqual(lineChanges('a\nb\n', 'a\nb\nc\nd\n'), { added: 2, removed: 0 })
+  assert.deepEqual(lineChanges('', 'one\ntwo\n'), { added: 2, removed: 0 })
+  assert.deepEqual(lineChanges('one\ntwo\nthree\n', ''), { added: 0, removed: 3 })
+  assert.deepEqual(lineChanges('a\nb\nc\nd\ne\n', 'a\nc\nd\nf\ne\n'), { added: 1, removed: 1 })
+  // Past the edit limit it falls back to counting lines found on one side only.
+  const many = n => Array.from({ length: n }, (_, i) => `line ${i}`).join('\n')
+  assert.deepEqual(lineChanges(many(50), many(50).replace(/line/g, 'row'), 10), { added: 50, removed: 50 })
+})
+
+test('reports each file\'s line changes since the copy kept before a turn', async () => {
+  const store = createStore(path.join(home, 'undo'))
+  const kept = path.join(work, 'kept.txt')
+  const made = path.join(work, 'made.txt')
+  await writeFile(kept, 'one\ntwo\nthree\n')
+  assert.equal(await store.capture('s1', 2, kept), 'taken')
+  assert.equal(await store.capture('s1', 2, made), 'taken')
+  await writeFile(kept, 'one\nTWO\nthree\nfour\n')
+  await writeFile(made, 'new\nfile\n')
+  const byName = Object.fromEntries((await store.changes('s1', 1)).map(f => [path.basename(f.path), [f.added, f.removed]]))
+  assert.deepEqual(byName, { 'kept.txt': [2, 1], 'made.txt': [2, 0] })
+  assert.deepEqual(await store.changes('s1', 3), [])
 })

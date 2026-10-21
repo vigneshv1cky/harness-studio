@@ -18,6 +18,44 @@ import path from 'node:path'
 
 /** Larger files are not snapshotted; the turn's card says they cannot be restored. */
 export const MAX_FILE_BYTES = 10 * 1024 * 1024
+
+/**
+ * Lines added and removed between two texts, as a line diff counts them (Myers' shortest edit script: every
+ * changed line is one removal plus one addition). Very different large texts stop searching after `limit` edits
+ * and fall back to counting lines present in one text and not the other, which is close but not exact.
+ * @param {string} before
+ * @param {string} after
+ * @returns {{ added: number, removed: number }}
+ */
+export function lineChanges(before, after, limit = 20000) {
+  const split = text => text === '' ? [] : text.replace(/\r?\n$/, '').split(/\r?\n/)
+  let a = split(before), b = split(after)
+  let start = 0
+  while (start < a.length && start < b.length && a[start] === b[start]) start++
+  let endA = a.length, endB = b.length
+  while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) { endA--; endB-- }
+  a = a.slice(start, endA); b = b.slice(start, endB)
+  const n = a.length, m = b.length
+  if (n === 0 || m === 0) return { added: m, removed: n }
+  const max = Math.min(n + m, limit)
+  const v = new Int32Array(2 * max + 2)
+  const off = max + 1
+  for (let d = 0; d <= max; d++) {
+    for (let k = -d; k <= d; k += 2) {
+      let x = k === -d || (k !== d && v[off + k - 1] < v[off + k + 1]) ? v[off + k + 1] : v[off + k - 1] + 1
+      let y = x - k
+      while (x < n && y < m && a[x] === b[y]) { x++; y++ }
+      v[off + k] = x
+      if (x >= n && y >= m) return { added: (d + m - n) / 2, removed: (d - m + n) / 2 }
+    }
+  }
+  const count = lines => lines.reduce((map, line) => map.set(line, (map.get(line) ?? 0) + 1), new Map())
+  const left = count(a), right = count(b)
+  let added = 0, removed = 0
+  for (const [line, c] of right) added += Math.max(0, c - (left.get(line) ?? 0))
+  for (const [line, c] of left) removed += Math.max(0, c - (right.get(line) ?? 0))
+  return { added, removed }
+}
 const SESSION_ID = /^[A-Za-z0-9._:-]{1,200}$/
 
 /** @param {string} root - `<harness home>/harness-studio/undo` */
@@ -163,5 +201,35 @@ export function createStore(root) {
     })
   }
 
-  return { capture, list, restore }
+  /**
+   * What "Restore code" from `fromTurn` would change in each file: lines added and removed since the copy kept
+   * before that turn, comparing it with the file as it is now. Files with no copy, or that are not text, have no
+   * counts.
+   * @param {string} sessionId
+   * @param {number} fromTurn
+   * @returns {Promise<Array<{ path: string, added?: number, removed?: number }>>}
+   */
+  function changes(sessionId, fromTurn) {
+    dirOf(sessionId)
+    return serial(sessionId, async () => {
+      const manifest = await readManifest(sessionId)
+      const earliest = new Map()
+      for (const turn of Object.keys(manifest.turns).map(Number).filter(t => t >= fromTurn).sort((x, y) => x - y)) {
+        for (const [file, entry] of Object.entries(manifest.turns[String(turn)].files)) if (!earliest.has(file)) earliest.set(file, entry)
+      }
+      const out = []
+      for (const [file, entry] of earliest) {
+        if (entry.skipped) { out.push({ path: file }); continue }
+        const before = entry.existed ? await readFile(path.join(dirOf(sessionId), 'blobs', entry.blob)) : Buffer.alloc(0)
+        const now = await readFile(file).catch(error => { if (error.code === 'ENOENT') return Buffer.alloc(0); throw error })
+        if (before.includes(0) || now.includes(0) || now.length > MAX_FILE_BYTES) { out.push({ path: file }); continue }
+        // Counted from now back to before, as the Restore would change it; shown the way the agent changed it.
+        const { added, removed } = lineChanges(before.toString('utf8'), now.toString('utf8'))
+        out.push({ path: file, added, removed })
+      }
+      return out
+    })
+  }
+
+  return { capture, list, restore, changes }
 }

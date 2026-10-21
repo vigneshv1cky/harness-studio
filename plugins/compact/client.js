@@ -25,6 +25,8 @@ window.__ModuleLoader__.load({
     const RULES = [
       // ---- type ------------------------------------------------------------------------
       ['body', 'font-size: 14px'],
+      // While a sidebar or right-panel edge is being dragged, nothing on the page gets selected by the same drag.
+      ['body:has([data-side][data-dragging]), body:has([data-side][data-dragging]) *', 'user-select: none !important; -webkit-user-select: none !important'],
 
       // ---- conversation header -----------------------------------------------------------
       [c('crumb'), 'padding: 2px 6px !important; border-radius: 6px !important'],
@@ -41,14 +43,22 @@ window.__ModuleLoader__.load({
       // ---- conversation body -------------------------------------------------------------
       [c('scroll'), 'padding-top: 8px !important'],
       [shownItem, 'margin-top: 10px !important'],
-      // Your message's time and copy row sits beside the bubble, to its left and level with its last line, instead of
-      // holding an empty 28px row under it (or floating over whatever comes next, which it did on the latest message,
-      // where Harness always shows it).
-      [c('userRow'), 'flex-direction: row !important; justify-content: flex-end !important; align-items: flex-end !important; gap: 4px !important'],
-      [`${c('userRow')} > ${c('userStack')}`, 'min-width: 0 !important; max-width: calc(100% - 96px) !important'],
-      [`${c('userRow')} > ${c('actions')}`, 'order: -1; flex: none !important; margin: 0 0 3px !important'],
-      // A reply's own action row (copy, branch, usage, time) sits close under the reply.
+      // Your message's time, copy and rewind buttons sit in a small row under the bubble, right-aligned as in Claude,
+      // kept in the flow (20px tall) so they never float over the reply below.
+      // A grid: the bubble across the top, then the Read tick (when there is one) left of the time and buttons.
+      [c('userRow'), 'display: grid !important; grid-template-columns: 1fr auto !important; column-gap: 8px !important; row-gap: 6px !important; justify-items: end !important; align-items: center !important'],
+      [`${c('userRow')} > ${c('userStack')}`, 'grid-column: 1 / -1 !important; grid-row: 1 !important; min-width: 0 !important; max-width: 100% !important'],
+      [`${c('userRow')} > .hs-read-state`, 'grid-column: 1 !important; grid-row: 2 !important; margin: 0 !important'],
+      [`${c('userRow')} > ${c('actions')}`, 'grid-column: 2 !important; grid-row: 2 !important; flex: none !important; margin: 0 !important; height: 22px !important; gap: 6px !important; align-items: center !important; font-size: 11px !important'],
+      [`${c('userRow')} ${c('timeStart')}`, 'padding-right: 2px !important; font-size: 11px !important; line-height: 22px !important'],
+      [`${c('userRow')} > ${c('actions')} button`, 'width: auto !important; min-width: 22px !important; height: 22px !important; padding: 0 4px !important; border-radius: 6px !important'],
+      [`${c('userRow')} > ${c('actions')} svg`, 'width: 14px !important; height: 14px !important'],
+      // A reply's own action row (copy, branch, usage, time) sits close under the reply, at the same small size as
+      // the row under your message.
       [`${shownItem}:has([data-slot="conversation.chat.turnTail"])`, 'margin-top: 2px !important'],
+      [`${shownItem}:has([data-slot="conversation.chat.turnTail"]) ${c('actions')}`, 'gap: 6px !important; font-size: 11px !important; align-items: center !important'],
+      [`${shownItem}:has([data-slot="conversation.chat.turnTail"]) ${c('actions')} button`, 'width: auto !important; min-width: 22px !important; height: 22px !important; padding: 0 4px !important; border-radius: 6px !important'],
+      [`${shownItem}:has([data-slot="conversation.chat.turnTail"]) ${c('actions')} svg`, 'width: 14px !important; height: 14px !important'],
       ['[class*="_markdown_"]', 'line-height: 20px !important'],
       ['[class*="_markdown_"] p', 'margin: 0 0 10px !important'],
       ['[class*="_markdown_"] li', 'margin: 2px 0 !important'],
@@ -326,6 +336,11 @@ window.__ModuleLoader__.load({
 
       // ---- left sidebar: sessions sit indented under their folder, as in Claude Code desktop ------
       [c('sessionRow'), 'padding-left: 20px !important'],
+      // Sessions started by another session sit under it, as in Claude Code desktop: the parent stays at the left
+      // edge and its children's titles start 8px right of the parent's title (20 + 16px status cell + 4px gap),
+      // beside a thin guide line through the middle of the parent's status cell.
+      [`${c('sessionRow')}${c('nested')}`, 'padding-left: 48px !important'],
+      [`${c('sessionChildren')}::before`, 'left: 27.5px !important'],
       // Text and row sizes measured from Claude Code desktop at 100%: 13px sidebar, title and controls text,
       // about 28px rows (Harness: 14px on 32–36px rows). Here the text matches (13px) on slightly tighter 26px rows, so more sessions fit.
       [`${c('root')}:not(${c('collapsed')}) ${c('panelList')}`, 'gap: 0 !important'],
@@ -1112,11 +1127,23 @@ window.__ModuleLoader__.load({
     }
     // Harness Studio's release version, shown beside the name at the top of the sidebar in place of Harness's own
     // version and commit. Keep equal to desktop/VERSION (test/version.test.mjs checks it).
-    const STUDIO_VERSION = '0.3.2'
+    const STUDIO_VERSION = '0.3.3'
+    // The development copy names its window "Harness Studio Dev" (Harness's development-app script), so its
+    // version reads "dev" too and the two copies can be told apart at a glance.
+    const isDevCopy = () => /Harness Studio Dev\b/.test(document.title)
     // Same layout and values as Harness's local-build brand (SidebarRoot.module.css), with Studio's version.
-    const BrandName = () => h('span', { 'data-studio-brand': '', style: { flex: 'none', display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center', gap: '1px', height: '24px', whiteSpace: 'nowrap' } },
+    const BrandName = () => {
+      const [dev, setDev] = React.useState(isDevCopy)
+      React.useEffect(() => {
+        const head = document.head
+        const observer = new MutationObserver(() => setDev(isDevCopy()))
+        observer.observe(head, { childList: true, subtree: true, characterData: true })
+        return () => observer.disconnect()
+      }, [])
+      return h('span', { 'data-studio-brand': '', style: { flex: 'none', display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-start', justifyContent: 'center', gap: '1px', height: '24px', whiteSpace: 'nowrap' } },
       h('span', { style: { fontSize: '12px', lineHeight: '13px', letterSpacing: 0 } }, 'Harness Studio'),
-      h('span', { style: { flex: 'none', display: 'inline-flex', alignItems: 'center', height: '10px', padding: '0 3px', borderRadius: '2px', color: 'var(--dsw-alias-label-primary-inverted)', background: 'var(--dsw-alias-label-primary)', fontFamily: 'var(--ds-font-family-code)', fontSize: '6px', fontWeight: 500, lineHeight: '10px', whiteSpace: 'nowrap' } }, STUDIO_VERSION))
+      h('span', { style: { flex: 'none', display: 'inline-flex', alignItems: 'center', height: '10px', padding: '0 3px', borderRadius: '2px', color: 'var(--dsw-alias-label-primary-inverted)', background: 'var(--dsw-alias-label-primary)', fontFamily: 'var(--ds-font-family-code)', fontSize: '6px', fontWeight: 500, lineHeight: '10px', whiteSpace: 'nowrap' } }, dev ? STUDIO_VERSION + ' dev' : STUDIO_VERSION))
+    }
     let layout
     const openAbout = () => {
       try { layout?.selectPanel('about') } catch (error) { console.warn('[harness-studio] About page unavailable', error) }
@@ -1274,7 +1301,7 @@ window.__ModuleLoader__.load({
           how: ['A single click opens a preview tab (its name in italics) that the next file replaces; editing it or double-clicking keeps it open.',
             'Files open ready to edit (see Editing files yourself). The button at the left of the pane header hides or shows the tree; drag the tree’s edge to resize it.', 'Every file opens here, as in Claude Code: PDFs, images, Excel workbooks, and Word and PowerPoint documents in Harness’s own viewers, and text files in the editor. Markdown, web pages, CSV files and SVG images have a Rendered / Source switch that starts in the view you chose last; CSV files render as a table.', 'A file card, file link or reference in the conversation opens its file here too, with the tree hidden so the file has the room; the tree button brings it back.', 'Videos and audio play here. Under the player, Set start and Set end mark a part, and Add to message puts it in your message as a reference such as [clip.mp4, 1:10.4 to 1:25.0], so the agent can cut, change or transcribe exactly that part.'] },
         { name: 'Terminal', what: 'A terminal for you in the right panel, opened from the session header, next to the conversation.' },
-        { name: 'Git page', what: 'Git, in the sidebar below Instructions, opens over the whole window; Back returns to where you were. Pick All workspaces for an overview, or one workspace for its history.',
+        { name: 'Git page', what: 'Git, in the sidebar below Instructions, opens in the main area beside the sidebar, like the other sidebar pages. Pick All workspaces for an overview, or one workspace for its history.',
           how: ['Overview: each workspace’s branch, how far it is ahead of or behind its upstream (as git last saw it; nothing is fetched), its uncommitted files and its last commit.',
             'History: commits 100 at a time with a branch graph (the current branch or all branches), and search by message, author or changed code.',
             'A commit opens full width with its message, author, date and parents, and its files; each file shows its diff, or Blame: who last changed each line as of that commit.',
@@ -1740,6 +1767,76 @@ window.__ModuleLoader__.load({
       observer.observe(document.body, { childList: true, subtree: true })
       scan()
       return () => observer.disconnect()
+    }
+
+    // A message sent while the agent works says whether the agent has it yet. Waiting: a queued row, already labelled
+    // "Queued" (taken when the turn ends), or a steered bubble (taken at the agent's next step, Unsend still works), which
+    // gets a "Waiting" label in the same place, under the message. Read: a tick once the message is in
+    // the session itself, which Harness shows only after the Host has logged it: a steered message's delivered bubble,
+    // or the chat message a queued row turned into when the queue drained. Matching a drained row to its chat message
+    // goes by text, so it covers messages queued while this window was open.
+    function watchReadTicks() {
+      const queued = new Map() // session → texts seen in its queue and not yet in its chat
+      const known = new Map() // session → user message keys already in its chat
+      const readKeys = new Set() // `${session} ${key}` of chat messages that came from the queue
+      const norm = text => text.replace(/\s+/g, ' ').trim()
+      const TICK = '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style="flex: none"><path d="M2.5 6.3l2.3 2.2 4.7-5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+      // Placed under the message, left of its time and buttons (the compact stylesheet lays the row out as a grid).
+      const label = (host, read, title) => {
+        let tag = host.querySelector(':scope > .hs-read-state')
+        const state = read ? 'read' : 'waiting'
+        if (tag?.dataset.state === state) return
+        tag?.remove()
+        tag = document.createElement('span')
+        tag.className = 'hs-read-state'
+        tag.dataset.state = state
+        tag.title = title
+        tag.setAttribute('aria-label', title)
+        tag.style.cssText = 'display: inline-flex; align-items: center; gap: 3px; flex: none; font-size: 11px; line-height: 16px; white-space: nowrap; color: var(--dsw-alias-label-tertiary);'
+        tag.innerHTML = read ? TICK + '<span>Read</span>' : '<span>Waiting</span>'
+        host.append(tag)
+      }
+      const userRow = item => item.querySelector(c('userRow')) ?? (item.matches(c('userRow')) ? item : null)
+      const scan = () => {
+        for (const view of document.querySelectorAll('[data-conversation-session]')) {
+          const session = view.dataset.conversationSession
+          if (!queued.has(session)) queued.set(session, new Set())
+          const waiting = queued.get(session)
+          for (const row of view.querySelectorAll('[data-queue-dock] li:not([data-submission-echo])')) {
+            const text = norm(row.querySelector(c('preview'))?.innerText ?? '')
+            if (text) waiting.add(text)
+            row.title = 'Waiting: the agent takes this message when the current turn ends. You can still edit, steer or remove it.'
+          }
+          for (const row of view.querySelectorAll('[data-pending-steering]')) {
+            label(row, false, 'Waiting: the agent takes this message at its next step. Unsend still takes it back.')
+          }
+          for (const item of view.querySelectorAll('[data-chat-flow-kind="steering"]')) {
+            const row = userRow(item)
+            if (row && !row.hasAttribute('data-pending-steering')) label(row, true, 'Read by the agent')
+          }
+          const first = !known.has(session)
+          if (first) known.set(session, new Set())
+          const seen = known.get(session)
+          for (const item of view.querySelectorAll('[data-chat-flow-kind="user"][data-chat-node-key]')) {
+            const key = item.dataset.chatNodeKey
+            if (!seen.has(key)) {
+              seen.add(key)
+              const text = norm((item.querySelector(c('bubble')) ?? item).innerText)
+              if (!first && waiting.delete(text)) readKeys.add(`${session} ${key}`)
+            }
+            const row = readKeys.has(`${session} ${key}`) && userRow(item)
+            if (row) label(row, true, 'Read by the agent')
+          }
+        }
+      }
+      const observer = new MutationObserver(scan)
+      observer.observe(document.body, { childList: true, subtree: true })
+      scan()
+      return () => {
+        observer.disconnect()
+        document.querySelectorAll('.hs-read-state').forEach(node => node.remove())
+        document.querySelectorAll('[data-queue-dock] li[title]').forEach(row => row.removeAttribute('title'))
+      }
     }
 
     function watchComputerUse() {
@@ -2286,21 +2383,22 @@ window.__ModuleLoader__.load({
       }
       return scored.sort((a, b) => a.score - b.score || a.title.localeCompare(b.title)).slice(0, 40)
     }
+    // Closes any open menu, opens Settings and selects its Models page once the page list has rendered.
+    function openModelsSettings() {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      document.querySelector('[data-studio-settings]')?.click()
+      const started = Date.now()
+      const tick = () => {
+        const cell = [...document.querySelectorAll('[data-shortcut-modal="settings"] nav [class*="_navCell"]')].find(c => c.innerText.trim() === 'Models')
+        if (cell) cell.click()
+        else if (Date.now() - started < 3000) setTimeout(tick, 80)
+      }
+      tick()
+    }
     // An empty model list (Harness's "No models available.") says where models come from and offers a button that
     // opens Settings → Models. The hint goes inside the list's own status line, so it leaves with it and with a search.
     function watchEmptyModels() {
       const EMPTY = 'No models available.'
-      const openModels = () => {
-        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
-        document.querySelector('[data-studio-settings]')?.click()
-        const started = Date.now()
-        const tick = () => {
-          const cell = [...document.querySelectorAll('[data-shortcut-modal="settings"] nav [class*="_navCell"]')].find(c => c.innerText.trim() === 'Models')
-          if (cell) cell.click()
-          else if (Date.now() - started < 3000) setTimeout(tick, 80)
-        }
-        tick()
-      }
       const scan = () => {
         for (const status of document.querySelectorAll('[role="status"][class*="_empty"]')) {
           const own = [...status.childNodes].filter(node => !(node instanceof Element && node.classList.contains('hs-models-hint'))).map(node => node.textContent).join('').trim()
@@ -2316,7 +2414,7 @@ window.__ModuleLoader__.load({
           button.textContent = 'Open Settings → Models'
           button.dataset.studioAddModel = ''
           button.style.cssText = 'display: block; margin-top: 6px; padding: 0; border: none; background: none; font: inherit; cursor: pointer; color: var(--dsw-alias-label-link, var(--dsw-alias-accent-primary, #3b82f6));'
-          button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); openModels() })
+          button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); openModelsSettings() })
           box.append(button)
           status.append(box)
         }
@@ -2325,6 +2423,137 @@ window.__ModuleLoader__.load({
       observer.observe(document.body, { childList: true, subtree: true, characterData: true })
       scan()
       return () => { observer.disconnect(); document.querySelectorAll('.hs-models-hint').forEach(node => node.remove()) }
+    }
+    // Harness's exact accessible name for the model button with nothing chosen (English and Chinese); a chosen model
+    // reads "Select model, current …", and "Loading models…" is never held back.
+    const MODEL_UNSET = new Set(['Select model', '请选择模型'])
+    const SEND_LABELS = new Set(['Send message', '发送消息'])
+    function noModelTrigger(card) {
+      return [...card.querySelectorAll('button[aria-label]')].find(button => MODEL_UNSET.has(button.getAttribute('aria-label'))) ?? null
+    }
+    function composerSendButton(card) {
+      return [...card.querySelectorAll('button[aria-label]')].find(button => SEND_LABELS.has(button.getAttribute('aria-label'))) ?? null
+    }
+    function textLink(text, onClick) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.textContent = text
+      button.style.cssText = 'padding: 0; border: none; background: none; font: inherit; cursor: pointer; color: var(--dsw-alias-label-link, var(--dsw-alias-accent-primary, #3b82f6));'
+      button.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); onClick() })
+      return button
+    }
+    function showNoModelNotice(card, trigger) {
+      if (card.querySelector(':scope > .hs-no-model')) return
+      const box = document.createElement('div')
+      box.className = 'hs-no-model'
+      box.setAttribute('role', 'alert')
+      box.style.cssText = 'padding: 10px 14px 0; font-size: 12.5px; line-height: 1.45; color: var(--dsw-alias-label-secondary);'
+      box.append('No model is chosen, so this message was not sent. Add a model provider and its API key in Settings → Models, then choose a model here.')
+      const actions = document.createElement('div')
+      actions.style.cssText = 'display: flex; gap: 14px; margin-top: 4px;'
+      const settingsButton = textLink('Open Settings → Models', openModelsSettings)
+      settingsButton.dataset.studioAddModel = ''
+      actions.append(settingsButton, textLink('Choose a model', () => trigger.isConnected ? trigger.click() : noModelTrigger(card)?.click()))
+      box.append(actions)
+      card.insertBefore(box, card.querySelector(':scope > [data-input-scroll]'))
+    }
+    // With no usable model the composer's model button reads "Select model", and Harness would still send the message to
+    // its built-in default route, which fails with a credential error the user cannot act on. Enter and the Send button
+    // are held back instead, and a notice in the message box says to add a provider in Settings → Models or pick a model.
+    // The notice leaves once the model button names a model.
+    function watchSendWithoutModel() {
+      const hold = (event, card) => {
+        const trigger = noModelTrigger(card)
+        if (!trigger) return
+        event.preventDefault()
+        event.stopImmediatePropagation()
+        showNoModelNotice(card, trigger)
+      }
+      const onKeyDown = (event) => {
+        if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return
+        const input = event.target instanceof Element ? event.target.closest(COMPOSER_INPUT) : null
+        if (!input || !input.innerText.trim() || document.querySelector('[data-trigger-menu]')) return
+        const card = input.closest('[data-composer-card]')
+        if (card) hold(event, card)
+      }
+      const onClick = (event) => {
+        const button = event.target instanceof Element ? event.target.closest('[data-composer-card] button[aria-label]') : null
+        if (!button || !SEND_LABELS.has(button.getAttribute('aria-label'))) return
+        hold(event, button.closest('[data-composer-card]'))
+      }
+      const observer = new MutationObserver(() => {
+        for (const notice of document.querySelectorAll('.hs-no-model')) if (!noModelTrigger(notice.parentElement)) notice.remove()
+      })
+      document.addEventListener('keydown', onKeyDown, true)
+      document.addEventListener('click', onClick, true)
+      observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-label'] })
+      return () => {
+        document.removeEventListener('keydown', onKeyDown, true)
+        document.removeEventListener('click', onClick, true)
+        observer.disconnect()
+        document.querySelectorAll('.hs-no-model').forEach(node => node.remove())
+      }
+    }
+    // Harness offers no way to run a failed turn again, so after fixing the cause (such as adding a key in Settings →
+    // Models) the user had to retype. The latest turn, when it ends in "This turn failed", gets a Retry button that sends
+    // that turn's own message text again in the same chat with the model chosen now. Only the message's text goes;
+    // attachments do not. A draft in the message box is put back once the retry has gone.
+    function watchFailedTurnRetry() {
+      const FAILED = new Set(['This turn failed', '本轮运行失败'])
+      const wait = ms => new Promise(resolve => setTimeout(resolve, ms))
+      const retry = async (item) => {
+        const view = item.closest('[data-conversation-session]')
+        const input = view?.querySelector(COMPOSER_INPUT)
+        const card = input?.closest('[data-composer-card]')
+        const asked = view?.querySelector(`:is([data-chat-flow-kind="user"], [data-chat-flow-kind="steering"])[data-chat-turn="${item.dataset.chatTurn}"]`)
+        const text = asked && (asked.querySelector(c('bubble')) ?? asked).innerText.replace(/\u00a0/g, ' ').trim()
+        if (!text || !card) return
+        const trigger = noModelTrigger(card)
+        if (trigger) { showNoModelNotice(card, trigger); return }
+        const draft = input.innerText.replace(/\n$/, '')
+        setComposerText(input, text)
+        // The editor commits the text and Harness enables Send a frame or two later.
+        let sent = false
+        for (const started = Date.now(); Date.now() - started < 2000; await wait(50)) {
+          const send = composerSendButton(card)
+          if (send && !send.disabled) { send.click(); sent = true; break }
+        }
+        if (!sent || !draft.trim()) return
+        for (const started = Date.now(); Date.now() - started < 3000; await wait(50)) {
+          if (!input.isConnected) return
+          if (!input.innerText.trim()) { setComposerText(input, draft); return }
+        }
+      }
+      const scan = () => {
+        for (const view of document.querySelectorAll('[data-conversation-session]')) {
+          if (!view.querySelector('[data-chat-flow-kind="turn-error"]')) continue
+          const turns = [...view.querySelectorAll('[data-chat-flow-kind][data-chat-turn]')].map(node => Number(node.dataset.chatTurn)).filter(Number.isFinite)
+          const latest = turns.length ? Math.max(...turns) : NaN
+          for (const item of view.querySelectorAll('[data-chat-flow-kind="turn-error"]')) {
+            const row = item.querySelector(c('turnErrorRow'))
+            const button = item.querySelector('.hs-turn-retry')
+            const wanted = row && Number(item.dataset.chatTurn) === latest && FAILED.has(row.querySelector(c('turnErrorTitle'))?.textContent.trim())
+            if (!wanted) { button?.remove(); continue }
+            if (button) continue
+            // A small outlined button with a circular arrow, as in Claude Code, on its own line under the error text
+            // (the row is a three-column grid: dot, text, code).
+            const link = document.createElement('button')
+            link.type = 'button'
+            link.className = 'hs-turn-retry'
+            link.title = 'Send this turn\'s message again with the model chosen now'
+            link.innerHTML = '<svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M13.5 2.5v3h-3"/></svg><span>Retry</span>'
+            link.style.cssText = 'grid-column: 2 / -1; justify-self: start; display: inline-flex; align-items: center; gap: 5px; height: 24px; margin-top: 10px; padding: 0 9px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: 6px; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; cursor: pointer;'
+            link.addEventListener('mouseenter', () => { link.style.background = 'var(--dsw-alias-interactive-bg-hover)'; link.style.color = 'var(--dsw-alias-label-primary)' })
+            link.addEventListener('mouseleave', () => { link.style.background = 'transparent'; link.style.color = 'var(--dsw-alias-label-secondary)' })
+            link.addEventListener('click', () => retry(item))
+            row.append(link)
+          }
+        }
+      }
+      const observer = new MutationObserver(scan)
+      observer.observe(document.body, { childList: true, subtree: true, characterData: true })
+      scan()
+      return () => { observer.disconnect(); document.querySelectorAll('.hs-turn-retry').forEach(node => node.remove()) }
     }
 
     function watchSettingsSearch() {
@@ -2488,9 +2717,12 @@ window.__ModuleLoader__.load({
         }, LongTurnsRow)), 'Long turns row in Settings → Permissions, after Cloud logins')
         ctx.effect(watchComputerUse, 'computer use Stop bar')
         ctx.effect(watchQueue, 'queued messages listed one row each')
+        ctx.effect(watchReadTicks, 'Waiting and Read on messages sent while the agent works')
         ctx.effect(watchPromptHistory, 'Up and Down recall sent prompts in the message box')
         ctx.effect(watchSettingsSearch, 'Search field at the top of the Settings page list')
         ctx.effect(watchEmptyModels, 'Empty model list points to Settings → Models')
+        ctx.effect(watchSendWithoutModel, 'Send held back while no model is chosen')
+        ctx.effect(watchFailedTurnRetry, 'Retry on the latest failed turn')
         ctx.effect(watchApprovalCards, 'Always allow for this website on new-site approvals')
         ctx.effect(() => ctx.slots.inject('settings.permissions.item', () => ctx.slots.register({
           name: 'settings.permissions.item', id: 'always-allowed-sites', order: -18.5, inject: () => ({}),

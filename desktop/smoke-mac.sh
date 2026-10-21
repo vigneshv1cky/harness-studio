@@ -24,9 +24,11 @@ app="$work/Harness Studio.app/Contents/MacOS/Harness Studio"
 scheme=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$work/Harness Studio.app/Contents/Info.plist")
 [ "$scheme" = harness-studio ] || fail "the app declares the link scheme \"$scheme\", not harness-studio"
 
-# Start the app on a throwaway home; prints its main process ID.
+# Start the app on a throwaway home; prints its main process ID. --use-mock-keychain keeps the test copy out of the
+# user's login keychain: the throwaway home has no keychain, so without it macOS asks for keychain access and offers
+# to reset the keychain each run.
 start() {
-  HOME="$1" CFFIXED_USER_HOME="$1" "$app" --remote-debugging-port="$2" --inspect="$(($2 + 100))" > "$3" 2>&1 &
+  HOME="$1" CFFIXED_USER_HOME="$1" "$app" --use-mock-keychain --remote-debugging-port="$2" --inspect="$(($2 + 100))" > "$3" 2>&1 &
   echo $!
 }
 stop() {

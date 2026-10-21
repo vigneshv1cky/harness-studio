@@ -1251,6 +1251,9 @@ window.__ModuleLoader__.load({
       .hs-plus { color: var(--dsw-alias-state-success-primary); font-variant-numeric: tabular-nums; flex: none; }
       .hs-minus { color: var(--dsw-alias-state-error-primary); font-variant-numeric: tabular-nums; flex: none; }
       .hs-diff { font: 12.5px/20px var(--dsw-font-markdown-code-font-family, ui-monospace, Menlo, monospace); padding: 2px 0 6px; }
+      /* A long diff (thousands of lines) re-laid out in full on every step of a sidebar or panel drag lagged behind
+         the pointer; blocks of lines off screen now skip layout and paint until they scroll into view. */
+      .hs-chunk { content-visibility: auto; }
       .hs-row { display: grid; grid-template-columns: 46px 16px minmax(0, 1fr); }
       .hs-row .hs-ln { text-align: right; padding-right: 8px; color: var(--dsw-alias-label-tertiary); user-select: none; font-variant-numeric: tabular-nums; }
       .hs-row .hs-mark { user-select: none; color: var(--dsw-alias-label-tertiary); }
@@ -1308,12 +1311,16 @@ window.__ModuleLoader__.load({
       const lang = languageOf(path)
       const rows = diffRows(text)
       if (rows.length === 0) return h('div', { className: 'hs-note' }, 'No text changes (binary file or mode change)')
-      return h('div', { className: 'hs-diff' }, rows.map((row, i) => row.kind === 'gap'
+      const line = (row, i) => row.kind === 'gap'
         ? h('div', { key: i, className: 'hs-gap' }, h(Icon, { d: 'M4 8h.01M8 8h.01M12 8h.01' }), row.context || 'unchanged lines')
         : h('div', { key: i, className: 'hs-row' + (row.kind === 'add' ? ' hs-add' : row.kind === 'del' ? ' hs-del' : '') },
           h('span', { className: 'hs-ln' }, row.no),
           h('span', { className: 'hs-mark' }, row.kind === 'add' ? '+' : row.kind === 'del' ? '−' : ''),
-          h('span', { className: 'hs-code' }, highlight(row.text, lang).map(([cls, t], j) => cls ? h('span', { key: j, className: cls }, t) : t)))))
+          h('span', { className: 'hs-code' }, highlight(row.text, lang).map(([cls, t], j) => cls ? h('span', { key: j, className: cls }, t) : t)))
+      // Lines in blocks of 100, so a block off screen is skipped as one box (see .hs-chunk).
+      const blocks = []
+      for (let at = 0; at < rows.length; at += 100) blocks.push(rows.slice(at, at + 100))
+      return h('div', { className: 'hs-diff' }, blocks.map((block, b) => h('div', { key: b, className: 'hs-chunk', style: { containIntrinsicBlockSize: `auto ${block.length * 20}px` } }, block.map((row, i) => line(row, b * 100 + i)))))
     }
 
     function ChangedFile({ cwd, file, open, onToggle }) {
@@ -1350,17 +1357,16 @@ window.__ModuleLoader__.load({
     // with a branch graph, search (message, author or changed code), each commit's files and diffs, and
     // blame for a file at that commit. Everything comes from the local helper's read-only git requests.
     const GIT_CSS = `
-      .hg-page { position: fixed; inset: 0; z-index: 40; box-sizing: border-box; display: flex; flex-direction: column; color: var(--dsw-alias-label-primary); font-size: 13px; background: var(--dsw-alias-bg-base); }
-      /* The top bar sits in the window's title-bar band, beside the macOS window buttons. */
+      .hg-page { position: relative; width: 100%; height: 100%; min-height: 0; box-sizing: border-box; display: flex; flex-direction: column; color: var(--dsw-alias-label-primary); font-size: 13px; background: var(--dsw-alias-bg-base); }
+      /* The top bar sits in the window's title-bar band; the sidebar beside it holds the macOS window buttons. */
       .hg-top { flex: none; display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 20px; border-bottom: 0.5px solid var(--dsw-alias-border-l2); }
-      [data-platform="darwin"] .hg-top { height: var(--dsh-frame-top-clearance, 48px); padding-left: 84px; -webkit-app-region: drag; }
+      [data-platform="darwin"] .hg-top { height: var(--dsh-frame-top-clearance, 48px); -webkit-app-region: drag; }
       .hg-top > * { -webkit-app-region: no-drag; }
-      /* The top bar as a breadcrumb: back, Git, then the workspace as a borderless picker. */
+      /* The top bar as a breadcrumb: Git, then the workspace as a borderless picker. */
       .hg-top { gap: 4px; }
-      /* The top bar's back arrow (icon only) and the commit view's labelled "Commits" back link. */
-      .hg-back-icon { display: inline-grid; place-items: center; width: 28px; height: 28px; margin-right: 4px; border: none; border-radius: 7px; background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer; padding: 0; }
+      /* The commit view's labelled "Commits" back link. */
       .hg-back { display: inline-flex; align-items: center; gap: 2px; height: 28px; border: none; background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 13px; cursor: pointer; padding: 0 8px 0 4px; margin-left: -4px; border-radius: 7px; }
-      :is(.hg-back, .hg-back-icon):hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+      .hg-back:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
       .hg-title { display: inline-flex; align-items: center; gap: 7px; margin: 0; padding: 0 4px; font-size: 13px; font-weight: 600; line-height: 28px; color: var(--dsw-alias-label-primary); }
       .hg-title svg { color: var(--dsw-alias-label-secondary); }
       .hg-crumb-sep { display: inline-grid; place-items: center; color: var(--dsw-alias-label-tertiary); }
@@ -1758,27 +1764,6 @@ window.__ModuleLoader__.load({
 
     const GIT_WORKSPACE_KEY = 'harness-studio.git-workspace'
 
-    /**
-     * The page shown before Git opened (another sidebar page, or null for the conversation), so Back returns
-     * to it. Followed from Harness's layout service while it is composed.
-     */
-    const gitReturn = { layout: undefined, previous: null, current: null }
-    function followPanels(layout) {
-      gitReturn.layout = layout
-      gitReturn.current = layout.panelInfo.getSnapshot().activePanelId
-      const unsubscribe = layout.panelInfo.subscribe(() => {
-        const next = layout.panelInfo.getSnapshot().activePanelId
-        if (next === gitReturn.current) return
-        if (next === 'git') gitReturn.previous = gitReturn.current
-        gitReturn.current = next
-      })
-      return () => { unsubscribe(); if (gitReturn.layout === layout) gitReturn.layout = undefined }
-    }
-    function leaveGit() {
-      const back = gitReturn.previous === 'git' ? null : gitReturn.previous
-      try { gitReturn.layout?.selectPanel(back) } catch { gitReturn.layout?.selectPanel(null) }
-    }
-
     /** A workspace's name, with the folder it sits in when another workspace has the same name. */
     const workspaceLabel = (w, all) => (all.filter(o => o.title === w.title).length > 1 ? `${w.title} (${w.path.split('/').slice(-2, -1)[0] || w.path})` : w.title)
 
@@ -1794,10 +1779,9 @@ window.__ModuleLoader__.load({
         setChoice(value)
       }
       const current = choice ? workspaces.find(w => w.path === choice) : undefined
-      // Always over the whole window, like a full-screen right panel; Back returns to what was open before.
+      // In the main area beside the sidebar, like Plugins, Connectors and Instructions.
       return h('div', { className: 'hg-page', 'data-testid': 'git-page' },
         h('div', { className: 'hg-top' },
-          h('button', { type: 'button', className: 'hg-back-icon', onClick: leaveGit, 'data-testid': 'git-back', title: 'Back to where you were', 'aria-label': 'Back' }, h(Icon, { d: 'M10 4L6 8l4 4' })),
           h('h1', { className: 'hg-title' }, h(GitIcon, { size: 15 }), 'Git'),
           h('span', { className: 'hg-crumb-sep', 'aria-hidden': true }, h(Icon, { d: 'M6.5 4l4 4-4 4' })),
           h('label', { className: 'hg-ws', title: current ? current.path : 'All workspaces' },
@@ -5136,7 +5120,6 @@ window.__ModuleLoader__.load({
         ctx.effect(hideSplitButton, 'no split button')
         ctx.effect(clickOnlySwitcher, 'subagents switcher opens on click')
         ctx.effect(() => ctx.slots.inject('main', () => ctx.slots.register({ name: 'main', key: 'git', inject: () => ({}) }, GitPage)), 'Git page')
-        ctx.inject(['layout'], (scope) => { scope.effect(() => followPanels(scope.layout), 'Git page: where Back returns') })
         ctx.effect(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
           name: 'sidebar.panellist', id: 'git', order: 12, label: () => 'Git',
         }, GitIcon)), 'Git entry in the left sidebar, below Instructions')

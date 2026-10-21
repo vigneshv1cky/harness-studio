@@ -30,13 +30,33 @@ const FILE_VERSION = 1
  */
 
 /**
+ * @typedef {object} ProposalRecord - a Session the agent proposed on its own initiative; the user may start it later.
+ * @property {string} id
+ * @property {string} parentId - the Session that proposed it.
+ * @property {string} title
+ * @property {string} prompt
+ * @property {string} [background]
+ * @property {string} folder - resolved folder it would start in.
+ * @property {boolean} outside - the folder is outside the proposing Session's folder; the card names it.
+ * @property {boolean} worktree
+ * @property {string} [slug]
+ * @property {string} createdAt - ISO time.
+ * @property {'pending' | 'starting' | 'started' | 'dismissed'} state
+ * @property {string} [sessionId] - the started Session.
+ * @property {number} [turn] - the proposing Session's turn it was made in, set when that turn ends.
+ */
+
+/** Settled proposals are kept this long after they were made, so a repeat of them is still recognised. */
+const PROPOSAL_KEEP_MS = 14 * 24 * 60 * 60 * 1000
+
+/**
  * @param {{ home: string }} options
  */
 export function createStore({ home }) {
   const dir = path.join(home, 'harness-studio')
   const file = path.join(dir, 'sessions.json')
-  /** @type {{ children: Record<string, ChildRecord>, wakeStreak: Record<string, number> }} */
-  let state = { children: {}, wakeStreak: {} }
+  /** @type {{ children: Record<string, ChildRecord>, wakeStreak: Record<string, number>, proposals: Record<string, ProposalRecord> }} */
+  let state = { children: {}, wakeStreak: {}, proposals: {} }
   let writing = Promise.resolve()
 
   async function load() {
@@ -50,7 +70,13 @@ export function createStore({ home }) {
     try {
       const parsed = JSON.parse(text)
       if (parsed?.version !== FILE_VERSION || typeof parsed.children !== 'object') throw new Error('unknown format')
-      state = { children: parsed.children ?? {}, wakeStreak: parsed.wakeStreak ?? {} }
+      state = { children: parsed.children ?? {}, wakeStreak: parsed.wakeStreak ?? {}, proposals: parsed.proposals ?? {} }
+      const now = Date.now()
+      for (const [id, proposal] of Object.entries(state.proposals)) {
+        if (now - Date.parse(proposal.createdAt) > PROPOSAL_KEEP_MS) delete state.proposals[id]
+        // A start the Host was killed in the middle of did not finish; it can be tried again.
+        else if (proposal.state === 'starting') proposal.state = 'pending'
+      }
     } catch (error) {
       const aside = `${file}.corrupt-${Date.now()}`
       await rename(file, aside)
@@ -99,6 +125,22 @@ export function createStore({ home }) {
       const current = state.children[id]
       if (!current) return Promise.resolve()
       state.children[id] = { ...current, ...patch }
+      return save()
+    },
+    /** @returns {ProposalRecord[]} every kept proposal. */
+    proposals: () => Object.values(state.proposals),
+    /** @param {string} id @returns {ProposalRecord | undefined} */
+    proposal: id => state.proposals[id],
+    /** @param {ProposalRecord} record */
+    addProposal(record) {
+      state.proposals[record.id] = record
+      return save()
+    },
+    /** @param {string} id @param {Partial<ProposalRecord>} patch */
+    updateProposal(id, patch) {
+      const current = state.proposals[id]
+      if (!current) return Promise.resolve()
+      state.proposals[id] = { ...current, ...patch }
       return save()
     },
     /** @param {string} parentId @returns {number} */

@@ -5,8 +5,12 @@
  *   - `start_session` creates an ordinary Session through the same Session-controller call as the
  *     sidebar's New session button, optionally in its own git worktree (worktree.js), titles it, gives it
  *     the parent's permission preset and sends the brief as its first message (which starts its first turn
- *     and makes the row appear). With `initiation: 'proposal'` it first asks the user on Harness's own
+ *     and makes the row appear). With `initiation: 'offer'` it first asks the user on Harness's own
  *     question card ("New session" / "Do it here") and creates nothing unless the user picks New session.
+ *     With `initiation: 'own_initiative'` it creates nothing and does not wait: the proposal is saved, the
+ *     client half draws the tool's row as a card with Start and Dismiss, and Start (the `startProposal`
+ *     action) creates the Session from the saved brief later. At most three per turn, none twice, each
+ *     startable for a week.
  *     A folder outside the parent's working folder always gets a card naming it first, whatever the
  *     initiation; the home folder, the filesystem root and the Harness home are refused outright.
  *   - When a started Session ends a turn, its final message (cut to `reportChars`) is sent to the parent:
@@ -33,7 +37,8 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   BRIEF_SOURCE, DONT_START, DO_IT_HERE, FOLDER_QUESTION_ID, REPORT_SOURCE, START, START_QUESTION_ID, START_THERE, briefText, folderScope, cardDetail, readCardChoice, slugify, startOutcome, cleanMessageArgs, cleanStartArgs, contentText, deliveryMode,
-  describeEnding, reportText, resolveConfig, userMessage,
+  describeEnding, parentLinksOf, reportText, resolveConfig, userMessage,
+  MAX_PROPOSALS_PER_TURN, alreadyProposed, newProposalId, proposalState, shortFolder,
 } from './logic.js'
 import { createRunner } from './process.js'
 import { createStore } from './store.js'
@@ -54,9 +59,13 @@ const exists = p => access(p).then(() => true, () => false)
 const realpathOr = p => realpath(p).catch(() => path.resolve(p))
 
 const GUIDANCE = [
-  'Separate sessions: start_session hands a piece of work to a new top-level session in the user\'s sidebar, which the user can open and talk to.',
-  'Keep quick things (a question, a read, one edit, a few tool calls) in this session. Use a separate session for an independent piece that can run while you or the user continue, and give it a complete brief: the task, the files or area, and what done looks like.',
-  'Use initiation "user_asked" only when the user asked in words for separate or parallel work; when splitting the work off is your own idea, use "proposal", which asks the user first.',
+  'Separate sessions: start_session hands a piece of work to a new session, listed under this one in the user\'s sidebar; the user can open it and talk to it.',
+  'Keep quick things in this session: a question, a read, one edit, a few tool calls.',
+  'Choose the initiation by who wants the session.',
+  '"user_asked": the user asked in words for separate, parallel or background work, or told you to start it now; it starts at once.',
+  '"offer": the user\'s latest message names a task that is new work unrelated to this conversation, or asks you to split something off or make a session for it. Call start_session with "offer" first, before any of that work; the user picks New session or Do it here on a card and you wait for the answer. On Do it here, do the task in this session.',
+  '"own_initiative": your own idea that the user has not asked for, such as a follow-up your work turned up, a fix you noticed in passing, or work you would call "a separate PR" or "for later". It does not stop your turn: it leaves a card under your reply that the user can start whenever they like, and nothing runs until they do. Before your final message, if it would list follow-up work, problems you noticed but did not fix, or next steps for the user to pick from, call start_session with "own_initiative" for each real one instead (at most three per turn, the most useful first) and say in one line that you left them as suggested sessions; do not end with "say which one you want next" or "you could also...". Never propose the same one twice, or what you are about to do yourself anyway.',
+  'Independent pieces that can run in parallel go to their own sessions, one per piece, each with a complete brief: the task, the files or area, and what done looks like. The new session has not seen this conversation.',
   'Two sessions that write files never share a checkout: pass worktree: true when the new session will edit files this session or another one may also edit.',
   'A started session\'s report arrives here as a message when it ends a turn; never poll it. A report is that session\'s claim: check the result or diff before telling the user the work is done.',
 ].join(' ')
@@ -202,6 +211,9 @@ export function apply(ctx, rawConfig) {
     if (scope === 'refused') {
       throw new Error(`Sessions are never started in ${folder} (the home folder, the filesystem root or the Harness home): it reaches everything below it. Choose the project folder itself.`)
     }
+    // The agent's own idea: saved as a card the user may start later; nothing is created and the turn goes on.
+    // Starting it from the card is the user's approval, also of a folder outside this one (the card names it).
+    if (args.initiation === 'own_initiative') return propose({ parent, args, folder, outside: scope === 'outside' })
     let plan = args.worktree ? await worktrees.plan({ folder, slug: args.slug, prefix: config.branchPrefix, signal: exec.signal }) : undefined
     const brief = args.prompt.length > CARD_PROMPT_CHARS ? args.prompt.slice(0, CARD_PROMPT_CHARS) + '…' : args.prompt
     let approved = false
@@ -228,7 +240,7 @@ export function apply(ctx, rawConfig) {
       approved = true
       // The card may have been open for a while, so take whatever names are free now.
       if (plan) plan = await worktrees.plan({ folder, slug: args.slug, prefix: config.branchPrefix, signal: exec.signal })
-    } else if (args.initiation === 'proposal') {
+    } else if (args.initiation === 'offer') {
       // The card (client.js) draws this question itself; Harness's generic question form is the fallback.
       const reply = await askUser(parent, exec.signal, {
         id: START_QUESTION_ID,
@@ -256,18 +268,97 @@ export function apply(ctx, rawConfig) {
         : undefined
     }
 
-    if (plan) await worktrees.add(plan, exec.signal)
-    let child
+    const child = await launch({ parent, args, folder, plan, depth, signal: exec.signal })
+    const where = plan ? `${plan.workDir} (worktree of ${plan.repoRoot}, branch ${plan.branch})` : folder
+    return `Started session "${args.title}" (${child.id}) in ${where}.${approved ? ' The user approved it on the card.' : ''} Its report arrives here as a message when it ends a turn; do not poll it. Use message_session to send it follow-ups.`
+  }
+
+  /** Make the worktree, if any, and create the Session; a fresh worktree is discarded again when the Session cannot be made. */
+  async function launch({ parent, args, folder, plan, depth, signal }) {
+    if (plan) await worktrees.add(plan, signal)
     try {
-      child = await ctx.agents.withoutInitiator(() => createChild({ parent, args, folder, plan, depth }))
+      return await ctx.agents.withoutInitiator(() => createChild({ parent, args, folder, plan, depth }))
     } catch (error) {
       if (plan && !(await worktrees.discardFresh(plan))) {
         throw new Error(`${error.message} (the new worktree ${plan.path} on branch ${plan.branch} was kept because it is no longer clean)`, { cause: error })
       }
       throw error
     }
-    const where = plan ? `${plan.workDir} (worktree of ${plan.repoRoot}, branch ${plan.branch})` : folder
-    return `Started session "${args.title}" (${child.id}) in ${where}.${approved ? ' The user approved it on the card.' : ''} Its report arrives here as a message when it ends a turn; do not poll it. Use message_session to send it follow-ups.`
+  }
+
+  // ---- own-initiative proposals -------------------------------------------------------------------
+  /** Per proposing Session: proposals made in its current turn (reset when the turn ends). */
+  const proposedThisTurn = new Map()
+
+  async function propose({ parent, args, folder, outside }) {
+    const count = proposedThisTurn.get(parent.id) ?? 0
+    if (count >= MAX_PROPOSALS_PER_TURN) {
+      throw new Error(`You already proposed ${MAX_PROPOSALS_PER_TURN} sessions in this turn; mention anything else in your reply instead.`)
+    }
+    const now = Date.now()
+    if (alreadyProposed(store.proposals(), { parentId: parent.id, title: args.title, prompt: args.prompt }, now)) {
+      throw new Error(`"${args.title}" (or the same brief) was already proposed from this session; do not propose it again.`)
+    }
+    const id = newProposalId()
+    proposedThisTurn.set(parent.id, count + 1)
+    await store.addProposal({
+      id, parentId: parent.id, title: args.title, prompt: args.prompt, ...(args.background ? { background: args.background } : {}),
+      folder, outside, worktree: args.worktree, ...(args.slug ? { slug: args.slug } : {}),
+      createdAt: new Date(now).toISOString(), state: 'pending',
+    })
+    return `Proposed session "${args.title}" (${id}) as a card in this chat. Nothing runs unless the user starts it there; then its report arrives here. Do not do this work in this session unless the user asks for it; carry on with your task.`
+  }
+
+  /** What the proposal card shows. */
+  function proposalView(proposal) {
+    const where = proposal.outside ? proposal.folder : shortFolder(proposal.folder, os.homedir())
+    return {
+      id: proposal.id, title: proposal.title, prompt: proposal.prompt, state: proposalState(proposal, Date.now()),
+      context: proposal.worktree ? `${where} · new worktree` : where, outside: proposal.outside,
+      ...(proposal.sessionId ? { sessionId: proposal.sessionId } : {}),
+    }
+  }
+
+  const proposalOf = (id) => {
+    const proposal = typeof id === 'string' ? store.proposal(id) : undefined
+    if (!proposal) throw new Error('This proposal is no longer kept.')
+    return proposal
+  }
+
+  /** Start a proposal from its card: the user's click, so it is the approval for its folder too. */
+  async function startProposal(id) {
+    const proposal = proposalOf(id)
+    const state = proposalState(proposal, Date.now())
+    if (state !== 'pending') throw new Error(state === 'expired' ? 'This proposal expired; ask the agent again if you still want it.' : `This proposal was already ${state === 'starting' ? 'being started' : state}.`)
+    // Marked before the first wait, so a second click is refused.
+    const saving = store.updateProposal(id, { state: 'starting' })
+    try {
+      await saving
+      if (archived(proposal.parentId)) throw new Error('The session that proposed it was archived, so it is not started.')
+      const parent = await resolveRoot(proposal.parentId)
+      const depth = (store.child(parent.id)?.depth ?? 0) + 1
+      if (depth > config.maxDepth) throw new Error(`Sessions can be started ${config.maxDepth} level(s) deep at most.`)
+      const running = store.childrenOf(parent.id).filter(c => ctx.agents.get(c.id)?.status === 'running').length
+      if (running >= config.maxLiveChildren) throw new Error(`${running} sessions started from that session are still running (the limit is ${config.maxLiveChildren}); try again when one finishes.`)
+      const folderOk = await stat(proposal.folder).then(s => s.isDirectory(), () => false)
+      if (!folderOk) throw new Error(`${proposal.folder} is no longer a folder.`)
+      const args = { title: proposal.title, prompt: proposal.prompt, ...(proposal.background ? { background: proposal.background } : {}) }
+      const plan = proposal.worktree
+        ? await worktrees.plan({ folder: proposal.folder, slug: proposal.slug ?? (slugify(proposal.title) || 'session'), prefix: config.branchPrefix })
+        : undefined
+      const child = await launch({ parent, args, folder: proposal.folder, plan, depth })
+      await store.updateProposal(id, { state: 'started', sessionId: child.id })
+      // The proposing Session learns of it at its next step; it is not woken for this.
+      parent.inject(userMessage(
+        `The user started your proposed session "${proposal.title}" (${child.id}) from its card. Its report arrives here as a message when it ends a turn; do not poll it.`,
+        { kind: REPORT_SOURCE, form: 'notice', summary: `Started ${proposal.title}`.slice(0, 160), senderSessionId: child.id },
+      ))
+      await ctx.sessions.flush(parent.session)
+      return proposalView(store.proposal(id))
+    } catch (error) {
+      if (store.proposal(id)?.state === 'starting') await store.updateProposal(id, { state: 'pending' })
+      throw error
+    }
   }
 
   /** One question on Harness's question card; a string result is the tool's answer when the user could not be asked. */
@@ -284,6 +375,19 @@ export function apply(ctx, rawConfig) {
     }
   }
 
+  /** Give a new Session the provider, model and chosen reasoning effort of the Session that started it. */
+  async function inheritModel(parent, sessionId) {
+    const header = parent.session.requestHeader?.()
+    const config = header?.config
+    if (!config?.provider || !config?.model || typeof ctx.sessionController.selectModel !== 'function') return
+    const effort = config.reasoningEffort !== undefined && header.adapterDefaults?.reasoningEffort !== true ? { reasoningEffort: config.reasoningEffort } : {}
+    try {
+      await ctx.sessionController.selectModel({ sessionId, provider: config.provider, model: config.model, ...effort })
+    } catch (error) {
+      ctx.logger?.warn?.(`sessions: the started Session keeps the default model; the parent's could not be selected: ${error?.message ?? error}`)
+    }
+  }
+
   async function createChild({ parent, args, folder, plan, depth }) {
     const workspace = await ctx.workspaceRegistry.create(folder)
     const { sessionId } = await ctx.sessionController.create({ workspaceId: workspace.id })
@@ -295,6 +399,9 @@ export function apply(ctx, rawConfig) {
       // The started Session never runs with a looser permission preset than the one that started it.
       const presets = ctx.get('permissionPresets')
       if (presets) presets.set(child.session, presets.current(parent.session))
+      // It also starts on the model the parent is using, not the app-wide default (which may be another
+      // provider, or one without credit). The parent is mid-turn here, so its last request names that model.
+      await inheritModel(parent, sessionId)
       if (plan) await ctx.workingDirectory.set(child, plan.workDir)
       ctx.sessionTitle.rename(child.session, args.title)
       await store.add({
@@ -400,9 +507,10 @@ export function apply(ctx, rawConfig) {
     {
       name: 'start_session',
       description: [
-        'Start a separate top-level session in the user\'s sidebar and hand it a piece of work. The user can open it and talk to it; it works in parallel with this session.',
+        'Start a separate session in the user\'s sidebar, listed under this one, and hand it a piece of work. The user can open it and talk to it; it works in parallel with this session.',
         'Its final message of each turn comes back here as a report message; do not poll it.',
-        'With initiation "proposal" the user is asked first and may choose to keep the work here; then nothing is started.',
+        'With initiation "offer" the user is asked first and may choose to keep the work here; then nothing is started.',
+        'With initiation "own_initiative" nothing is started now and you do not wait: the user gets a card in this chat to start it later.',
       ].join(' '),
       output: { ...text, presentationMeta: (_args, value) => startOutcome(value) },
       parameters: {
@@ -414,7 +522,11 @@ export function apply(ctx, rawConfig) {
           folder: { type: 'string', description: 'Absolute folder to work in. Defaults to this session\'s working directory. A folder outside it starts only after the user approves it on a card; the home folder, the filesystem root and the Harness home are refused.' },
           worktree: { type: 'boolean', description: 'Run in its own new git worktree and branch of the folder\'s repository. Use it when the session will edit files that another session may also edit.' },
           branch_name: { type: 'string', description: 'Short name for the worktree\'s branch; derived from the title when omitted. Only with worktree.' },
-          initiation: { type: 'string', enum: ['user_asked', 'proposal'], description: '"user_asked": the user asked in words for separate or parallel work; it starts now. "proposal": your own idea; the user is asked first.' },
+          initiation: {
+            type: 'string',
+            enum: ['user_asked', 'offer', 'own_initiative'],
+            description: '"user_asked": the user asked in words for separate or parallel work; it starts now. "offer": a task the user named that is new, unrelated work for this conversation, or that they asked to split off; they choose New session or Do it here first. "own_initiative": your own idea (a follow-up, a fix noticed in passing); it becomes a card the user may start later, and your turn goes on.',
+          },
         },
         required: ['title', 'prompt', 'initiation'],
         additionalProperties: false,
@@ -524,6 +636,13 @@ export function apply(ctx, rawConfig) {
       // The user is back in the parent: reports may wake it again.
       store.setWakeStreak(id, 0).catch(() => {})
     }
+    if (event.type === 'turn/end') {
+      proposedThisTurn.delete(id)
+      // Proposals made in this turn are shown under it.
+      for (const proposal of store.proposals()) {
+        if (proposal.parentId === id && proposal.turn === undefined) store.updateProposal(proposal.id, { turn: event.data?.turn }).catch(() => {})
+      }
+    }
     const record = store.child(id)
     if (!record || record.closed) return
     let state = turns.get(id)
@@ -583,6 +702,33 @@ export function apply(ctx, rawConfig) {
     return resolved.agent
   }
   const actions = {
+    /** Which Session started which, oldest first: the client half nests each started Session under its parent in the sidebar. */
+    async parentLinks() {
+      await ready
+      return parentLinksOf(store.all())
+    },
+    /** An own-initiative proposal as its card shows it. */
+    async proposal({ id }) {
+      await ready
+      return proposalView(proposalOf(id))
+    },
+    /** Start an own-initiative proposal (the card's Start button). */
+    async startProposal({ id }) {
+      await ready
+      return startProposal(id)
+    },
+    /** The own-initiative proposals a Session made, with the turn each was made in, for the cards under its turns. */
+    async sessionProposals({ sessionId }) {
+      await ready
+      return store.proposals().filter(p => p.parentId === sessionId && p.turn !== undefined).map(p => ({ ...proposalView(p), turn: p.turn }))
+    },
+    /** Dismiss an own-initiative proposal (the card's Dismiss button); it is not proposed again. */
+    async dismissProposal({ id }) {
+      await ready
+      const proposal = proposalOf(id)
+      if (proposalState(proposal, Date.now()) === 'pending') await store.updateProposal(id, { state: 'dismissed' })
+      return proposalView(store.proposal(id))
+    },
     /** Whether the session's folder can have a worktree: inside a git repository with at least one commit. */
     async worktreeOption({ sessionId }) {
       const agent = await sessionAgent(sessionId)

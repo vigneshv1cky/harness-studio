@@ -104,6 +104,8 @@ Why not a custom card: Host→Client events are a closed allowlist (`api/remotes
 
 Not in v1: Claude Code's *non-blocking* proposal card (the agent keeps working while a "start this later" card waits in the transcript). It needs a custom card in the tool-call slot plus a way for the click to reach the Host with arguments (our plugins' local helper pattern can do that). Deferred to phase 2.
 
+Done 2026-10-20: `initiation` now has three values, as in Claude Code desktop. `offer` is the blocking card above (`proposal` is still read as it). `own_initiative` saves the proposal in the plugin's record and returns at once; the Client half draws the tool-call row as a card with Dismiss / Start, and Start reaches the Host through the plugin's own Remote service (`harnessStudioSessions/call`, action `startProposal`), which creates the Session from the saved brief. At most three per turn, none repeated, each startable for a week.
+
 ## 6. The report back to the parent
 
 - **Trigger.** `ctx.on('session/event', handler, { global: true })` filtered to `turn/end` events of recorded children (the listener `interaction/user-questions/src/index.ts:111` uses). One report per child turn; `reportedTurns` in the record prevents duplicates after a restart.

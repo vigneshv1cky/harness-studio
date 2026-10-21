@@ -4,7 +4,7 @@ import test from 'node:test'
 import {
   DEFAULT_CONFIG, REPORT_FENCE, briefText, cleanMessageArgs, cleanStartArgs, contentText, deliveryMode,
   describeEnding, reportText, resolveConfig, slugify, userMessage, shortFolder, cardDetail, readCardChoice, startOutcome,
-  folderScope, isWithin,
+  folderScope, isWithin, parentLinksOf, alreadyProposed, proposalState, PROPOSAL_TTL_MS,
 } from '../logic.js'
 
 test('a folder is inside, outside or refused relative to the parent\'s working folder', () => {
@@ -44,6 +44,8 @@ test('start_session arguments are validated', () => {
   const ok = cleanStartArgs({ title: '  Fix   login ', prompt: 'Do it', initiation: 'proposal', worktree: true })
   assert.equal(ok.title, 'Fix login')
   assert.equal(ok.slug, 'fix-login')
+  assert.equal(ok.initiation, 'offer', 'the earlier name "proposal" reads as an offer')
+  assert.equal(cleanStartArgs({ title: 't', prompt: 'p', initiation: 'own_initiative' }).initiation, 'own_initiative')
   assert.throws(() => cleanStartArgs({ title: 'x'.repeat(61), prompt: 'p', initiation: 'user_asked' }), /title/)
   assert.throws(() => cleanStartArgs({ title: 't', prompt: '', initiation: 'user_asked' }), /prompt is required/)
   assert.throws(() => cleanStartArgs({ title: 't', prompt: 'p', initiation: 'later' }), /initiation/)
@@ -101,9 +103,9 @@ test('the card shows folders short: ~/… under home, otherwise only the name', 
   assert.equal(cardDetail({ folder: '/Users/v/app', home: '/Users/v', branch: 'harness/x', brief: 'Do it.' }), '~/app · new worktree · branch harness/x\n\nDo it.')
 })
 
-test('the card\'s answer: Start with or without a worktree switch, decline, or typed text', () => {
-  assert.deepEqual(readCardChoice({ selected: ['Start'] }), { start: true })
-  assert.deepEqual(readCardChoice({ selected: ['Start'], custom: '{"worktree":false}' }), { start: true, worktree: false })
+test('the card\'s answer: New session with or without a worktree switch, decline, or typed text', () => {
+  assert.deepEqual(readCardChoice({ selected: ['New session'] }), { start: true })
+  assert.deepEqual(readCardChoice({ selected: ['New session'], custom: '{"worktree":false}' }), { start: true, worktree: false })
   assert.deepEqual(readCardChoice({ selected: ['Do it here'] }), { start: false })
   assert.deepEqual(readCardChoice({ selected: [], custom: 'later please' }), { start: false, said: 'later please' })
   assert.deepEqual(readCardChoice({ selected: ['Do it here'], custom: '{"worktree":true}' }), { start: false })
@@ -119,4 +121,29 @@ test('a start_session result is read back for the one-line record', () => {
 
 test('nothing inside the Harness home folder may host a session, even below a broad parent folder', () => {
   assert.equal(folderScope({ folder: '/Users/me/.harness-studio/sessions', parentFolder: '/Users/me', userHome: '/Users/me', harnessHome: '/Users/me/.harness-studio' }), 'refused')
+})
+
+test('parent links keep only the ids, oldest record first', () => {
+  assert.deepEqual(parentLinksOf([
+    { id: 'b', parentId: 'p', title: 'B', createdAt: '2026-10-20T10:00:01.000Z' },
+    { id: 'a', parentId: 'p', title: 'A', createdAt: '2026-10-20T10:00:00.000Z' },
+    { id: 'c', parentId: 'a' },
+  ]), [{ id: 'c', parentId: 'a' }, { id: 'a', parentId: 'p' }, { id: 'b', parentId: 'p' }])
+})
+
+test('a proposal repeats an earlier one by title or brief, within its week, from the same session', () => {
+  const now = Date.parse('2026-10-20T12:00:00.000Z')
+  const earlier = [{ parentId: 'p', title: 'Fix  the Login', prompt: 'Make remembered emails work.', createdAt: '2026-10-19T12:00:00.000Z' }]
+  assert.equal(alreadyProposed(earlier, { parentId: 'p', title: 'fix the login', prompt: 'other' }, now), true)
+  assert.equal(alreadyProposed(earlier, { parentId: 'p', title: 'Other', prompt: 'make remembered  emails work.' }, now), true)
+  assert.equal(alreadyProposed(earlier, { parentId: 'q', title: 'Fix the login', prompt: 'x' }, now), false)
+  assert.equal(alreadyProposed(earlier, { parentId: 'p', title: 'Fix the login', prompt: 'x' }, now + PROPOSAL_TTL_MS), false)
+})
+
+test('a pending proposal reads as expired after a week; settled ones keep their state', () => {
+  const createdAt = '2026-10-20T12:00:00.000Z'
+  const start = Date.parse(createdAt)
+  assert.equal(proposalState({ state: 'pending', createdAt }, start + PROPOSAL_TTL_MS - 1), 'pending')
+  assert.equal(proposalState({ state: 'pending', createdAt }, start + PROPOSAL_TTL_MS), 'expired')
+  assert.equal(proposalState({ state: 'started', createdAt }, start + PROPOSAL_TTL_MS), 'started')
 })

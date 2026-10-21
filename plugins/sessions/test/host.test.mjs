@@ -113,29 +113,39 @@ test('user_asked start creates a titled Session with the parent preset and sends
   assert.equal(saved.children[child.id].parentId, h.parent.id)
 })
 
-test('proposal: the card question carries the short context; "Do it here" creates nothing; "Start" starts it', async t => {
+test('the sidebar\'s parent links list each started Session under its parent, oldest first', async t => {
+  const h = await harness(t)
+  const first = childOf(h, await h.call('start_session', { title: 'One', prompt: 'a', background: 'b', initiation: 'user_asked' }))
+  const second = childOf(h, await h.call('start_session', { title: 'Two', prompt: 'a', background: 'b', initiation: 'user_asked' }))
+  assert.deepEqual(await h.actions.parentLinks(), [
+    { id: first.id, parentId: h.parent.id },
+    { id: second.id, parentId: h.parent.id },
+  ])
+})
+
+test('offer: the card question carries the short context; "Do it here" creates nothing; "New session" starts it', async t => {
   let choice = 'Do it here'
   const h = await harness(t, { answer: () => ({ answers: [{ id: 'harness-studio/start-session', selected: [choice] }] }) })
-  const declined = await h.call('start_session', { title: 'Refactor', prompt: 'p', initiation: 'proposal' })
+  const declined = await h.call('start_session', { title: 'Refactor', prompt: 'p', initiation: 'offer' })
   assert.match(declined, /chose to do this here/)
   assert.equal(h.agents.size, 1, 'only the parent exists')
   const question = h.questionsAsked[0].questions[0]
   assert.equal(question.id, 'harness-studio/start-session')
   assert.equal(question.header, 'New session')
   assert.equal(question.question, 'Refactor')
-  assert.equal(question.options.map(o => o.label).join('|'), 'Start|Do it here')
+  assert.equal(question.options.map(o => o.label).join('|'), 'New session|Do it here')
   assert.ok(!question.detail.split('\n\n')[0].includes(h.home), 'the context line never shows a temporary folder in full')
-  choice = 'Start'
+  choice = 'New session'
   const started = await h.call('start_session', { title: 'Refactor', prompt: 'p', initiation: 'proposal' })
   assert.match(started, /Started session "Refactor"/)
 })
 
-test('proposal: the worktree switch in the card\'s Options is honoured', async t => {
-  const h = await harness(t, { answer: () => ({ answers: [{ id: 'harness-studio/start-session', selected: ['Start'], custom: '{"worktree":true}' }] }) })
+test('offer: the worktree switch in the card\'s Options is honoured', async t => {
+  const h = await harness(t, { answer: () => ({ answers: [{ id: 'harness-studio/start-session', selected: ['New session'], custom: '{"worktree":true}' }] }) })
   const repo = path.join(h.home, 'repo')
   execFileSync('git', ['init', '-q', '-b', 'main', repo])
   execFileSync('git', ['-C', repo, '-c', 'user.email=t@example.com', '-c', 'user.name=T', 'commit', '-q', '--allow-empty', '-m', 'first'])
-  const result = await h.call('start_session', { title: 'Switched on', prompt: 'p', folder: repo, initiation: 'proposal' })
+  const result = await h.call('start_session', { title: 'Switched on', prompt: 'p', folder: repo, initiation: 'offer' })
   assert.match(result, /branch harness\/switched-on/)
   assert.equal(execFileSync('git', ['-C', childOf(h, result).cwd, 'branch', '--show-current'], { encoding: 'utf8' }).trim(), 'harness/switched-on')
 })
@@ -152,9 +162,9 @@ test('a folder outside the parent\'s folder needs the user\'s yes on a card nami
   assert.equal(question.id, 'harness-studio/start-session-folder')
   assert.ok(question.question.includes(other), 'the question names the folder in full')
   choice = 'Start in that folder'
-  const started = await h.call('start_session', { title: 'Elsewhere', prompt: 'p', folder: other, initiation: 'proposal' })
+  const started = await h.call('start_session', { title: 'Elsewhere', prompt: 'p', folder: other, initiation: 'offer' })
   assert.match(started, /Started session "Elsewhere".*approved it on the card/)
-  assert.equal(h.questionsAsked.length, 2, 'one card per start, also for a proposal')
+  assert.equal(h.questionsAsked.length, 2, 'one card per start, also for an offer')
   // A folder inside the parent's own folder starts without a card.
   await h.call('start_session', { title: 'Inside', prompt: 'p', folder: path.join(h.home, 'harness-studio'), initiation: 'user_asked' })
   assert.equal(h.questionsAsked.length, 2)
@@ -165,11 +175,58 @@ test('the home folder, the filesystem root and the Harness home are refused outr
   const other = await realpath(await mkdtemp(path.join(os.tmpdir(), 'hs-sessions-other-')))
   t.after(() => rm(other, { recursive: true, force: true }))
   await assert.rejects(h.call('start_session', { title: 't', prompt: 'p', folder: os.homedir(), initiation: 'user_asked' }), /never started in/)
-  await assert.rejects(h.call('start_session', { title: 't', prompt: 'p', folder: '/', initiation: 'proposal' }), /never started in/)
+  await assert.rejects(h.call('start_session', { title: 't', prompt: 'p', folder: '/', initiation: 'own_initiative' }), /never started in/)
   const elsewhere = new FakeAgent('parent-2', other)
   h.agents.set(elsewhere.id, elsewhere)
   await assert.rejects(h.call('start_session', { title: 't', prompt: 'p', folder: h.home, initiation: 'user_asked' }, elsewhere), /never started in/)
   assert.equal(h.agents.size, 2, 'nothing was created')
+})
+
+test('own_initiative saves a card without asking or waiting; Start later creates the session from the saved brief', async t => {
+  const h = await harness(t, { answer: () => assert.fail('a proposal asks nothing while the turn runs') })
+  const result = await h.call('start_session', { title: 'Tidy logs', prompt: 'Remove the debug logging.', background: 'Found while fixing login.', initiation: 'own_initiative' })
+  const id = /\((proposal-[^)]+)\)/.exec(result)[1]
+  assert.match(result, /^Proposed session "Tidy logs"/)
+  assert.equal(h.agents.size, 1, 'nothing was created')
+  const card = await h.actions.proposal({ id })
+  assert.equal(card.state, 'pending')
+  assert.equal(card.title, 'Tidy logs')
+  const saved = JSON.parse(await readFile(recordFile(h.home), 'utf8'))
+  assert.equal(saved.proposals[id].parentId, h.parent.id, 'the proposal is kept across restarts')
+  assert.deepEqual(await h.actions.sessionProposals({ sessionId: h.parent.id }), [], 'shown under its turn only once that turn ends')
+  await h.emit('session/event', h.parent.session, { type: 'turn/end', data: { turn: 4, reason: { kind: 'completed' } } })
+  const listed = await h.actions.sessionProposals({ sessionId: h.parent.id })
+  assert.deepEqual(listed.map(p => [p.id, p.turn, p.state]), [[id, 4, 'pending']])
+  // Start, a while later, from the card: the brief is the saved one and the parent hears of it without waking.
+  h.parent.status = 'idle'
+  const [first, second] = await Promise.allSettled([h.actions.startProposal({ id }), h.actions.startProposal({ id })])
+  assert.equal(first.status, 'fulfilled')
+  assert.equal(second.status, 'rejected', 'a second click does not start it twice')
+  assert.equal(first.value.state, 'started')
+  const child = h.agents.get(first.value.sessionId)
+  assert.equal(child.session.title, 'Tidy logs')
+  assert.match(child.followed[0].content[0].text, /Found while fixing login\.[\s\S]*Remove the debug logging\./)
+  assert.equal(h.parent.followed.length, 0, 'the parent is not woken')
+  assert.match(h.parent.injected.at(-1).content[0].text, /started your proposed session "Tidy logs"/)
+  assert.deepEqual(await h.actions.parentLinks(), [{ id: child.id, parentId: h.parent.id }])
+})
+
+test('own_initiative: at most three per turn, never the same twice, and Dismiss keeps it from starting', async t => {
+  const h = await harness(t, { answer: () => assert.fail('no card questions') })
+  const propose = title => h.call('start_session', { title, prompt: `Do ${title}.`, initiation: 'own_initiative' })
+  const ids = []
+  for (const title of ['One', 'Two', 'Three']) ids.push(/\((proposal-[^)]+)\)/.exec(await propose(title))[1])
+  await assert.rejects(propose('Four'), /already proposed 3 sessions in this turn/)
+  await h.emit('session/event', h.parent.session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
+  await assert.rejects(propose('one'), /already proposed from this session/)
+  await propose('Four')
+  assert.equal((await h.actions.dismissProposal({ id: ids[0] })).state, 'dismissed')
+  await assert.rejects(h.actions.startProposal({ id: ids[0] }), /already dismissed/)
+  await assert.rejects(h.actions.proposal({ id: 'proposal-gone' }), /no longer kept/)
+  h.archived.push(h.parent.id)
+  await assert.rejects(h.actions.startProposal({ id: ids[1] }), /was archived/)
+  assert.equal((await h.actions.proposal({ id: ids[1] })).state, 'pending', 'a refused start leaves it startable')
+  assert.equal(h.agents.size, 1, 'nothing was created')
 })
 
 test('a subagent cannot start sessions', async t => {

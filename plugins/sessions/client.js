@@ -7,7 +7,11 @@
 //     goes back through Harness's own question carrier, so the Host half's wait is unchanged. Every other
 //     question still gets Harness's form.
 //   - The tool row: a `start_session` call shows as one line — waiting for your choice, Started <title>
-//     with an Open link to the new session, Kept here, or why it could not start.
+//     with an Open link to the new session, Kept here, or why it could not start. A call the agent made on its
+//     own initiative shows instead as a card in the chat (title, brief, Dismiss / Start) that stays until you
+//     start or dismiss it, or a week passes; Start asks the Host half to create the session then.
+//   - The sidebar: each started session is listed under the session that started it, the way Claude Code
+//     desktop nests side sessions (Harness draws the rows; this half tells it who started whom).
 window.__ModuleLoader__.load({
   id: '@harness-studio/sessions',
   factory(require) {
@@ -16,7 +20,7 @@ window.__ModuleLoader__.load({
     const { useEffect, useRef, useState, useSyncExternalStore } = React
 
     const START_QUESTION_ID = 'harness-studio/start-session'
-    const START = 'Start'
+    const START = 'New session'
     const DO_IT_HERE = 'Do it here'
     const STYLE_ID = 'harness-studio-sessions-style'
 
@@ -61,6 +65,9 @@ window.__ModuleLoader__.load({
 .hs-ss-close { flex: none; width: 22px; height: 22px; display: grid; place-items: center; border: none; border-radius: 6px; background: transparent; color: var(--dsw-alias-label-tertiary); cursor: pointer; }
 .hs-ss-close:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
 .hs-ss-error { margin-top: 6px; font-size: 12px; color: var(--dsw-alias-label-error); }
+.hs-ss-suggested { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 8px; }
+.hs-ss-inline { max-width: 560px; margin: 4px 0; }
+.hs-ss-inline .hs-ss-actions { padding-bottom: 10px; }
 .hs-ss-row { display: flex; align-items: center; gap: 6px; min-height: 24px; font-size: 13px; color: var(--dsw-alias-label-secondary); }
 .hs-ss-row .hs-ss-what { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hs-ss-row strong { font-weight: 500; color: var(--dsw-alias-label-primary); }
@@ -144,7 +151,7 @@ window.__ModuleLoader__.load({
           h('label', null,
             h('input', { type: 'checkbox', checked: worktree, disabled: busy, onChange: event => setWorktree(event.target.checked) }),
             'Work in a new git worktree on its own branch'),
-          h('div', null, 'Model: your default model')) : null,
+          h('div', null, 'Model: the one this session is using')) : null,
         h('div', { className: 'hs-ss-actions' },
           h('button', { type: 'button', className: 'hs-ss-text', 'aria-expanded': optionsOpen, disabled: busy, onClick: () => setOptionsOpen(open => !open) }, 'Options'),
           h('span', { className: 'hs-ss-spacer' }),
@@ -166,8 +173,105 @@ window.__ModuleLoader__.load({
       if (meta && typeof meta === 'object' && typeof meta.outcome === 'string') return meta
       const started = /^Started session ".*" \((session-[^)\s]+)\)/.exec(text)
       if (started) return { outcome: 'started', sessionId: started[1] }
+      const proposed = /^Proposed session ".*" \((proposal-[^)\s]+)\)/.exec(text)
+      if (proposed) return { outcome: 'proposed', proposalId: proposed[1] }
       if (/^(The user chose to do this here|Nothing was started)/.test(text)) return { outcome: 'kept' }
       return { outcome: 'other' }
+    }
+
+    /**
+     * An own-initiative proposal, as Claude Code desktop shows one: a card in the chat with the title, the brief
+     * and Dismiss / Start. Its state lives with the Host half, so it survives reloads and restarts.
+     */
+    function ProposalCard({ id, title, openSession, initial, onChange }) {
+      const [view, setViewState] = useState(initial ?? null)
+      const setView = (next) => { setViewState(next); onChange?.() }
+      const [busy, setBusy] = useState(false)
+      const [error, setError] = useState(undefined)
+      const [briefOpen, setBriefOpen] = useState(false)
+      useEffect(() => {
+        if (initial) { setViewState(initial); return undefined }
+        let live = true
+        sessionsCall({ action: 'proposal', id }).then(v => { if (live) setViewState(v) }, e => { if (live) setError(e?.message ?? String(e)) })
+        return () => { live = false }
+      }, [id, initial])
+      const act = (action) => {
+        if (busy) return
+        setBusy(true)
+        setError(undefined)
+        sessionsCall({ action, id }).then(v => { setView(v); setBusy(false) }, (e) => {
+          setBusy(false)
+          setError(e?.message ?? String(e))
+          sessionsCall({ action: 'proposal', id }).then(setView, () => {})
+        })
+      }
+      const row = (tone, ...children) => h('div', { className: 'hs-ss-row', 'data-testid': 'harness-studio-proposal', 'data-state': view?.state ?? 'loading' },
+        h('span', { className: 'hs-ss-dot ' + tone }), ...children)
+      if (!view) {
+        return error
+          ? row('', h('span', { className: 'hs-ss-what' }, 'Suggested ', h('strong', null, title)), h('span', { className: 'hs-ss-muted', title: error }, error))
+          : row('hs-ss-wait', h('span', { className: 'hs-ss-what' }, 'Suggested ', h('strong', null, title)))
+      }
+      if (view.state === 'started') {
+        return row('hs-ss-ok', h('span', { className: 'hs-ss-what' }, 'Started ', h('strong', null, view.title)),
+          view.sessionId && openSession ? h('button', { type: 'button', className: 'hs-ss-link', onClick: () => openSession(view.sessionId) }, 'Open') : null)
+      }
+      if (view.state === 'dismissed' || view.state === 'expired') {
+        return row('', h('span', { className: 'hs-ss-what' }, view.state === 'dismissed' ? 'Dismissed · ' : 'Expired · ', h('strong', null, view.title)))
+      }
+      const starting = busy || view.state === 'starting'
+      return h('div', { className: 'hs-ss-card hs-ss-inline', role: 'group', 'aria-label': `Suggested session: ${view.title}`, 'data-testid': 'harness-studio-proposal', 'data-state': view.state },
+        h('div', { className: 'hs-ss-head' },
+          h('span', { className: 'hs-ss-eyebrow' }, 'Suggested session'),
+          h('button', { type: 'button', className: 'hs-ss-close', 'aria-label': 'Dismiss', title: 'Dismiss', disabled: starting, onClick: () => act('dismissProposal') }, h(CloseIcon))),
+        h('div', { className: 'hs-ss-body' },
+          h('div', { className: 'hs-ss-title', title: view.title }, view.title),
+          view.prompt ? h('div', {
+            className: 'hs-ss-brief ' + (briefOpen ? 'hs-ss-open' : 'hs-ss-clamped'),
+            role: 'button', tabIndex: 0, 'aria-expanded': briefOpen,
+            onClick: () => setBriefOpen(open => !open),
+            onKeyDown: (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setBriefOpen(open => !open) } },
+          }, view.prompt) : null,
+          h('div', { className: 'hs-ss-context', title: view.context }, view.outside ? `Outside this session's folder: ${view.context}` : view.context),
+          error ? h('div', { className: 'hs-ss-error', role: 'alert' }, error) : null),
+        h('div', { className: 'hs-ss-actions' },
+          h('span', { className: 'hs-ss-spacer' }),
+          h('button', { type: 'button', className: 'hs-ss-btn hs-ss-secondary', disabled: starting, onClick: () => act('dismissProposal') }, 'Dismiss'),
+          h('button', { type: 'button', className: 'hs-ss-btn hs-ss-primary', disabled: starting, onClick: () => act('startProposal') }, starting ? 'Starting…' : 'Start')))
+    }
+
+    // ---- suggested-session cards under each turn -------------------------------------------------------
+    // A turn's tool calls fold away once it ends, so the cards of the proposals it made are drawn in the turn's
+    // tail (the slot Harness's plan cards use), under the reply. One fetch per session, shared by its turns.
+    const proposalCache = new Map()
+    function sessionProposals(sessionId, fresh) {
+      const cached = proposalCache.get(sessionId)
+      if (cached && !fresh && Date.now() - cached.at < 3000) return cached.promise
+      const promise = sessionsCall({ action: 'sessionProposals', sessionId }).catch(() => [])
+      proposalCache.set(sessionId, { at: Date.now(), promise })
+      return promise
+    }
+
+    function makeSuggestedSessions(openSession) {
+      return function SuggestedSessions({ turn, sessionId }) {
+        const [items, setItems] = useState([])
+        const [version, setVersion] = useState(0)
+        const turnNumber = turn?.turn
+        const status = turn?.status
+        useEffect(() => {
+          if (!sessionId || turnNumber === undefined || status === 'running') return undefined
+          let live = true
+          sessionProposals(sessionId, version > 0).then(list => {
+            if (live) setItems(list.filter(p => p.turn === turnNumber))
+          })
+          return () => { live = false }
+        }, [sessionId, turnNumber, status, version])
+        if (items.length === 0) return null
+        return h('div', { className: 'hs-ss-suggested' }, items.map(item => h(ProposalCard, {
+          key: item.id, id: item.id, title: item.title, initial: item, openSession,
+          onChange: () => { proposalCache.delete(sessionId) },
+        })))
+      }
     }
 
     function makeStartRow(openSession) {
@@ -177,13 +281,20 @@ window.__ModuleLoader__.load({
         const title = typeof args.title === 'string' && args.title.trim() ? args.title.trim() : 'a session'
         const row = (tone, ...children) => h('div', { className: 'hs-ss-row', 'data-testid': 'harness-studio-start-session' },
           h('span', { className: 'hs-ss-dot ' + tone }), ...children)
+        const ownIdea = args.initiation === 'own_initiative'
         if (props.phase !== 'result') {
-          return args.initiation === 'proposal'
+          if (ownIdea) return row('hs-ss-wait', h('span', { className: 'hs-ss-what' }, 'Suggesting ', h('strong', null, title), '…'))
+          return args.initiation === 'offer' || args.initiation === 'proposal'
             ? row('hs-ss-wait', h('span', { className: 'hs-ss-what' }, 'New session ', h('strong', null, title), ' — waiting for your choice'))
             : row('hs-ss-wait', h('span', { className: 'hs-ss-what' }, 'Starting ', h('strong', null, title), '…'))
         }
         const text = resultText(block)
         const outcome = outcomeOf(block, text)
+        if (!block?.isError && outcome.outcome === 'proposed' && outcome.proposalId) {
+          // The card itself sits under the turn's reply (SuggestedSessions), outside the folded tool calls.
+          return row('hs-ss-wait', h('span', { className: 'hs-ss-what' }, 'Suggested ', h('strong', null, title)),
+            h('span', { className: 'hs-ss-muted' }, 'card under the reply'))
+        }
         if (!block?.isError && outcome.outcome === 'started') {
           return row('hs-ss-ok',
             h('span', { className: 'hs-ss-what' }, 'Started ', h('strong', null, title)),
@@ -194,7 +305,7 @@ window.__ModuleLoader__.load({
         }
         const firstLine = (block?.isError ? (text || block?.error?.message || '') : text).split('\n')[0]
         return row(block?.isError ? 'hs-ss-bad' : '',
-          h('span', { className: 'hs-ss-what' }, block?.isError ? 'Could not start ' : 'Not started · ', h('strong', null, title)),
+          h('span', { className: 'hs-ss-what' }, block?.isError ? (ownIdea ? 'Not suggested · ' : 'Could not start ') : 'Not started · ', h('strong', null, title)),
           firstLine ? h('span', { className: 'hs-ss-muted', title: firstLine }, firstLine) : null)
       }
     }
@@ -298,6 +409,57 @@ window.__ModuleLoader__.load({
       return () => { document.removeEventListener('keydown', onKeyDown, true); document.removeEventListener('click', onClick, true) }
     }
 
+    // ---- Started sessions nested under their parent in the sidebar ---------------------------------------
+    // Harness's sidebar nests a session under another when a plugin registers the link (Harness itself keeps no
+    // record of who started whom; the Host half's store does). The links are fetched from the Host half when the
+    // sidebar's session list gains a session, and again shortly after, because a started session reaches the list
+    // a moment before its record is saved.
+    const RELOOK_MS = [1500, 5000]
+    function parentLinks(sessions) {
+      let links = new Map()
+      const listeners = new Set()
+      let known = new Set()
+      let asked = 0
+      let timers = []
+      let live = true
+      const refresh = async () => {
+        const mine = ++asked
+        let rows
+        try {
+          rows = await sessionsCall({ action: 'parentLinks' })
+        } catch (error) {
+          // A Host half from before this action (Harness Studio not restarted yet) cannot answer; keep what we have.
+          console.debug('[harness-studio] sessions: parent links unavailable:', error?.message ?? error)
+          return
+        }
+        if (!live || mine !== asked || !Array.isArray(rows)) return
+        const next = new Map(rows.map(row => [row.id, row.parentId]))
+        if (JSON.stringify([...next]) === JSON.stringify([...links])) return
+        links = next
+        for (const listener of [...listeners]) listener()
+      }
+      const relook = () => {
+        for (const timer of timers) clearTimeout(timer)
+        void refresh()
+        timers = RELOOK_MS.map(ms => setTimeout(() => { void refresh() }, ms))
+      }
+      const onList = () => {
+        const ids = sessions.list.getSnapshot().ids
+        const grew = ids.some(id => !known.has(id))
+        known = new Set(ids)
+        if (grew) relook()
+      }
+      const stopList = sessions.list.subscribe(onList)
+      onList()
+      return {
+        source: {
+          getSnapshot: () => links,
+          subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+        },
+        stop: () => { live = false; stopList(); for (const timer of timers) clearTimeout(timer) },
+      }
+    }
+
     return {
       inject: ['slots', 'connection'],
       apply(ctx) {
@@ -322,10 +484,23 @@ window.__ModuleLoader__.load({
           select: ({ pendingInteraction }) => startQuestion(pendingInteraction),
         }, StartCard)), 'start-session card')
 
+        ctx.inject(['uiWorkspace', 'sessions'], (scope) => {
+          if (typeof scope.uiWorkspace.registerSessionParents !== 'function') return
+          const watched = parentLinks(scope.sessions)
+          scope.effect(() => {
+            const unregister = scope.uiWorkspace.registerSessionParents(watched.source)
+            return () => { unregister(); watched.stop() }
+          }, 'started sessions nested under their parent')
+        })
+
         const openSession = (sessionId) => { ctx.get('uiWorkspace')?.openSession(sessionId) }
         ctx.effect(() => ctx.slots.inject('tool.call.toolview', () => ctx.slots.register({
           name: 'tool.call.toolview', key: 'start_session',
         }, makeStartRow(openSession))), 'start_session row')
+        ctx.effect(() => ctx.slots.inject('conversation.chat.turnTail', () => ctx.slots.register({
+          name: 'conversation.chat.turnTail', id: 'harness-studio-suggested-sessions',
+          inject: sessionId => ({ sessionId }),
+        }, makeSuggestedSessions(openSession))), 'suggested-session cards under each turn')
       },
     }
   },

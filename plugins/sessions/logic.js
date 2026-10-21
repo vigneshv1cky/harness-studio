@@ -14,10 +14,24 @@ const MAX_SLUG_CHARS = 40
 /** Fence marker around another Session's output; removed from the output first so it cannot close the fence. */
 export const REPORT_FENCE = 'SESSION-REPORT'
 
-/** The approval card's question: the client half draws its own card for this id (client.js). */
+/** The offer card's question: the client half draws its own card for this id (client.js). */
 export const START_QUESTION_ID = 'harness-studio/start-session'
-export const START = 'Start'
+export const START = 'New session'
 export const DO_IT_HERE = 'Do it here'
+
+/**
+ * Who wants the new Session, as the model declares it:
+ *   - `user_asked`: the user asked in words for separate or parallel work; it starts at once.
+ *   - `offer`: a task the user named that belongs in its own session; the user picks New session or Do it here first.
+ *   - `own_initiative`: the agent's own idea; it leaves a card in the chat that the user may start later.
+ * `proposal` is the earlier name of `offer` and is read as it.
+ */
+export const INITIATIONS = Object.freeze(['user_asked', 'offer', 'own_initiative'])
+
+/** An own-initiative proposal can be started for this long after it is made. */
+export const PROPOSAL_TTL_MS = 7 * 24 * 60 * 60 * 1000
+/** At most this many own-initiative proposals per turn of the proposing Session. */
+export const MAX_PROPOSALS_PER_TURN = 3
 
 /** The question asked before a Session starts outside the parent's working folder; Harness's generic form draws it. */
 export const FOLDER_QUESTION_ID = 'harness-studio/start-session-folder'
@@ -81,7 +95,7 @@ const requiredText = (value, field, max) => {
 /**
  * Validate `start_session` arguments as the model sent them.
  * @param {any} args - tool arguments.
- * @returns {{ title: string, prompt: string, background?: string, folder?: string, worktree: boolean, slug?: string, initiation: 'user_asked' | 'proposal' }}
+ * @returns {{ title: string, prompt: string, background?: string, folder?: string, worktree: boolean, slug?: string, initiation: 'user_asked' | 'offer' | 'own_initiative' }}
  */
 export function cleanStartArgs(args) {
   if (args === null || typeof args !== 'object') throw new Error('Arguments must be an object')
@@ -96,7 +110,8 @@ export function cleanStartArgs(args) {
     if (typeof args.folder !== 'string' || !path.isAbsolute(args.folder)) throw new Error('folder must be an absolute path')
     folder = path.normalize(args.folder)
   }
-  if (args.initiation !== 'user_asked' && args.initiation !== 'proposal') throw new Error('initiation must be "user_asked" or "proposal"')
+  const initiation = args.initiation === 'proposal' ? 'offer' : args.initiation
+  if (!INITIATIONS.includes(initiation)) throw new Error('initiation must be "user_asked", "offer" or "own_initiative"')
   const worktree = args.worktree === true
   let slug
   if (worktree) {
@@ -105,7 +120,7 @@ export function cleanStartArgs(args) {
   } else if (args.branch_name !== undefined && args.branch_name !== null && args.branch_name !== '') {
     throw new Error('branch_name only applies with worktree: true')
   }
-  return { title, prompt, ...(background ? { background } : {}), ...(folder ? { folder } : {}), worktree, ...(slug ? { slug } : {}), initiation: args.initiation }
+  return { title, prompt, ...(background ? { background } : {}), ...(folder ? { folder } : {}), worktree, ...(slug ? { slug } : {}), initiation }
 }
 
 /** Whether `folder` is `base` or below it (both absolute, resolved paths). */
@@ -295,6 +310,50 @@ export function startOutcome(value) {
   const text = String(value ?? '')
   const started = /^Started session ".*" \((session-[^)\s]+)\)/.exec(text)
   if (started) return { outcome: 'started', sessionId: started[1] }
+  const proposed = /^Proposed session ".*" \((proposal-[^)\s]+)\)/.exec(text)
+  if (proposed) return { outcome: 'proposed', proposalId: proposed[1] }
   if (/^(The user chose to do this here|Nothing was started)/.test(text)) return { outcome: 'kept' }
   return { outcome: 'other' }
+}
+
+/** A new proposal id. */
+export const newProposalId = () => `proposal-${randomUUID().slice(0, 8)}`
+
+const sameText = text => String(text ?? '').toLowerCase().replace(/\s+/g, ' ').trim()
+
+/**
+ * Whether a Session already proposed this piece of work: the same title, or the same brief, among its
+ * proposals that have not expired (started and dismissed ones count, so a dismissed idea is not raised again).
+ * @param {{ parentId: string, title: string, prompt: string, createdAt: string }[]} proposals
+ * @param {{ parentId: string, title: string, prompt: string }} candidate
+ * @param {number} now - epoch ms.
+ * @returns {boolean}
+ */
+export function alreadyProposed(proposals, candidate, now) {
+  return proposals.some(p => p.parentId === candidate.parentId
+    && now - Date.parse(p.createdAt) < PROPOSAL_TTL_MS
+    && (sameText(p.title) === sameText(candidate.title) || sameText(p.prompt) === sameText(candidate.prompt)))
+}
+
+/**
+ * A proposal's state as the card shows it: a pending proposal past its time reads as expired.
+ * @param {{ state: 'pending' | 'starting' | 'started' | 'dismissed', createdAt: string }} proposal
+ * @param {number} now - epoch ms.
+ * @returns {'pending' | 'starting' | 'started' | 'dismissed' | 'expired'}
+ */
+export function proposalState(proposal, now) {
+  if (proposal.state === 'pending' && now - Date.parse(proposal.createdAt) >= PROPOSAL_TTL_MS) return 'expired'
+  return proposal.state
+}
+
+/**
+ * The sidebar's nesting links: each started Session with the Session that started it, oldest first, so a
+ * parent's children list in the order they were started.
+ * @param {{ id: string, parentId: string, createdAt?: string }[]} records
+ * @returns {{ id: string, parentId: string }[]}
+ */
+export function parentLinksOf(records) {
+  return [...records]
+    .sort((a, b) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')))
+    .map(({ id, parentId }) => ({ id, parentId }))
 }
